@@ -1,0 +1,17 @@
+{
+  "url": "https://webscraper.io/",
+  "domain": "webscraper_io",
+  "navigation": {
+    "file": "pages/homepage.html",
+    "min_links": 15,
+    "expected_sections": [
+      "Pricing",
+      "Marketplace",
+      "E-commerce"
+    ]
+  },
+  "discovery": {
+    "robots_file": "meta/robots.txt",
+    "min_sitemaps": 1
+  }
+}

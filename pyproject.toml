@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scrapepy"
+version = "0.1.0"
+description = "Python web scraper using Scrapling + Patchright"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "tomgould" }]
+dependencies = [
+    "scrapling[fetchers]>=0.4.0",
+    "beautifulsoup4>=4.12.0",
+    "lxml>=5.0.0",
+    "markdownify>=0.13.0",
+    "pyyaml>=6.0",
+    "trafilatura>=1.12.0",
+    "httpx>=0.27.0",
+]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:The 'strip_cdata' option:DeprecationWarning",
+]
+
+[project.scripts]
+scrapepy = "scrapepy.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["scrapepy*"]

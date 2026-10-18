@@ -1,0 +1,65 @@
+# ScrapePy: contributor guide
+
+ScrapePy is a Python web scraper built on Scrapling (HTTP and stealth-browser fetchers) and Patchright (patched Playwright). It crawls a site, downloads assets, rewrites URLs for offline viewing and can convert the result to Markdown.
+
+## Commands
+
+```bash
+pip install -r requirements.txt     # Python 3.11+
+scrapling install                   # browser, needed for browser modes only
+python main.py <url> [options]      # or the installed `scrapepy` entry point
+python main.py --audit <url> -v     # recon only, writes test fixtures
+python -m pytest tests/ -v          # pure logic, no network
+python -m pytest tests/test_navigation.py -v
+```
+
+Markdown conversion, incremental mode and asset download are on by default; the matching `--no-*` flags turn them off.
+
+## Layout
+
+```
+main.py                 entry point
+scrapepy/
+  cli.py                argparse, builds ScrapeConfig
+  config.py             ScrapeConfig dataclass and derived values
+  scraper.py            dispatches to a mode, runs Markdown conversion
+  modes/                crawl, single_page, swagger, docs, instagram, audit
+  engine/               fetcher.py (HTTP/browser/asset fetching),
+                        browser_actions.py and instagram_actions.py (page JS)
+  processing/           urls, errors, assets, rewriter, dates, classifier,
+                        discovery (sitemaps/RSS), navigation, outline
+  output/               writer (file I/O, path mapping), cache, broken_links
+  convert/              to_markdown, openapi_to_markdown, instagram_to_markdown
+tests/                  one test module per processing/output/convert area
+tests/fixtures/         per-site HTML snapshots plus test_config.json
+```
+
+## Architecture
+
+- All modes are async and entered through `asyncio.run()` in `cli.py`.
+- Configuration travels in `ScrapeConfig`; do not pass individual flags around.
+- `Fetcher` (HTTP with TLS fingerprinting) serves the default crawl and asset downloads. `StealthyFetcher` (browser) serves `-j`, `-1`, `--swagger`, `-d` and `--instagram`.
+- The crawl is a hand-written BFS loop, not Scrapling's Spider, so it can integrate URL rewriting, scope checks, section-ordered traversal and prefetching.
+- Phase 0 recon runs before the crawl: robots.txt, sitemaps, RSS/Atom, homepage navigation, then `site_outline.json`. The queue is seeded from the navigation structure.
+- Section pages split their links into article batches (DOM order) and navigation links. Articles are placed under the section that discovered them in the Markdown output, and each section gets an `_index.md`.
+- Mega-menu and dropdown navigation is parsed in `processing/navigation.py`; `NavSection.sub_sections` forms a tree that `SiteOutline.all_section_paths()` flattens.
+- Date filtering (`--recent`, `--since`) is conservative: unknown-date pages and section pages are always kept; only articles with a confirmed old date are skipped. Date source priority: meta tag, JSON-LD, URL pattern, `<time>` element, HTTP header.
+
+## Conventions
+
+- All file I/O goes through `output/writer.py`; URL handling lives in `processing/urls.py`.
+- Keep browser JavaScript strings in `engine/`, not in mode files.
+- Scrapling fetchers are classmethods: call `Fetcher.get()` and `StealthyFetcher.async_fetch()` on the class.
+- Read bodies with `response.body.decode(response.encoding or "utf-8")` and status from `response.status`.
+- The `wait` argument to `StealthyFetcher.async_fetch` must be an `int`; cast it.
+- Normalise URL paths with `posixpath.normpath()` before fetching.
+- `url_to_filepath()` flattens numeric path segments into the filename (`/news/12345/1/slug` becomes `news/slug-12345-1.html`).
+- Markdown output always carries YAML frontmatter (title, url, date, date_source, page_type, word_count, description, domain).
+- Instagram mode keeps its browser profile in `~/.scrapepy/instagram_profile/`.
+
+## Testing
+
+- Tests are pure logic; do not add tests that need the network or a browser.
+- `tests/test_audit_fixtures.py` discovers every `tests/fixtures/*/test_config.json` and checks navigation, page classification, dates and robots.txt parsing against the saved HTML. Missing fixture files cause a skip.
+- Committed fixtures come from sites made for scraping practice. To add one, run `python main.py --audit <url>`, review the generated `test_config.json`, and allow the `pages/` directory in `.gitignore`.
+- Add or update tests with every change to parsing, path mapping or conversion.

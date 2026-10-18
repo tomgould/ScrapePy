@@ -1,0 +1,43 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+ScrapedSites/
+MarkdownSites/
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Audit fixtures (HTML from real sites — generated locally, not committed)
+tests/fixtures/*/pages/
+tests/fixtures/*/meta/
+tests/fixtures/*/audit_report.json
+# Committed fixtures (sites built for scraping practice)
+!tests/fixtures/books_toscrape_com/pages/
+!tests/fixtures/quotes_toscrape_com/pages/
+!tests/fixtures/webscraper_io/pages/
+!tests/fixtures/webscraper_io/meta/
+
+# Local tooling and scrape output
+.claude/
+.mullet/
+.pytest_cache/
+.env
+.env.*
+cookies*
+*.session
+
+# Internal notes and local data
+tasks/
+docs/plans/
+docs/data/websites.csv

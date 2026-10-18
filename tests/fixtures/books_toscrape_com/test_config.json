@@ -1,0 +1,23 @@
+{
+  "url": "https://books.toscrape.com/",
+  "domain": "books_toscrape_com",
+  "navigation": {
+    "file": "pages/homepage.html",
+    "min_links": 1,
+    "expected_sections": [
+      "Books to Scrape"
+    ]
+  },
+  "pages": [
+    {
+      "file": "pages/section_travel.html",
+      "path": "/catalogue/category/books/travel_2/index.html",
+      "expected_type": "section"
+    },
+    {
+      "file": "pages/section_mystery.html",
+      "path": "/catalogue/category/books/mystery_3/index.html",
+      "expected_type": "section"
+    }
+  ]
+}

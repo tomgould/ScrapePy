@@ -1,0 +1,8 @@
+User-agent: *
+Disallow: /test-sites/product/
+Disallow: /test-sites/pagination/
+Disallow: /test-sites/pagination*?page=
+Disallow: /test-sites/scroll/
+Disallow: /test-sites/load-more/
+
+Sitemap: https://webscraper.io/sitemap.xml

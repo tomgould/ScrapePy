@@ -1,0 +1,11 @@
+{
+  "url": "https://quotes.toscrape.com/",
+  "domain": "quotes_toscrape_com",
+  "pages": [
+    {
+      "file": "pages/section_tag_love.html",
+      "path": "/tag/love/",
+      "expected_type": "section"
+    }
+  ]
+}
