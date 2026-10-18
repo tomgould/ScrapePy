@@ -232,7 +232,7 @@ Disables incremental caching and re-downloads everything from scratch.
 python main.py https://docs.example.com/api/v2/ -s
 ```
 
-Scoped incremental crawl — only re-downloads changed pages within `/api/v2/`. Both incremental and Markdown are on by default.
+Scoped incremental crawl that only re-downloads changed pages within `/api/v2/`. Both incremental and Markdown are on by default.
 
 ## Site Reconnaissance and Outline
 
@@ -333,10 +333,10 @@ python main.py https://news-site.com --recent 2w
 
 Crawls the site but only saves articles published in the last 2 weeks. Section/navigation pages (categories, tags, archives) are always kept. The scraper uses multi-signal date extraction:
 
-1. **Pre-crawl discovery**: Sitemaps and RSS feeds build a `DiscoveryMap` of URL→datetime
-2. **Pre-filter**: URLs with old dates in the URL path or discovery map are skipped without fetching
-3. **Post-fetch classification**: Pages classified as SECTION (always keep), ARTICLE (check date), or UNKNOWN (keep conservatively)
-4. **Section batches**: Article links from section pages are processed in DOM order (newest first). When an old article is found, remaining articles in the batch are discarded.
+1. Pre-crawl discovery: Sitemaps and RSS feeds build a `DiscoveryMap` of URL→datetime
+2. Pre-filter: URLs with old dates in the URL path or discovery map are skipped without fetching
+3. Post-fetch classification: Pages classified as SECTION (always keep), ARTICLE (check date), or UNKNOWN (keep conservatively)
+4. Section batches: Article links from section pages are processed in DOM order (newest first). When an old article is found, remaining articles in the batch are discarded.
 
 Date signal priority: meta tags (`article:published_time`) > JSON-LD (`datePublished`) > URL patterns (`/2026/02/25/`) > `<time>` elements > HTTP `Last-Modified` header.
 
@@ -380,7 +380,7 @@ Keeps at least 3 articles per section even if they're older than the cutoff. Use
 python main.py https://news-site.com --recent 2w
 ```
 
-When date filtering is active, section/navigation pages use `images_only=True` to skip CSS/JS/font downloads (their images are just article thumbnails). Only article pages get their full assets downloaded. The Markdown output directory only gets `images/` and `media/` — no CSS, JS, or fonts since they aren't referenced in Markdown. All assets and Markdown are on by default.
+When date filtering is active, section/navigation pages use `images_only=True` to skip CSS/JS/font downloads (their images are just article thumbnails). Only article pages get their full assets downloaded. The Markdown output directory only gets `images/` and `media/`, no CSS, JS, or fonts since they aren't referenced in Markdown. All assets and Markdown are on by default.
 
 ### Recent with verbose output
 
@@ -393,8 +393,8 @@ Verbose mode shows reconnaissance and classification decisions:
 ```
 Running site reconnaissance...
   Found 1 sitemaps in robots.txt
-  Discovery: sitemap.xml — 1,234 dated URLs
-  Discovery: feed — 20 dated URLs
+  Discovery: sitemap.xml: 1,234 dated URLs
+  Discovery: feed: 20 dated URLs
   Discovery complete: 1,254 total dated URLs
   Found 18 navigation links
   Site outline: 6 sections, 1254 sitemap URLs
@@ -402,17 +402,17 @@ Running site reconnaissance...
 
 Fetching page: https://news-site.com/
   [section] keeping navigation page
-  [section] root page — queuing section links only (filtered articles)
+  [section] root page: queuing section links only (filtered articles)
   Saved: index.html
 Fetching page: https://news-site.com/topics/technology
   [section] keeping navigation page
   [section] queued 15 article links for ordered processing
   Saved: topics/technology.html
 Fetching page: https://news-site.com/2026/02/20/new-article
-  [article] keeping — published 2026-02-20T10:00:00Z
+  [article] keeping: published 2026-02-20T10:00:00Z
   Saved: 2026/02/20/new-article.html
 Fetching page: https://news-site.com/2024/01/15/old-article
-  [article] skipped — published /2024/01/15/ (before cutoff)
+  [article] skipped: published /2024/01/15/ (before cutoff)
   Skipped (pre-crawl: URL date): https://news-site.com/2023/06/01/ancient-article
 
 --- Scraping Complete ---
@@ -499,7 +499,7 @@ git add tests/fixtures/news_site_com/test_config.json
 python -m pytest tests/ -v
 ```
 
-The HTML fixtures (`pages/`, `meta/`) are gitignored since they contain real site content. The `test_config.json` is safe to commit — it only contains expected values like section labels, page types, and dates.
+The HTML fixtures (`pages/`, `meta/`) are gitignored since they contain real site content. The `test_config.json` is safe to commit: it only contains expected values like section labels, page types, and dates.
 
 ## Instagram Mode
 
@@ -587,13 +587,13 @@ The updated `post.json`, `post.html`, and `post.md` files reflect the latest eng
 python main.py https://www.instagram.com/natgeo/ --instagram
 ```
 
-Incremental is on by default. On subsequent runs, it skips posts that have already been scraped — it checks for existing post directories with a `post.json` file (does not use CrawlCache; Instagram's browser-fetched pages lack HTTP conditional headers). Only new posts are fetched. Combine with `--accounts` for efficient periodic monitoring:
+Incremental is on by default. On subsequent runs, it skips posts that have already been scraped. It checks for existing post directories with a `post.json` file (does not use CrawlCache; Instagram's browser-fetched pages lack HTTP conditional headers). Only new posts are fetched. Combine with `--accounts` for efficient periodic monitoring:
 
 ```bash
 python main.py --instagram --accounts accounts.txt
 ```
 
-Note: `--update-meta` takes precedence over incremental — if both are specified, all posts are visited (to update metadata) but existing media is still skipped. Use `--no-incremental` to force re-scraping all posts.
+Note: `--update-meta` takes precedence over incremental: if both are specified, all posts are visited (to update metadata) but existing media is still skipped. Use `--no-incremental` to force re-scraping all posts.
 
 ### Scrape all posts (no limit)
 
@@ -737,7 +737,7 @@ from scrapepy.processing.urls import is_in_scope, classify_asset_url
 
 config = ScrapeConfig("https://example.com/docs/", stay_in_path=True)
 
-# Fetch a page (Fetcher.get() is a classmethod — never instantiate)
+# Fetch a page (Fetcher.get() is a classmethod: never instantiate)
 response = fetch_page_http("https://example.com/docs/getting-started", config)
 html = response.body.decode(response.encoding or "utf-8")
 print(f"Status: {response.status}, Length: {len(html)}")
@@ -796,5 +796,5 @@ if page_type == PageType.SECTION:
 elif page_type == PageType.ARTICLE:
     print("Article with content")
 else:
-    print("Unknown — treat conservatively")
+    print("Unknown: treat conservatively")
 ```

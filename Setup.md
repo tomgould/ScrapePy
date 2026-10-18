@@ -175,18 +175,18 @@ Make sure the current directory is writable. ScrapePy creates `ScrapedSites/` an
 
 ### Missing trafilatura (optional)
 
-trafilatura is used as a fallback content extractor for Markdown conversion (step 6 in the extraction chain). If it fails to install, ScrapePy will still work — it falls back to markdownify for generic HTML-to-Markdown conversion (step 7).
+trafilatura is used as a fallback content extractor for Markdown conversion (step 6 in the extraction chain). If it fails to install, ScrapePy will still work: it falls back to markdownify for generic HTML-to-Markdown conversion (step 7).
 
 ### Scrapling deprecation warnings
 
 If you see warnings about instantiating `Fetcher()` or `StealthyFetcher()`, this means code is calling them as instances instead of using the class methods directly:
 
 ```python
-# Wrong — triggers deprecation warning
+# Wrong, triggers deprecation warning
 fetcher = Fetcher()
 response = fetcher.get(url)
 
-# Correct — call classmethod directly
+# Correct, call classmethod directly
 response = Fetcher.get(url)
 ```
 

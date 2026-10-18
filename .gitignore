@@ -18,7 +18,7 @@ MarkdownSites/
 *~
 .DS_Store
 
-# Audit fixtures (HTML from real sites — generated locally, not committed)
+# Audit fixtures (HTML from real sites, generated locally, not committed)
 tests/fixtures/*/pages/
 tests/fixtures/*/meta/
 tests/fixtures/*/audit_report.json

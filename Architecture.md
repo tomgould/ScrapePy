@@ -41,9 +41,9 @@
    a. Fetch /robots.txt, extract Sitemap: directives → robots_sitemaps list
    b. Fetch /sitemap.xml + sub-sitemaps (cap 20) + robots.txt sitemaps
       Parse <loc> + <lastmod> dates into DiscoveryMap
-   c. Fetch homepage HTML (reused for nav parsing — no extra fetch)
+   c. Fetch homepage HTML (reused for nav parsing, so no extra fetch)
    d. Auto-discover RSS/Atom feeds from homepage <link rel="alternate"> tags
-   e. If no feeds discovered, try common paths (/feed, /rss.xml, etc.) — cap 10
+   e. If no feeds discovered, try common paths (/feed, /rss.xml, etc.), capped at 10
    f. Parse RSS <item>/<pubDate> and Atom <entry>/<published> into DiscoveryMap
    g. Parse homepage <header>/<nav>/<footer> for navigation structure → list[NavLink]
       - 4-tier priority: header > standalone nav > class-matched > footer
@@ -104,7 +104,7 @@
         * Keep, articles_kept++
         * Update section article count
         * Check --max-articles cap → discard rest of batch if reached
-   q. Download assets concurrently (httpx, persistent client) — section pages: images_only=True; min-articles filler: skip entirely
+   q. Download assets concurrently (httpx, persistent client), section pages: images_only=True; min-articles filler: skip entirely
    r. Rewrite URLs for offline viewing
    s. Save HTML to disk (url_to_filepath with numeric flattening)
    t. Inline markdown conversion (if -m / default on):
@@ -236,7 +236,7 @@ Central configuration. `ScrapeConfig` is a dataclass that:
 - `--stay-in-path` adds path suffix to output dir name (e.g., `docs_example_com_api_v2`)
 - Provides computed properties: `wait_time` (5.0 browser/3.0 HTTP), `needs_browser`, `has_date_filter`
 
-All other modules receive a `ScrapeConfig` instance — they never read CLI args directly.
+All other modules receive a `ScrapeConfig` instance; they never read CLI args directly.
 
 ### `scrapepy/engine/fetcher.py`
 
@@ -248,7 +248,7 @@ Three fetching strategies:
 | `fetch_page_browser()` | `StealthyFetcher.async_fetch()` (Patchright) | JS rendering, SPA, Swagger, docs, Instagram | `network_idle=True`, `solve_cloudflare=True`, `timeout=120000`, `wait=int(...)` |
 | `download_asset()` | `httpx.AsyncClient` | Concurrent asset downloading | `follow_redirects=True`, `timeout=30.0`, Chrome UA string |
 
-**Critical:** Scrapling's `Fetcher` and `StealthyFetcher` methods (`.get()`, `.fetch()`, `.async_fetch()`) are all **classmethods**. Call them directly on the class — never instantiate `Fetcher()` or `StealthyFetcher()`, which triggers a deprecation warning. The `wait` parameter must be `int`, not `float`.
+Note: Scrapling's `Fetcher` and `StealthyFetcher` methods (`.get()`, `.fetch()`, `.async_fetch()`) are all classmethods. Call them directly on the class and never instantiate `Fetcher()` or `StealthyFetcher()`, which triggers a deprecation warning. The `wait` parameter must be `int`, not `float`.
 
 `fetch_page_browser()` wraps the caller's `page_action` callback and passes it to `StealthyFetcher.async_fetch()`. The callback receives the raw Patchright `page` object for direct browser control. The optional `user_data_dir` parameter enables persistent cookie storage (used by Instagram mode for login persistence via Patchright's `launch_persistent_context`).
 
@@ -256,60 +256,60 @@ Three fetching strategies:
 
 All browser-side JavaScript lives here as `page.evaluate()` calls:
 
-- `scroll_full_page(page)` — Scroll to bottom + lazy load trigger
-- `expand_swagger_sections(page)` — Expand all Swagger UI operation blocks, models, show/hide toggles
-- `find_spec_url(page) -> str | None` — Locate OpenAPI spec URL from meta tags, scripts, or input fields
-- `expand_docs_sections(page)` — Expand collapsed content on doc pages
-- `find_nav_links(page) -> list[dict]` — Extract sidebar navigation links
-- `get_main_content_html(page) -> str` — Extract main content area
-- `wait_for_js_content(page, wait_time)` — Wait for JS frameworks to render
-- `extract_links_browser(page, base_url) -> list[str]` — Extract all links including data attributes, onclick handlers, hash patterns
+- `scroll_full_page(page)`: Scroll to bottom + lazy load trigger
+- `expand_swagger_sections(page)`: Expand all Swagger UI operation blocks, models, show/hide toggles
+- `find_spec_url(page) -> str | None`: Locate OpenAPI spec URL from meta tags, scripts, or input fields
+- `expand_docs_sections(page)`: Expand collapsed content on doc pages
+- `find_nav_links(page) -> list[dict]`: Extract sidebar navigation links
+- `get_main_content_html(page) -> str`: Extract main content area
+- `wait_for_js_content(page, wait_time)`: Wait for JS frameworks to render
+- `extract_links_browser(page, base_url) -> list[str]`: Extract all links including data attributes, onclick handlers, hash patterns
 
 ### `scrapepy/engine/instagram_actions.py`
 
-Instagram-specific browser automation (721 lines — 2nd largest file). All functions take a Patchright `page`:
+Instagram-specific browser automation (721 lines, 2nd largest file). All functions take a Patchright `page`:
 
-- `check_login_status(page) -> bool` — Detect logged-in state via nav avatar or profile link
-- `wait_for_login(page)` — Poll for manual login completion (3-minute timeout)
-- `dismiss_login_popup(page)` — Close "Log In" / "Not Now" / cookie popups
-- `scroll_profile_posts(page, max_posts) -> int` — Infinite-scroll grid: 1.5s intervals between scroll events, 3 stability checks (no new posts), 120s total timeout
-- `extract_post_links(page) -> list[str]` — Get all `/p/` and `/reel/` URLs from post grid
-- `extract_profile_data(page) -> dict` — 3-tier extraction: embedded JSON (ScheduledServerJS payloads in `<script type="application/json">`) > meta tags (og:description, og:image) > DOM; 14 fields including username, full_name, bio, followers, following, post_count, profile_pic_url, is_private, is_verified, category, external_url, user_id
-- `setup_video_interceptor(page) -> list` — Network response listener for CDN video URLs
-- `extract_post_data(page) -> dict` — 40+ fields via JSON-LD first, DOM fallback. Categories: identifiers (shortcode, post_id), content (caption, alt_text, hashtags, mentions), engagement (likes, comments, views, plays), media (image_versions2, video_versions, carousel), video metadata (duration, has_audio), audio/music info, location data, author info, collaboration/coauthors, usertags, preview comments with username/text/likes/timestamp
-- `trigger_video_playback(page)` — Force play to emit CDN request for interceptor
-- `navigate_carousel(page) -> list[dict]` — Click through carousel slides collecting all media URLs per slide
+- `check_login_status(page) -> bool`: Detect logged-in state via nav avatar or profile link
+- `wait_for_login(page)`: Poll for manual login completion (3-minute timeout)
+- `dismiss_login_popup(page)`: Close "Log In" / "Not Now" / cookie popups
+- `scroll_profile_posts(page, max_posts) -> int`: Infinite-scroll grid: 1.5s intervals between scroll events, 3 stability checks (no new posts), 120s total timeout
+- `extract_post_links(page) -> list[str]`: Get all `/p/` and `/reel/` URLs from post grid
+- `extract_profile_data(page) -> dict`: 3-tier extraction: embedded JSON (ScheduledServerJS payloads in `<script type="application/json">`) > meta tags (og:description, og:image) > DOM; 14 fields including username, full_name, bio, followers, following, post_count, profile_pic_url, is_private, is_verified, category, external_url, user_id
+- `setup_video_interceptor(page) -> list`: Network response listener for CDN video URLs
+- `extract_post_data(page) -> dict`: 40+ fields via JSON-LD first, DOM fallback. Categories: identifiers (shortcode, post_id), content (caption, alt_text, hashtags, mentions), engagement (likes, comments, views, plays), media (image_versions2, video_versions, carousel), video metadata (duration, has_audio), audio/music info, location data, author info, collaboration/coauthors, usertags, preview comments with username/text/likes/timestamp
+- `trigger_video_playback(page)`: Force play to emit CDN request for interceptor
+- `navigate_carousel(page) -> list[dict]`: Click through carousel slides collecting all media URLs per slide
 
 ### `scrapepy/processing/urls.py`
 
 URL logic:
-- `SKIP_EXTENSIONS` — Compiled regex of 30+ file extensions to skip during crawling
-- `NON_CONTENT_PATHS` — Compiled regex of non-content utility paths (login, cart, admin, share, etc.) shared by crawl.py and navigation.py
-- `is_in_scope(url_path, config) -> bool` — Checks if URL path falls within configured scope (`-s` prefix match, `-w` contains match)
-- `normalize_link(link, current_path, base_url) -> str | None` — Resolves relative links, strips query/fragment, filters non-HTML extensions, external links
-- `extract_links_from_html(html, base_url) -> list[str]` — Regex extraction of `href`, `data-href`, `data-url`, `data-link` attributes
-- `has_article_slug(path) -> bool` — Article slug heuristic: >= 15 chars with hyphens, or >= 2 hyphens (shared by crawl.py and audit.py)
-- `is_likely_article_path(path) -> bool` — Stricter article detection: 3+ hyphens, 30+ chars with hyphens, or numeric CMS ID suffix. Used by `discover_section_pages()` to avoid false positives on section names.
-- `discover_section_pages(html, base_url) -> list[str]` — Extracts section-like pages from homepage HTML, filtering out article paths and non-section paths
-- `classify_asset_url(url, base_url, include_assets) -> dict | None` — Categorizes URLs into folders: images (always downloaded), css/js/fonts (only with `-a`), media (always). Handles protocol-relative URLs, truncates long filenames (>100 chars) with MD5 hash.
+- `SKIP_EXTENSIONS`: Compiled regex of 30+ file extensions to skip during crawling
+- `NON_CONTENT_PATHS`: Compiled regex of non-content utility paths (login, cart, admin, share, etc.) shared by crawl.py and navigation.py
+- `is_in_scope(url_path, config) -> bool`: Checks if URL path falls within configured scope (`-s` prefix match, `-w` contains match)
+- `normalize_link(link, current_path, base_url) -> str | None`: Resolves relative links, strips query/fragment, filters non-HTML extensions, external links
+- `extract_links_from_html(html, base_url) -> list[str]`: Regex extraction of `href`, `data-href`, `data-url`, `data-link` attributes
+- `has_article_slug(path) -> bool`: Article slug heuristic: >= 15 chars with hyphens, or >= 2 hyphens (shared by crawl.py and audit.py)
+- `is_likely_article_path(path) -> bool`: Stricter article detection: 3+ hyphens, 30+ chars with hyphens, or numeric CMS ID suffix. Used by `discover_section_pages()` to avoid false positives on section names.
+- `discover_section_pages(html, base_url) -> list[str]`: Extracts section-like pages from homepage HTML, filtering out article paths and non-section paths
+- `classify_asset_url(url, base_url, include_assets) -> dict | None`: Categorizes URLs into folders: images (always downloaded), css/js/fonts (only with `-a`), media (always). Handles protocol-relative URLs, truncates long filenames (>100 chars) with MD5 hash.
 
 ### `scrapepy/processing/dates.py`
 
 Multi-signal date extraction for article pages:
 
-- `extract_date_from_url(url_path)` — 3 regex patterns: `/YYYY/MM/DD/`, `/YYYY-MM-DD-`, `/YYYYMMDD-`
-- `extract_dates_from_html(html)` — 8 meta property names (`article:published_time`, `og:article:published_time`, `datePublished`, `date`, `publish_date`, `article:published`, `sailthru.date`, `parsely-pub-date`), JSON-LD `@graph` traversal for `datePublished`/`dateCreated`, `<time datetime=...>` elements
-- `extract_date_from_headers(headers)` — HTTP `Last-Modified` header (RFC 2822 format)
-- `get_best_date(url_path, html, headers)` — Combines all signals, returns highest-confidence: META_TAG(5) > JSON_LD(4) > URL_PATTERN(3) > TIME_ELEMENT(2) > HTTP_HEADER(1)
-- `url_has_old_date(url_path, cutoff) -> bool` — Quick pre-filter: checks only URL patterns (no HTML needed)
+- `extract_date_from_url(url_path)`: 3 regex patterns: `/YYYY/MM/DD/`, `/YYYY-MM-DD-`, `/YYYYMMDD-`
+- `extract_dates_from_html(html)`: 8 meta property names (`article:published_time`, `og:article:published_time`, `datePublished`, `date`, `publish_date`, `article:published`, `sailthru.date`, `parsely-pub-date`), JSON-LD `@graph` traversal for `datePublished`/`dateCreated`, `<time datetime=...>` elements
+- `extract_date_from_headers(headers)`: HTTP `Last-Modified` header (RFC 2822 format)
+- `get_best_date(url_path, html, headers)`: Combines all signals, returns highest-confidence: META_TAG(5) > JSON_LD(4) > URL_PATTERN(3) > TIME_ELEMENT(2) > HTTP_HEADER(1)
+- `url_has_old_date(url_path, cutoff) -> bool`: Quick pre-filter: checks only URL patterns (no HTML needed)
 
 ### `scrapepy/processing/classifier.py`
 
 Heuristic page classification:
 
-1. **URL pattern matching** — `_SECTION_URL_PATTERNS` (homepage, category, tag, topic, archive, author, pagination, section roots, feed) → SECTION; `_ARTICLE_URL_PATTERNS` (date in path) → ARTICLE
-2. **Date signals** — Any date found in URL or HTML → article indicator
-3. **Link density** — `_compute_link_density()` strips nav/header/footer/aside, computes link text / total text ratio
+1. URL pattern matching: `_SECTION_URL_PATTERNS` (homepage, category, tag, topic, archive, author, pagination, section roots, feed) → SECTION; `_ARTICLE_URL_PATTERNS` (date in path) → ARTICLE
+2. Date signals: Any date found in URL or HTML → article indicator
+3. Link density: `_compute_link_density()` strips nav/header/footer/aside, computes link text / total text ratio
    - link_density > 0.4 + no date → SECTION
    - has date + link_density < 0.5 → ARTICLE
    - has date (any density) → ARTICLE
@@ -323,7 +323,7 @@ The crawl mode also uses article slug detection (`has_article_slug()` in `proces
 
 Homepage navigation parsing via BeautifulSoup:
 
-- `extract_navigation(html, base_url)` — 4-tier detection:
+- `extract_navigation(html, base_url)`: 4-tier detection:
   1. `<header>` containing `<nav>` or `<a>` elements
   2. `<nav>` elements (standalone, not inside header/footer)
   3. Elements with nav-related classes (if < 3 links found above)
@@ -341,12 +341,12 @@ Homepage navigation parsing via BeautifulSoup:
 
 Site outline builder:
 
-- `build_site_outline()` — Level-0 nav links become top-level sections, level-1+ become `sub_sections` (hierarchical `NavSection` tree). Orphan children promoted to top-level sections. Sub-section paths also added to parent's `children` list for backward compatibility.
-- `_assign_url_to_section()` — Maps sitemap URLs to sections by longest-prefix match (recursively searches section paths + children + sub_sections)
-- `NavSection` — Dataclass with `sub_sections: list[NavSection]` for tree hierarchy from mega-menu/dropdown navigation
-- `SiteOutline` — Counts `article_count` and `recent_count` per section from discovery map
-- `SiteOutline.all_section_paths() -> set[str]` — Recursively collects all section paths (including sub-sections) into a flat set. Used for queue seeding and focused crawl mode.
-- `SiteOutline.save()` — Writes `site_outline.json` (JSON with indent=2). Sub-sections serialized recursively.
+- `build_site_outline()`: Level-0 nav links become top-level sections, level-1+ become `sub_sections` (hierarchical `NavSection` tree). Orphan children promoted to top-level sections. Sub-section paths also added to parent's `children` list for backward compatibility.
+- `_assign_url_to_section()`: Maps sitemap URLs to sections by longest-prefix match (recursively searches section paths + children + sub_sections)
+- `NavSection`: Dataclass with `sub_sections: list[NavSection]` for tree hierarchy from mega-menu/dropdown navigation
+- `SiteOutline`: Counts `article_count` and `recent_count` per section from discovery map
+- `SiteOutline.all_section_paths() -> set[str]`: Recursively collects all section paths (including sub-sections) into a flat set. Used for queue seeding and focused crawl mode.
+- `SiteOutline.save()`: Writes `site_outline.json` (JSON with indent=2). Sub-sections serialized recursively.
 
 ### `scrapepy/processing/discovery.py`
 
@@ -358,7 +358,7 @@ Pre-crawl discovery builds a `DiscoveryMap` (`dict[str, datetime]`):
 4. If no feeds discovered, try 7 common paths (`/feed`, `/rss.xml`, etc.)
 5. Parse feeds: RSS `<pubDate>` (RFC 2822), Atom `<published>` (ISO 8601)
 
-All errors silently caught — missing sitemaps/feeds are normal. Returns `(date_map, homepage_html, feed_urls)` where homepage HTML is reused for navigation parsing (saves one fetch).
+All errors are silently caught, since missing sitemaps/feeds are normal. Returns `(date_map, homepage_html, feed_urls)` where homepage HTML is reused for navigation parsing (saves one fetch).
 
 ### `scrapepy/processing/rewriter.py`
 
@@ -373,26 +373,26 @@ All errors silently caught — missing sitemaps/feeds are normal. Returns `(date
 ### `scrapepy/processing/errors.py`
 
 Three detection functions:
-- `is_error_page_html(html)` — Fast string check: NoSuchKey, AccessDenied, >404<, >Not Found<, "The specified key does not exist"
-- `is_error_page_content(title, h1_text, body_text)` — Pattern matching: ERROR_PATTERNS tuple (404, 403, 401, 500, 502, 503, not found, forbidden, nosuchkey), short body heuristic
-- `is_cloudflare_challenge(html)` — "Verifying you are human" / "Just a moment"
+- `is_error_page_html(html)`: Fast string check: NoSuchKey, AccessDenied, >404<, >Not Found<, "The specified key does not exist"
+- `is_error_page_content(title, h1_text, body_text)`: Pattern matching: ERROR_PATTERNS tuple (404, 403, 401, 500, 502, 503, not found, forbidden, nosuchkey), short body heuristic
+- `is_cloudflare_challenge(html)`: "Verifying you are human" / "Just a moment"
 
 ### `scrapepy/processing/assets.py`
 
-- `discover_and_download_assets(images_only=False)` — Extracts asset URLs from HTML via regex, classifies them, downloads concurrently with asyncio.Semaphore(config.concurrent). When `images_only=True`, skips non-image/media assets (used for section pages to only get thumbnails). Accepts `http_client` for persistent connection reuse.
-- `_extract_asset_urls()` — Regex patterns: `<img src>`, `<img srcset>`, `<link stylesheet>`, CSS `.css` hrefs, `<script src>`, CSS `url()`. Images always extracted; CSS/JS only with `-a`.
-- `_download_one()` — Sends conditional headers (If-None-Match/If-Modified-Since) for incremental mode, handles 304 responses
+- `discover_and_download_assets(images_only=False)`: Extracts asset URLs from HTML via regex, classifies them, downloads concurrently with asyncio.Semaphore(config.concurrent). When `images_only=True`, skips non-image/media assets (used for section pages to only get thumbnails). Accepts `http_client` for persistent connection reuse.
+- `_extract_asset_urls()`: Regex patterns: `<img src>`, `<img srcset>`, `<link stylesheet>`, CSS `.css` hrefs, `<script src>`, CSS `url()`. Images always extracted; CSS/JS only with `-a`.
+- `_download_one()`: Sends conditional headers (If-None-Match/If-Modified-Since) for incremental mode, handles 304 responses
 
 ### `scrapepy/output/writer.py`
 
 File system operations:
-- `create_output_dirs()` — Creates output directory tree: css/, js/, images/, fonts/, media/
-- `_flatten_numeric_segments(path)` — Walks segments right-to-left, collects consecutive numeric segments before filename, appends as hyphenated suffix (e.g., `news/1090365/1/slug` -> `news/slug-1090365-1`)
-- `extract_slug(url_path) -> str` — Extract article slug from URL path with numeric flattening. Strips common web extensions. Used for section-based MarkdownSites filenames.
-- `article_filepath_in_section(url_path, section_path, config, ext=".md") -> str` — Map an article URL to a filepath under its section directory in MarkdownSites. Section path becomes directory structure, slug becomes filename.
-- `url_to_filepath()` — Converts URL path to local file path: strip query/fragment, `--stay-in-path` prefix stripping, numeric flattening, add `.html` if no extension, hash fragment support
-- `get_relative_path()` — `os.path.relpath()` with `./` prefix normalization
-- `write_file()` — Writes string (UTF-8) or bytes, creating parent dirs
+- `create_output_dirs()`: Creates output directory tree: css/, js/, images/, fonts/, media/
+- `_flatten_numeric_segments(path)`: Walks segments right-to-left, collects consecutive numeric segments before filename, appends as hyphenated suffix (e.g., `news/1090365/1/slug` -> `news/slug-1090365-1`)
+- `extract_slug(url_path) -> str`: Extract article slug from URL path with numeric flattening. Strips common web extensions. Used for section-based MarkdownSites filenames.
+- `article_filepath_in_section(url_path, section_path, config, ext=".md") -> str`: Map an article URL to a filepath under its section directory in MarkdownSites. Section path becomes directory structure, slug becomes filename.
+- `url_to_filepath()`: Converts URL path to local file path: strip query/fragment, `--stay-in-path` prefix stripping, numeric flattening, add `.html` if no extension, hash fragment support
+- `get_relative_path()`: `os.path.relpath()` with `./` prefix normalization
+- `write_file()`: Writes string (UTF-8) or bytes, creating parent dirs
 
 ### `scrapepy/output/cache.py`
 
@@ -416,22 +416,22 @@ Instagram incremental mode does not use CrawlCache (browser-fetched pages lack H
 
 ### `scrapepy/convert/to_markdown.py`
 
-`HTMLToMarkdown` class (880 lines — 3rd largest file) with content-type-specific extraction:
+`HTMLToMarkdown` class (880 lines, 3rd largest file) with content-type-specific extraction:
 
-**Extraction chain** (tries each in order, returns first with > 100 chars):
+Extraction chain (tries each in order, returns first with > 100 chars):
 1. Error page detection → skip
-2. API docs (Readme.io, Stoplight) — detects `readme` class, `api-method` blocks → extracts endpoints
-3. Swagger UI — detects `swagger-ui` / `opblock` classes → extracts operations grouped by tag
-4. RoboHelp/MadCap Flare — detects generator meta tag → unwraps layout tables, removes chrome
-5. Standard CMS — tries 10 CSS selectors: `.entry-content` (WordPress), `.post-content`, `article .content`, `[role='main'] article`, `#content article`, `article`, `[role='main']`, `main`, `#content`, `.content`
-6. trafilatura — content extraction with `output_format="markdown"`
-7. Generic — strip nav/header/footer/aside, markdownify body
+2. API docs (Readme.io, Stoplight): detects `readme` class, `api-method` blocks → extracts endpoints
+3. Swagger UI: detects `swagger-ui` / `opblock` classes → extracts operations grouped by tag
+4. RoboHelp/MadCap Flare: detects generator meta tag → unwraps layout tables, removes chrome
+5. Standard CMS: tries 10 CSS selectors: `.entry-content` (WordPress), `.post-content`, `article .content`, `[role='main'] article`, `#content article`, `article`, `[role='main']`, `main`, `#content`, `.content`
+6. trafilatura: content extraction with `output_format="markdown"`
+7. Generic: strip nav/header/footer/aside, markdownify body
 
-**Pre-conversion skipping:** XML feeds, manifests, WordPress boilerplate paths
+Pre-conversion skipping: XML feeds, manifests, WordPress boilerplate paths
 
-**Post-conversion:** clean empty rows/headings, promote bold to headings, ensure title, convert links (.html -> .md), copy images/ + media/ directories
+Post-conversion: clean empty rows/headings, promote bold to headings, ensure title, convert links (.html -> .md), copy images/ + media/ directories
 
-**Module-level function:** `generate_section_index(section_label, section_url, domain, articles, sub_sections)` — Generates section `index.md` with YAML frontmatter (page_type: SECTION), article listings with thumbnails, and sub-section links. `convert_file()` accepts optional `output_path` parameter for section-based output placement.
+Module-level function: `generate_section_index(section_label, section_url, domain, articles, sub_sections)`: Generates section `index.md` with YAML frontmatter (page_type: SECTION), article listings with thumbnails, and sub-section links. `convert_file()` accepts optional `output_path` parameter for section-based output placement.
 
 ### `scrapepy/convert/openapi_to_markdown.py`
 
@@ -445,8 +445,8 @@ Converts OpenAPI/Swagger spec files (JSON or YAML) to structured Markdown:
 ### `scrapepy/convert/instagram_to_markdown.py`
 
 Two conversion functions:
-- `post_to_markdown(post_data)` — Full markdown with: date, author (verified badge), co-authors, paid partnership, location, engagement stats, content type, video metadata, music/audio, post IDs, caption (edited flag), alt text, hashtags, mentions, tagged users, media embeds (image/video), comments with timestamps
-- `profile_to_markdown(profile_data)` — Profile summary with: name, verified/private badges, category, user ID, stats table (posts/followers/following), bio, website link
+- `post_to_markdown(post_data)`: Full markdown with: date, author (verified badge), co-authors, paid partnership, location, engagement stats, content type, video metadata, music/audio, post IDs, caption (edited flag), alt text, hashtags, mentions, tagged users, media embeds (image/video), comments with timestamps
+- `profile_to_markdown(profile_data)`: Profile summary with: name, verified/private badges, category, user ID, stats table (posts/followers/following), bio, website link
 
 ## Tests
 
@@ -454,7 +454,7 @@ Two conversion functions:
 python -m pytest tests/ -v    # ~0.5s, no network I/O, 457 tests
 ```
 
-All tests are pure logic — no network calls, no file system side effects (except temp dirs).
+All tests are pure logic: no network calls, no file system side effects (except temp dirs).
 
 | File | Tests | Lines | Covers |
 |------|-------|-------|--------|
@@ -463,7 +463,7 @@ All tests are pure logic — no network calls, no file system side effects (exce
 | `test_outline.py` | 25 | 344 | URL-to-section assignment (incl. sub_sections), outline building (article counts, cutoff dates, orphan children, hierarchical sub-sections), `all_section_paths()`, JSON serialization |
 | `test_frontmatter.py` | 25 | 273 | Frontmatter generation, word count, metadata extraction, convert_file integration |
 | `test_section_index.py` | 12 | 257 | `generate_section_index()`: frontmatter fields, article listings, thumbnails, sub-section links, empty cases |
-| `test_discovery_parsers.py` | 27 | 239 | `_parse_sitemap()`, `_parse_rss()`, `_parse_atom()`, `_discover_feeds_from_html()`, `parse_robots_sitemaps()` — XML parsing, external URL filtering, malformed input |
+| `test_discovery_parsers.py` | 27 | 239 | `_parse_sitemap()`, `_parse_rss()`, `_parse_atom()`, `_discover_feeds_from_html()`, `parse_robots_sitemaps()`: XML parsing, external URL filtering, malformed input |
 | `test_config.py` | 47 | 234 | `_parse_recent()`, `_parse_since()`, `ScrapeConfig` derived fields, properties, new defaults (markdown=True, incremental=True, include_assets=True, concurrent=10) |
 | `test_writer.py` | 34 | 207 | `_flatten_numeric_segments()`, `url_to_filepath()`, `extract_slug()`, `article_filepath_in_section()` |
 | `test_dates.py` | 34 | 200 | ISO/RFC2822 parsing, URL/HTML/header date extraction, priority ranking, `url_has_old_date()` |
@@ -487,7 +487,7 @@ response.body        # Raw bytes
 response.encoding    # Detected encoding (str)
 response.url         # Final URL after redirects
 response.headers     # Response headers (dict-like)
-response.text        # Text content only (no tags) — DO NOT USE for HTML
+response.text        # Text content only (no tags); do not use for HTML
 response.html_content  # Parsed HTML (TextHandler)
 
 # For HTML content (ALWAYS use this, not .text):
@@ -504,7 +504,7 @@ StealthyFetcher.async_fetch(
     network_idle=True,         # Wait for network quiet
     page_action=callback,      # async fn(page) -> page
     timeout=120000,            # Navigation timeout (ms)
-    wait=5,                    # Additional wait (seconds) — MUST be int, not float
+    wait=5,                    # Additional wait (seconds), must be int, not float
     solve_cloudflare=True,     # Auto Cloudflare bypass
     proxy="http://...",        # Proxy URL (optional)
     user_data_dir="~/.../",    # Persistent cookies (optional, uses launch_persistent_context)

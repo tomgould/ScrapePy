@@ -66,7 +66,7 @@ python main.py <url> [options]
 | `--since DATE` | Only keep articles published after date: `YYYY-MM-DD` |
 | `--min-articles N` | Keep at least N articles per section even if old (use with `--recent`/`--since`) |
 | `--max-articles N` | Max articles per section (newest N, default: 0 = no limit) |
-| `--audit` | Reconnaissance only — analyze site structure, save test fixtures (no crawl) |
+| `--audit` | Reconnaissance only: analyze site structure and save test fixtures (no crawl) |
 | `--instagram` | Instagram profile scraping mode |
 | `--accounts FILE` | File with Instagram usernames/URLs (one per line) |
 | `--ig-login` | Enable Instagram login (visible browser, saves cookies) |
@@ -118,7 +118,7 @@ python main.py https://news-site.com --recent 1w --max-articles 10
 # Daily re-scan for new articles (incremental is on by default)
 python main.py https://news-site.com --recent 1d
 
-# Audit site structure (no crawl — saves test fixtures)
+# Audit site structure (no crawl, saves test fixtures)
 python main.py --audit https://books.toscrape.com -v
 
 # Headless browser mode
@@ -210,7 +210,7 @@ domain: example.com
 ...content...
 ```
 
-Fields are populated automatically — in crawl mode from live metadata (URL, date, page type), in batch mode by extracting from the HTML. Only non-null fields are included. Date sources are ranked by confidence: `META_TAG` > `JSON_LD` > `URL_PATTERN` > `TIME_ELEMENT` > `HTTP_HEADER`.
+Fields are populated automatically: in crawl mode from live metadata (URL, date, page type), in batch mode by extracting from the HTML. Only non-null fields are included. Date sources are ranked by confidence: `META_TAG` > `JSON_LD` > `URL_PATTERN` > `TIME_ELEMENT` > `HTTP_HEADER`.
 
 ### Numeric Path Flattening
 
@@ -292,7 +292,7 @@ ScrapedSites/instagram/
 Accounts file format (for `--accounts`):
 
 ```text
-# One account per line — supports URLs, @username, or bare usernames
+# One account per line; supports URLs, @username, or bare usernames
 https://www.instagram.com/natgeo/
 @nasa
 spacex
