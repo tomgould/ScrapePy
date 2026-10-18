@@ -112,7 +112,7 @@ async def run_crawl_mode(config: ScrapeConfig):
         if config.verbose and robots_sitemaps:
             print(f"  Found {len(robots_sitemaps)} sitemaps in robots.txt")
 
-    # 2. Run discovery (sitemaps + RSS) — returns homepage HTML for reuse
+    # 2. Run discovery (sitemaps + RSS), returns homepage HTML for reuse
     discovery_map, homepage_html, feed_urls = await run_discovery(
         config, extra_sitemaps=robots_sitemaps,
     )
@@ -180,7 +180,7 @@ async def run_crawl_mode(config: ScrapeConfig):
         for p in section_pages:
             if p not in seeded:
                 to_visit.append(p)
-        # Also add footer links (about, contact, etc.) — skip in focused mode
+        # Also add footer links (about, contact, etc.), skip in focused mode
         if not focused_crawl:
             for link in outline.footer_links:
                 to_visit.append(link["path"])
@@ -410,7 +410,7 @@ async def run_crawl_mode(config: ScrapeConfig):
                     if config.verbose:
                         print(f"  [section] keeping navigation page")
 
-                    # The root page (/) is too broad for batching — every path
+                    # The root page (/) is too broad for batching, every path
                     # is a "child" of /, so it would monopolise all articles
                     # and prevent real section pages from getting their own
                     # min-articles quotas.  Let the homepage queue normally.
@@ -460,7 +460,7 @@ async def run_crawl_mode(config: ScrapeConfig):
                             _normalize_link_to_path(l, url_path, config) or ""
                         )]
                         if config.verbose:
-                            print(f"  [section] root page — queuing section links only (filtered articles)")
+                            print(f"  [section] root page: queuing section links only (filtered articles)")
 
                 elif page_type == PageType.ARTICLE or page_type == PageType.UNKNOWN:
                     if date_result:
@@ -479,13 +479,13 @@ async def run_crawl_mode(config: ScrapeConfig):
                                 is_min_article = True
                                 section_article_counts[current_batch_section] = sec_count + 1
                                 if config.verbose:
-                                    print(f"  [article] keeping (min-articles {sec_count + 1}/{config.min_articles} for section) — published {date_result.raw}")
+                                    print(f"  [article] keeping (min-articles {sec_count + 1}/{config.min_articles} for section): published {date_result.raw}")
                             else:
                                 articles_skipped_old += 1
                                 if config.verbose:
-                                    print(f"  [article] skipped — published {date_result.raw} (before cutoff)")
+                                    print(f"  [article] skipped: published {date_result.raw} (before cutoff)")
 
-                                # Bail out of section batch — articles are newest-first
+                                # Bail out of section batch, articles are newest-first
                                 if from_section_batch:
                                     skipped_precrawl += _exhaust_section_batch(
                                         current_section_batch, prefetch_tasks, config.verbose,
@@ -505,9 +505,9 @@ async def run_crawl_mode(config: ScrapeConfig):
                                     )
                                     current_section_batch = None
                             if config.verbose:
-                                print(f"  [article] keeping — published {date_result.raw}")
+                                print(f"  [article] keeping: published {date_result.raw}")
                     else:
-                        # No date found — keep conservatively
+                        # No date found, keep conservatively
                         articles_kept += 1
                         if from_section_batch:
                             sec_kept = section_article_counts.get(current_batch_section, 0) + 1
@@ -518,13 +518,13 @@ async def run_crawl_mode(config: ScrapeConfig):
                                 )
                                 current_section_batch = None
                         if config.verbose:
-                            print(f"  [{page_type.value}] keeping — no date found (conservative)")
+                            print(f"  [{page_type.value}] keeping: no date found (conservative)")
 
             # Download assets (skip entirely when --no-markdown + --no-include-assets;
             # skip for min-articles filler; section pages download images only
             # for thumbnails in index.md)
             if not config.markdown and not config.include_assets:
-                pass  # No assets needed — raw HTML cache only
+                pass  # No assets needed, raw HTML cache only
             elif config.has_date_filter and is_min_article:
                 pass  # Skip assets for min-articles filler
             elif config.has_date_filter and page_type_str == "section":
@@ -559,7 +559,7 @@ async def run_crawl_mode(config: ScrapeConfig):
                     if date_result:
                         md_meta["date_source"] = date_result.source.name
                 else:
-                    # No date filter — extract metadata now
+                    # No date filter, extract metadata now
                     resp_headers = page_info.get("headers", {})
                     date_result_now = get_best_date(url_path, html, resp_headers)
                     if date_result_now:
@@ -580,7 +580,7 @@ async def run_crawl_mode(config: ScrapeConfig):
                 # Section batch articles get placed in section directory
                 if from_section_batch and current_batch_section:
                     if is_section_page:
-                        # Section page discovered from a batch — still _index.md
+                        # Section page discovered from a batch, still _index.md
                         from ..output.writer import section_index_filepath
                         md_output_path = section_index_filepath(url_path, config)
                     else:
@@ -604,7 +604,7 @@ async def run_crawl_mode(config: ScrapeConfig):
                     md_converter.convert_file(_Path(filepath), metadata=md_meta)
 
                 # Track article metadata for section index generation
-                # (skip section pages — they are sub-sections, not articles)
+                # (skip section pages, they are sub-sections, not articles)
                 if from_section_batch and current_batch_section and not is_section_page:
                     if current_batch_section not in section_articles:
                         section_articles[current_batch_section] = []
@@ -638,7 +638,7 @@ async def run_crawl_mode(config: ScrapeConfig):
                 )
 
             # Queue extracted links (for sections, only non-article links reach here).
-            # Old articles kept via min-articles don't queue links — they're filler
+            # Old articles kept via min-articles don't queue links, they're filler
             # content, not sources for further discovery.
             if not is_min_article and not focused_crawl:
                 _queue_links(
@@ -962,7 +962,7 @@ def _looks_like_article_path(path: str, section_path: str) -> bool:
     """Check if a URL path looks like an article that's a child of the section.
 
     Article links are children of the section with a slug-like final segment
-    (long, hyphenated — e.g., /news/garmin-catalyst-2-driving-coach).
+    (long, hyphenated, e.g., /news/garmin-catalyst-2-driving-coach).
     Navigation/section links have short, clean segments (e.g., /reviews, /news/gaming).
     """
     # Normalize section prefix for child-checking
@@ -992,7 +992,7 @@ def _split_section_links(
     """Split a section page's links into article links (DOM order) and other links.
 
     Article links = pages with slug-like URLs (likely articles listed by this section).
-    The article doesn't need to be a child path of the section — many sites use
+    The article doesn't need to be a child path of the section, many sites use
     /topics/X to list articles living under /news/Y or /features/Z.
     Other links = navigation/section links, which go to the regular queue.
     Returns (article_url_paths, other_raw_links).
@@ -1091,7 +1091,7 @@ def _queue_links(
             if _RE_RSS_FEED.search(clean):
                 continue
             # Pre-filter: skip article URLs known to be old from discovery map
-            # or URL date pattern. Only filter article-slug paths — section/nav
+            # or URL date pattern. Only filter article-slug paths, section/nav
             # pages must always be queued so they can discover articles.
             if cutoff and has_article_slug(clean):
                 disc_date = discovery_map.get(clean) if discovery_map else None
@@ -1146,7 +1146,7 @@ def _extract_title_from_html(html: str) -> str | None:
         if title:
             text = title.get_text(strip=True)
             # Strip site name suffix (common pattern: "Article | Site Name")
-            for sep in (" | ", " - ", " – ", " — "):
+            for sep in (" | ", " - ", " \u2013 ", " \u2014 "):
                 if sep in text:
                     text = text.split(sep)[0].strip()
             return text

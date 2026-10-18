@@ -1,4 +1,4 @@
-"""Tests for processing/dates.py — date extraction from URLs, HTML, headers."""
+"""Tests for processing/dates.py, date extraction from URLs, HTML, headers."""
 
 import pytest
 from datetime import datetime, timezone

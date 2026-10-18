@@ -48,7 +48,7 @@ def extract_navigation(html: str, base_url: str) -> list[NavLink]:
     nav_links: list[NavLink] = []
     seen_paths: set[str] = set()
 
-    # 1. Header navigation — process each <nav> inside the header separately
+    # 1. Header navigation, process each <nav> inside the header separately
     #    so a language-selector <ul> doesn't short-circuit the main nav <section>s
     header_navs_processed: set[int] = set()
     for header in soup.find_all("header"):

@@ -113,10 +113,10 @@ def article_relpath_in_section(url_path: str, section_path: str) -> str:
     if section and article.startswith(section + "/"):
         rel = article[len(section) + 1:]
     elif not section:
-        # Root section — use full path
+        # Root section, use full path
         rel = article
     else:
-        # Article not under this section — use just the slug to avoid
+        # Article not under this section, use just the slug to avoid
         # duplicating path segments (e.g., /business/article under
         # section /business/markets would create markets/business/article)
         return extract_slug(url_path)
@@ -235,7 +235,7 @@ def url_to_filepath(url_path: str, config: ScrapeConfig, hash_fragment: str = ""
     # Path traversal protection: ensure result stays within output_dir
     output_dir_resolved = os.path.normpath(config.output_dir)
     if not result.startswith(output_dir_resolved + os.sep) and result != output_dir_resolved:
-        # Malicious path escaped output_dir — fall back to flat filename
+        # Malicious path escaped output_dir, fall back to flat filename
         safe_name = clean.replace("/", "_").replace("\\", "_")
         result = os.path.join(config.output_dir, safe_name)
 

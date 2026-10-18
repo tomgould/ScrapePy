@@ -148,7 +148,7 @@ def build_site_outline(
                 sections_by_path[link.path] = section
                 all_sections_by_path[link.path] = section
         else:
-            # Child link — find parent section by label matching
+            # Child link, find parent section by label matching
             parent_section = None
             for nav in nav_links:
                 if nav.label == link.parent_label and nav.level == link.level - 1:
@@ -167,7 +167,7 @@ def build_site_outline(
                 if link.path not in parent_section.children and link.path != parent_section.path:
                     parent_section.children.append(link.path)
             elif link.path not in sections_by_path and link.path not in all_sections_by_path:
-                # Orphan child — promote to top-level section
+                # Orphan child, promote to top-level section
                 section = NavSection(
                     label=link.label,
                     path=link.path,

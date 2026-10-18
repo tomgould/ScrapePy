@@ -1,4 +1,4 @@
-"""Tests for processing/rewriter.py — HTML URL rewriting for offline viewing."""
+"""Tests for processing/rewriter.py, HTML URL rewriting for offline viewing."""
 
 import pytest
 

@@ -1,4 +1,4 @@
-"""Tests for scrapepy.processing.outline — site outline building."""
+"""Tests for scrapepy.processing.outline, site outline building."""
 
 import json
 import os

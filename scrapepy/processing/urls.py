@@ -155,7 +155,7 @@ def is_likely_article_path(path: str) -> bool:
     last = path.rstrip("/").rsplit("/", 1)[-1]
     if not last:
         return False
-    # 3+ hyphens — very likely article headline slug
+    # 3+ hyphens, very likely article headline slug
     if last.count("-") >= 3:
         return True
     # Long slug (>= 30 chars) with hyphens
@@ -225,7 +225,7 @@ def discover_section_pages(html: str, base_url: str) -> list[str]:
 def classify_asset_url(url: str, base_url: str, include_assets: bool) -> dict | None:
     """Classify a URL into an asset category and return download info.
 
-    Returns dict with keys: folder, filename, full_url  — or None to skip.
+    Returns dict with keys: folder, filename, full_url, or None to skip.
     """
     if not url or url.startswith(("data:", "javascript:", "blob:", "about:")):
         return None

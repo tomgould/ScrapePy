@@ -1,4 +1,4 @@
-"""Crawl cache for incremental mode — tracks ETags, Last-Modified, and content hashes."""
+"""Crawl cache for incremental mode, tracks ETags, Last-Modified, and content hashes."""
 
 import hashlib
 import json

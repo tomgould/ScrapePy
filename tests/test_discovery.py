@@ -1,4 +1,4 @@
-"""Tests for scrapepy.processing.discovery — robots.txt parsing."""
+"""Tests for scrapepy.processing.discovery, robots.txt parsing."""
 
 import pytest
 from scrapepy.processing.discovery import parse_robots_sitemaps

@@ -26,7 +26,7 @@ class DateResult:
     raw: str  # Original string the date was parsed from
 
 
-# URL date patterns — matches /2026/02/25/, /2026-02-25-, /20260225- in URL paths
+# URL date patterns, matches /2026/02/25/, /2026-02-25-, /20260225- in URL paths
 _URL_DATE_PATTERNS = [
     # /2026/02/25/slug or /2026/02/25-slug
     re.compile(r'/(\d{4})/(\d{1,2})/(\d{1,2})(?:/|-)'),
@@ -207,5 +207,5 @@ def url_has_old_date(url_path: str, cutoff: datetime) -> bool:
     """
     result = extract_date_from_url(url_path)
     if result is None:
-        return False  # No date in URL — can't tell, don't filter
+        return False  # No date in URL, can't tell, don't filter
     return result.date < cutoff

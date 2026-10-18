@@ -1,4 +1,4 @@
-"""Orchestrator — dispatches to the correct scraping mode."""
+"""Orchestrator, dispatches to the correct scraping mode."""
 
 import sys
 
@@ -35,7 +35,7 @@ async def run_scraper(config: ScrapeConfig):
     else:
         from .modes.crawl import run_crawl_mode
         await run_crawl_mode(config)
-        # Crawl mode converts markdown inline — skip batch conversion
+        # Crawl mode converts markdown inline, skip batch conversion
         return
 
     # Markdown conversion for non-crawl modes (if requested)

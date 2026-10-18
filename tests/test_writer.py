@@ -1,4 +1,4 @@
-"""Tests for output/writer.py — url_to_filepath numeric segment flattening."""
+"""Tests for output/writer.py, url_to_filepath numeric segment flattening."""
 
 import os
 
@@ -160,7 +160,7 @@ class TestExtractSlug:
 
 
 class TestArticleRelpathInSection:
-    """Tests for article_relpath_in_section — relative path computation."""
+    """Tests for article_relpath_in_section, relative path computation."""
 
     def test_one_intermediate_dir(self):
         """Section /f1, article /f1/news/article-slug -> news/article-slug"""

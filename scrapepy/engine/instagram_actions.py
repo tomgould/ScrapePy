@@ -35,7 +35,7 @@ async def wait_for_login(page, timeout: int = 180) -> bool:
             return True
         await asyncio.sleep(interval)
         elapsed += interval
-    print("  Login timeout — continuing without login")
+    print("  Login timeout, continuing without login")
     return False
 
 
@@ -190,7 +190,7 @@ async def extract_profile_data(page) -> dict:
                     data.external_url = user.external_url || '';
                     data.category = user.category_name || user.category || '';
 
-                    // Follower/following counts — different API shapes
+                    // Follower/following counts, different API shapes
                     if (user.follower_count !== undefined) {
                         data.followers = String(user.follower_count);
                     } else if (user.edge_followed_by) {

@@ -1,4 +1,4 @@
-"""Single page SPA mode — scrape a single page with full JS rendering."""
+"""Single page SPA mode, scrape a single page with full JS rendering."""
 
 import asyncio
 import os

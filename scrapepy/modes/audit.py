@@ -1,4 +1,4 @@
-"""Audit mode — site reconnaissance + test fixture generation."""
+"""Audit mode, site reconnaissance + test fixture generation."""
 
 import asyncio
 import json
@@ -156,7 +156,7 @@ async def run_audit_mode(config: ScrapeConfig):
 
     sample_pages: list[dict] = []
 
-    # Homepage (already fetched — classify it)
+    # Homepage (already fetched, classify it)
     if homepage_html:
         page_type = classify_page("/", homepage_html)
         date_result = get_best_date("/", homepage_html)
@@ -256,7 +256,7 @@ async def run_audit_mode(config: ScrapeConfig):
     # ---------------------------------------------------------------
     print("Phase 3: Saving results...")
 
-    # audit_report.json — full results
+    # audit_report.json, full results
     report_path = os.path.join(fixture_dir, "audit_report.json")
     try:
         with open(report_path, "w", encoding="utf-8") as f:
@@ -266,7 +266,7 @@ async def run_audit_mode(config: ScrapeConfig):
         print(f"  Error saving audit report: {e}")
         return
 
-    # test_config.json — committable expected values for test validation
+    # test_config.json, committable expected values for test validation
     test_config = _build_test_config(config, outline, sample_pages, robots_content, section_pages)
     test_config_path = os.path.join(fixture_dir, "test_config.json")
     try:

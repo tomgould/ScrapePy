@@ -1,4 +1,4 @@
-"""Tests for crawl.py helper functions — article detection, section splitting."""
+"""Tests for crawl.py helper functions, article detection, section splitting."""
 
 import pytest
 from scrapepy.config import ScrapeConfig

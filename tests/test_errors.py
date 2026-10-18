@@ -1,4 +1,4 @@
-"""Tests for processing/errors.py — error page detection."""
+"""Tests for processing/errors.py, error page detection."""
 
 import pytest
 
@@ -43,7 +43,7 @@ class TestIsErrorPageHtml:
         assert is_error_page_html("") is False
 
     def test_404_in_content_not_tag(self):
-        # "404" as a plain string isn't detected — must be in >404<
+        # "404" as a plain string isn't detected, must be in >404<
         assert is_error_page_html("Error code 404 occurred") is False
 
 

@@ -54,7 +54,7 @@ class TestBuildFrontmatter:
     def test_none_values_excluded_except_core(self):
         metadata = {"title": "Test", "date": None, "domain": "example.com"}
         result = HTMLToMarkdown._build_frontmatter(metadata)
-        # date is a core field — shown as null even when None
+        # date is a core field, shown as null even when None
         assert "date: null\n" in result
         assert "title: Test\n" in result
         assert "domain: example.com\n" in result

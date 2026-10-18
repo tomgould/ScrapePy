@@ -60,7 +60,7 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
 
     audit_group = parser.add_argument_group("Audit mode")
     audit_group.add_argument("--audit", action="store_true",
-                            help="Reconnaissance only — analyze site structure, save fixtures (no crawl)")
+                            help="Reconnaissance only: analyze site structure and save fixtures (no crawl)")
 
     ig_group = parser.add_argument_group("Instagram mode")
     ig_group.add_argument("--instagram", action="store_true",
@@ -191,7 +191,7 @@ def main(argv: list[str] | None = None):
         if config.max_articles:
             print(f"Max articles per section: {config.max_articles}")
         if config.single_page or config.docs or config.swagger:
-            print("  (date filter has no effect in this mode — all pages saved)")
+            print("  (date filter has no effect in this mode; all pages saved)")
     if config.include_assets:
         print("Include assets: CSS and JS files will be downloaded")
     else:

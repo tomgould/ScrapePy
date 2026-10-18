@@ -558,7 +558,7 @@ class HTMLToMarkdown:
         md = re.sub(r'^\s*Article continues below\s*(?:ADVERTISEMENT)?\s*$',
                      '', md, flags=re.MULTILINE)
         # Hearst/general "Advertisement - Continue Reading Below"
-        md = re.sub(r'^\s*Advertisement\s*[-–—]\s*Continue Reading Below\s*$',
+        md = re.sub(r'^\s*Advertisement\s*[-\u2013\u2014]\s*Continue Reading Below\s*$',
                      '', md, flags=re.MULTILINE | re.IGNORECASE)
         # Standalone "Advertisement" text
         md = re.sub(r'^\s*Advertisement\s*$', '', md, flags=re.MULTILINE)
@@ -742,7 +742,7 @@ class HTMLToMarkdown:
             r'^!\[(?:Video Player Placeholder|Hero video poster|logo)[^\]]*\]\([^)]*\)\s*$',
             '', md, flags=re.MULTILINE | re.IGNORECASE)
 
-        # "View image in fullscreen" links (Guardian) — standalone or inline
+        # "View image in fullscreen" links (Guardian), standalone or inline
         md = re.sub(r'\[View image in fullscreen\]\(#[^)]*\)',
                      '', md, flags=re.IGNORECASE)
 
@@ -846,12 +846,12 @@ class HTMLToMarkdown:
         # Strip site name suffixes from H1: "# Title | Site.com" -> "# Title"
         # Match domain-style suffixes
         md = re.sub(
-            r'^(# .+?)\s+[|–—-]\s+[\w][\w\s]*?'
+            r'^(# .+?)\s+[|\u2013\u2014-]\s+[\w][\w\s]*?'
             r'\.(?:com|co\.uk|net|org|io|uk|us|info|news)\s*$',
             r'\1', md, flags=re.MULTILINE)
         # Match brand name suffixes (short text after separator, max 40 chars)
         md = re.sub(
-            r'^(# .{20,}?)\s+[|–—-]\s+(?:The\s+)?[\w][\w\s]{1,35}$',
+            r'^(# .{20,}?)\s+[|\u2013\u2014-]\s+(?:The\s+)?[\w][\w\s]{1,35}$',
             r'\1', md, flags=re.MULTILINE)
 
         # Duplicate H1: keep first, remove subsequent identical ones
@@ -1162,7 +1162,7 @@ class HTMLToMarkdown:
 
             md = self.convert_links(md, filepath)
 
-            # Compute word count — skip list/section pages with no real content
+            # Compute word count, skip list/section pages with no real content
             word_count = self._compute_word_count(md)
             if word_count < 50:
                 print(f"  Skipped (list/section page, {word_count} words): {filepath.name}")

@@ -1,4 +1,4 @@
-"""Tests for processing/urls.py — URL normalization, scope, classification."""
+"""Tests for processing/urls.py, URL normalization, scope, classification."""
 
 import pytest
 
@@ -179,7 +179,7 @@ class TestIsLikelyArticlePath:
         assert is_likely_article_path("/news/story-12345") is True
 
     def test_section_name(self):
-        # Only 2 hyphens and short — not article
+        # Only 2 hyphens and short, not article
         assert is_likely_article_path("/arts-and-entertainment") is False
 
     def test_empty(self):

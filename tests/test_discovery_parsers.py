@@ -1,4 +1,4 @@
-"""Tests for processing/discovery.py — sitemap, RSS, Atom parsing (pure functions, no network)."""
+"""Tests for processing/discovery.py, sitemap, RSS, Atom parsing (pure functions, no network)."""
 
 import pytest
 

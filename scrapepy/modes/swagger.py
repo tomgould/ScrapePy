@@ -1,4 +1,4 @@
-"""Swagger/OpenAPI documentation mode — expands all sections then saves."""
+"""Swagger/OpenAPI documentation mode, expands all sections then saves."""
 
 import asyncio
 import os

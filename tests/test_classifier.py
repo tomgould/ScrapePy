@@ -1,4 +1,4 @@
-"""Tests for processing/classifier.py — page type classification."""
+"""Tests for processing/classifier.py, page type classification."""
 
 import pytest
 

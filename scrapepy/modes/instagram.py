@@ -122,7 +122,7 @@ async def _scrape_account(username: str, config: ScrapeConfig) -> int:
         if config.ig_login:
             logged_in = await check_login_status(page)
             if not logged_in:
-                print("  Not logged in — navigating to login page...")
+                print("  Not logged in, navigating to login page...")
                 await page.goto("https://www.instagram.com/accounts/login/")
                 await asyncio.sleep(3)
                 await dismiss_login_popup(page)
@@ -271,13 +271,13 @@ async def _scrape_post(
             or "/reel/" in post_url
         )
         if is_video:
-            print("    Video post — triggering playback to capture CDN URL...")
+            print("    Video post, triggering playback to capture CDN URL...")
             await trigger_video_playback(page)
             await asyncio.sleep(2)
 
         # Handle carousel posts
         if post_data.get("is_carousel"):
-            print("    Carousel post — navigating slides...")
+            print("    Carousel post, navigating slides...")
             carousel_media.extend(await navigate_carousel(page, intercepted_video_urls))
         elif is_video and not carousel_media:
             # For non-carousel video: trigger playback again and wait
@@ -360,7 +360,7 @@ async def _scrape_post(
     existing_media = _get_existing_media(media_dir)
 
     if config.ig_update_meta and existing_media:
-        # Reuse existing media files — skip downloads
+        # Reuse existing media files, skip downloads
         downloaded_files = existing_media
         print(f"    Reusing {len(existing_media)} existing media files")
     else:

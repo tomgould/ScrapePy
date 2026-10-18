@@ -123,7 +123,7 @@ def post_to_markdown(post_data: dict) -> str:
 
     if music_title or original_sound_author:
         if music_title and music_artist:
-            lines.append(f"**Music:** {music_title} — {music_artist}")
+            lines.append(f"**Music:** {music_title}, {music_artist}")
         elif music_title:
             lines.append(f"**Music:** {music_title}")
         elif original_sound_author:
@@ -208,7 +208,7 @@ def post_to_markdown(post_data: dict) -> str:
                 if c_time:
                     fmt = _format_timestamp(c_time)
                     if fmt:
-                        time_str = f" — {fmt}"
+                        time_str = f", {fmt}"
                 lines.append(f"- **@{username}:** {text}{like_str}{time_str}")
         lines.append("")
 

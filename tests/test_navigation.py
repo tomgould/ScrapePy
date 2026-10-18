@@ -1,4 +1,4 @@
-"""Tests for scrapepy.processing.navigation — homepage nav parsing."""
+"""Tests for scrapepy.processing.navigation, homepage nav parsing."""
 
 import pytest
 from scrapepy.processing.navigation import extract_navigation, NavLink

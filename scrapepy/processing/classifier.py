@@ -102,7 +102,7 @@ def classify_page(url_path: str, html: str) -> PageType:
     if has_date and link_density < 0.5:
         return PageType.ARTICLE
 
-    # Has date signals but also high link density — still article
+    # Has date signals but also high link density, still article
     # (some articles have lots of related links)
     if has_date:
         return PageType.ARTICLE

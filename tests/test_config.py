@@ -1,4 +1,4 @@
-"""Tests for config.py — ScrapeConfig, _parse_recent, _parse_since."""
+"""Tests for config.py, ScrapeConfig, _parse_recent, _parse_since."""
 
 import base64
 import pytest

@@ -28,7 +28,7 @@ def _fetch_url(url: str, config: ScrapeConfig) -> str | None:
 
 
 async def _fetch_url_async(url: str, config: ScrapeConfig) -> str | None:
-    """Async wrapper around _fetch_url — runs sync HTTP fetch in thread pool."""
+    """Async wrapper around _fetch_url, runs sync HTTP fetch in thread pool."""
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _fetch_url, url, config)
 
@@ -219,7 +219,7 @@ async def run_discovery(
     """Run pre-crawl discovery: fetch sitemaps and feeds, build a URL date map.
 
     Fetches sitemaps and feeds concurrently for faster discovery.
-    All errors are silently caught — missing sitemaps/feeds are normal.
+    All errors are silently caught, missing sitemaps/feeds are normal.
     Returns a tuple of:
       - DiscoveryMap: dict mapping url_path -> datetime for known-dated URLs
       - homepage_html: raw HTML of the homepage (for nav parsing reuse), or None
@@ -245,7 +245,7 @@ async def run_discovery(
         urls_found, sub_sitemaps = _parse_sitemap(sitemap_xml, config.base_url)
         date_map.update(urls_found)
         if verbose:
-            print(f"  Discovery: sitemap.xml — {len(urls_found)} dated URLs")
+            print(f"  Discovery: sitemap.xml: {len(urls_found)} dated URLs")
 
     # Collect all sub-sitemap URLs to fetch (from main + robots.txt extras)
     seen_sitemaps = {sitemap_url}
@@ -276,7 +276,7 @@ async def run_discovery(
             sub_urls, sub_subs = _parse_sitemap(sub_xml, config.base_url)
             date_map.update(sub_urls)
             if verbose:
-                print(f"  Discovery: sub-sitemap — {len(sub_urls)} dated URLs")
+                print(f"  Discovery: sub-sitemap: {len(sub_urls)} dated URLs")
             for u in sub_subs[:20]:
                 if u not in seen_sitemaps:
                     seen_sitemaps.add(u)
@@ -295,7 +295,7 @@ async def run_discovery(
                 sub_urls, _ = _parse_sitemap(sub_xml, config.base_url)
                 date_map.update(sub_urls)
                 if verbose:
-                    print(f"  Discovery: level-2 sub-sitemap — {len(sub_urls)} dated URLs")
+                    print(f"  Discovery: level-2 sub-sitemap: {len(sub_urls)} dated URLs")
 
     # 2. Try RSS/Atom feeds
     # Auto-discover from homepage (already fetched above)
@@ -342,7 +342,7 @@ async def run_discovery(
 
             date_map.update(feed_dates)
             if verbose and feed_dates:
-                print(f"  Discovery: feed — {len(feed_dates)} dated URLs")
+                print(f"  Discovery: feed: {len(feed_dates)} dated URLs")
 
     if verbose:
         print(f"  Discovery complete: {len(date_map)} total dated URLs")

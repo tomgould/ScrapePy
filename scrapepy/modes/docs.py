@@ -1,4 +1,4 @@
-"""Documentation site mode — navigates sidebar links and captures all pages."""
+"""Documentation site mode, navigates sidebar links and captures all pages."""
 
 import asyncio
 import html as html_lib
@@ -39,7 +39,7 @@ async def run_docs_mode(config: ScrapeConfig):
         print("Check that the URL is correct and the browser is installed (scrapling install).")
         return
 
-    # For docs mode we need direct browser access — use StealthyFetcher differently
+    # For docs mode we need direct browser access, use StealthyFetcher differently
     # We'll use a simpler approach: fetch each page individually
     print("  Finding navigation links...")
 
