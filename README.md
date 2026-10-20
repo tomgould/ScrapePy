@@ -1,6 +1,6 @@
 # ScrapePy
 
-Python web scraper using [Scrapling](https://github.com/D4Vinci/Scrapling) + [Patchright](https://github.com/AuroraOSS/patchright) for stealth browser automation and anti-detection.
+Python web scraper using [Scrapling](https://github.com/D4Vinci/Scrapling) + [Patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright-python) for stealth browser automation and anti-detection.
 
 ScrapePy crawls websites, downloads assets, rewrites URLs for offline viewing, and optionally converts everything to Markdown. It handles Cloudflare challenges, JavaScript-rendered SPAs, Swagger/OpenAPI docs, documentation platforms, Instagram profiles, and news sites with date filtering out of the box.
 
