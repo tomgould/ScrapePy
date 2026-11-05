@@ -4,8 +4,10 @@ Handles standard HTML, API docs,
 Swagger UI, Adobe RoboHelp, and MadCap Flare documentation.
 """
 
+import hashlib
 import re
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 
 from bs4 import BeautifulSoup
@@ -69,6 +71,25 @@ _JUNK_CLASS_KEYWORDS = (
     'cookie-banner', 'cookie-consent', 'consent-banner',
     'puff', 'dms-puff', 'rotator',
 )
+
+
+# Frontmatter keys in output order. Every Markdown file uses this set.
+FRONTMATTER_FIELDS = (
+    "title", "url", "date", "date_source", "page_type",
+    "word_count", "description", "domain",
+    "articles", "sub_sections",
+    "scraped_at", "content_hash",
+)
+
+
+def utc_now_iso() -> str:
+    """Current UTC time as ISO 8601 with seconds precision."""
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def content_hash(body: str) -> str:
+    """sha256 of the Markdown body (everything after the frontmatter)."""
+    return "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
 class HTMLToMarkdown:
@@ -969,23 +990,13 @@ class HTMLToMarkdown:
     def _build_frontmatter(metadata: dict) -> str:
         """Build YAML frontmatter string from metadata dict.
 
-        Fixed field order. Core fields (date, date_source, page_type) are
-        always included (as null when missing) for predictable parsing.
-        Other fields are only included when non-None.
+        Fixed field order, lowercase keys. Only non-null fields are written,
+        so a missing key means the value is unknown.
         """
-        field_order = [
-            "title", "url", "date", "date_source", "page_type",
-            "word_count", "description", "domain",
-            "articles", "sub_sections",
-        ]
-        # Core fields always present for predictable frontmatter schema
-        _always_include = {"date", "date_source", "page_type"}
         lines = ["---"]
-        for key in field_order:
+        for key in FRONTMATTER_FIELDS:
             val = metadata.get(key)
             if val is None:
-                if key in _always_include:
-                    lines.append(f"{key}: null")
                 continue
             if isinstance(val, int):
                 lines.append(f"{key}: {val}")
@@ -1183,6 +1194,8 @@ class HTMLToMarkdown:
                 if heading_match:
                     md = heading_match.group(1) + f"\n**{visible_date}**\n" + md[heading_match.end():]
 
+            metadata.setdefault("scraped_at", utc_now_iso())
+            metadata["content_hash"] = content_hash(md)
             frontmatter = self._build_frontmatter(metadata)
             md = frontmatter + "\n" + md
 
@@ -1254,6 +1267,7 @@ def generate_section_index(
     domain: str,
     articles: list[dict],
     sub_sections: list[dict],
+    scraped_at: str | None = None,
 ) -> str:
     """Generate a section index.md with article listings and sub-section links.
 
@@ -1271,16 +1285,14 @@ def generate_section_index(
     metadata = {
         "title": section_label,
         "url": section_url,
-        "page_type": "SECTION",
+        "page_type": "section",
         "domain": domain,
         "articles": len(articles),
     }
     if sub_sections:
         metadata["sub_sections"] = len(sub_sections)
 
-    frontmatter = HTMLToMarkdown._build_frontmatter(metadata)
-
-    parts = [frontmatter, "", f"# {section_label}", ""]
+    parts = [f"# {section_label}", ""]
 
     # Sub-sections listed before articles
     if sub_sections:
@@ -1321,4 +1333,8 @@ def generate_section_index(
 
             parts.append("")
 
-    return "\n".join(parts)
+    body = "\n".join(parts)
+    metadata["scraped_at"] = scraped_at or utc_now_iso()
+    metadata["content_hash"] = content_hash(body)
+    frontmatter = HTMLToMarkdown._build_frontmatter(metadata)
+    return frontmatter + "\n" + body

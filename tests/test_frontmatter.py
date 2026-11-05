@@ -38,27 +38,20 @@ class TestBuildFrontmatter:
     def test_minimal_fields(self):
         metadata = {"domain": "example.com"}
         result = HTMLToMarkdown._build_frontmatter(metadata)
-        # Core fields (date, date_source, page_type) always present as null
-        assert "date: null\n" in result
-        assert "date_source: null\n" in result
-        assert "page_type: null\n" in result
-        assert "domain: example.com\n" in result
+        assert result == "---\ndomain: example.com\n---\n"
 
     def test_empty_metadata(self):
         result = HTMLToMarkdown._build_frontmatter({})
-        # Core fields always present even with empty metadata
-        assert "date: null\n" in result
-        assert "date_source: null\n" in result
-        assert "page_type: null\n" in result
+        assert result == "---\n---\n"
 
-    def test_none_values_excluded_except_core(self):
-        metadata = {"title": "Test", "date": None, "domain": "example.com"}
+    def test_none_values_excluded(self):
+        metadata = {"title": "Test", "date": None, "page_type": None, "domain": "example.com"}
         result = HTMLToMarkdown._build_frontmatter(metadata)
-        # date is a core field, shown as null even when None
-        assert "date: null\n" in result
+        assert "null" not in result
+        assert "date:" not in result
+        assert "page_type:" not in result
         assert "title: Test\n" in result
         assert "domain: example.com\n" in result
-        # Non-core fields with None are still excluded
         assert "description:" not in result
 
     def test_yaml_special_chars_quoted(self):
@@ -82,8 +75,7 @@ class TestBuildFrontmatter:
         lines = result.strip().split("\n")
         # Filter to only field lines (not --- markers)
         fields = [l.split(":")[0] for l in lines if not l.startswith("---")]
-        # Core fields (date, date_source, page_type) included as null
-        assert fields == ["title", "url", "date", "date_source", "page_type", "word_count", "domain"]
+        assert fields == ["title", "url", "word_count", "domain"]
 
     def test_word_count_is_integer(self):
         metadata = {"word_count": 500}
@@ -283,3 +275,77 @@ class TestConvertFileWithFrontmatter:
             content = md_path.read_text()
             assert 'date: "2026-02-15T10:30:00+00:00"' in content
             assert "date_source: META_TAG\n" in content
+
+
+class TestScrapedAtAndContentHash:
+    """Every page carries scraped_at and a hash of its Markdown body."""
+
+    BODY = "This is test content with enough words to pass the length check. " * 5
+
+    def _convert(self, tmp_path, metadata=None, name="page.html"):
+        input_dir = tmp_path / "ScrapedSites" / "site"
+        input_dir.mkdir(parents=True, exist_ok=True)
+        filepath = input_dir / name
+        filepath.write_text(
+            f"<html><head><title>Hash Page</title></head><body><article>"
+            f"<h1>Hash Page</h1><p>{self.BODY}</p></article></body></html>"
+        )
+        converter = HTMLToMarkdown(input_dir, base_url="https://example.com", domain="example.com")
+        assert converter.convert_file(filepath, metadata=metadata)
+        return converter, Path(converter.last_output_path).read_text()
+
+    @staticmethod
+    def _split(content):
+        assert content.startswith("---\n")
+        end = content.index("\n---\n", 4)
+        fm_lines = content[4:end].split("\n")
+        fm = {k: v.strip('"') for k, v in (line.split(": ", 1) for line in fm_lines)}
+        body = content[end + len("\n---\n"):]
+        return fm, body
+
+    def test_fields_present(self, tmp_path):
+        _, content = self._convert(tmp_path, metadata={"url": "https://example.com/page"})
+        fm, _ = self._split(content)
+        assert "scraped_at" in fm
+        assert fm["content_hash"].startswith("sha256:")
+
+    def test_scraped_at_is_utc_iso(self, tmp_path):
+        from datetime import datetime
+        _, content = self._convert(tmp_path, metadata={})
+        fm, _ = self._split(content)
+        value = fm["scraped_at"]
+        parsed = datetime.fromisoformat(value)
+        assert parsed.utcoffset().total_seconds() == 0
+
+    def test_content_hash_matches_body(self, tmp_path):
+        import hashlib
+        _, content = self._convert(tmp_path, metadata={})
+        fm, body = self._split(content)
+        # A blank line separates the frontmatter from the body
+        assert body.startswith("\n")
+        expected = "sha256:" + hashlib.sha256(body[1:].encode("utf-8")).hexdigest()
+        assert fm["content_hash"] == expected
+
+    def test_hash_stable_across_runs(self, tmp_path):
+        _, first = self._convert(tmp_path, metadata={"scraped_at": "2026-01-01T00:00:00+00:00"})
+        _, second = self._convert(tmp_path, metadata={"scraped_at": "2026-02-01T00:00:00+00:00"})
+        assert self._split(first)[0]["content_hash"] == self._split(second)[0]["content_hash"]
+
+    def test_no_null_values(self, tmp_path):
+        _, content = self._convert(tmp_path, metadata={"url": "https://example.com/page"})
+        assert "null" not in self._split(content)[0].values()
+        assert "date:" not in content
+
+    def test_last_output_path_reset_on_skip(self, tmp_path):
+        converter, _ = self._convert(tmp_path, metadata={})
+        bad = tmp_path / "ScrapedSites" / "site" / "err.html"
+        bad.write_text("<html><head><title>404 Not Found</title></head><body></body></html>")
+        assert converter.convert_file(bad) is False
+        assert converter.last_output_path is None
+
+    def test_field_order_puts_new_fields_last(self):
+        result = HTMLToMarkdown._build_frontmatter({
+            "content_hash": "sha256:ab", "scraped_at": "x", "title": "T", "domain": "d",
+        })
+        keys = [l.split(":")[0] for l in result.strip().split("\n") if l != "---"]
+        assert keys == ["title", "domain", "scraped_at", "content_hash"]

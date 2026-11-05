@@ -25,7 +25,7 @@ class TestGenerateSectionIndex:
         )
         assert result.startswith("---\n")
         assert "title: Sport" in result
-        assert "page_type: SECTION" in result
+        assert "page_type: section\n" in result
         assert "articles: 1" in result
         assert "# Sport" in result
         assert "[Great Match Report](great-match-report.md)" in result
@@ -255,3 +255,35 @@ class TestGenerateSectionIndex:
             sub_sections=[],
         )
         assert "12,345 words" in result
+
+
+class TestSectionIndexFrontmatter:
+    """_index.md uses the same lowercase keys and values as other pages."""
+
+    def _index(self):
+        return generate_section_index(
+            section_label="Sport",
+            section_url="https://example.com/sport",
+            domain="example.com",
+            articles=[{"title": "A", "filename": "a.md"}],
+            sub_sections=[],
+            scraped_at="2026-01-01T00:00:00+00:00",
+        )
+
+    def test_keys_and_values_lowercase(self):
+        result = self._index()
+        fm = result.split("\n---\n", 1)[0].removeprefix("---\n")
+        for line in fm.split("\n"):
+            key = line.split(":", 1)[0]
+            assert key == key.lower()
+        assert "SECTION" not in result
+
+    def test_scraped_at_and_hash(self):
+        import hashlib
+        result = self._index()
+        assert 'scraped_at: "2026-01-01T00:00:00+00:00"\n' in result
+        body = result.split("\n---\n", 1)[1][1:]
+        assert f'content_hash: "sha256:{hashlib.sha256(body.encode()).hexdigest()}"\n' in result
+
+    def test_body_starts_with_heading(self):
+        assert self._index().split("\n---\n", 1)[1].startswith("\n# Sport\n")

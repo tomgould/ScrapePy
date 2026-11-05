@@ -221,6 +221,15 @@ class TestRunSummaryFile:
         assert summary["counts"]["failed"] == 1
         assert summary["exit_code"] == EXIT_NOTHING_FETCHED
 
+    def test_markdown_has_new_frontmatter(self, site, tmp_path):
+        site(SITE, ROBOTS)
+        config, _ = run(tmp_path)
+        with open(os.path.join(config.markdown_dir, "about.md"), encoding="utf-8") as f:
+            text = f.read()
+        assert "\nscraped_at: " in text
+        assert '\ncontent_hash: "sha256:' in text
+        assert "null" not in text.split("\n---\n", 1)[0]
+
 
 SECTION_SITE = {
     "/": page("Home", ["/news"], body="Short home."),
@@ -234,6 +243,9 @@ class TestIndexPages:
         site(SECTION_SITE, None)
         config, _ = run(tmp_path, since="2000-01-01")
         assert os.path.exists(os.path.join(config.markdown_dir, "news", "_index.md"))
+        with open(os.path.join(config.markdown_dir, "news", "_index.md"), encoding="utf-8") as f:
+            text = f.read()
+        assert "page_type: section\n" in text
 
     def test_no_index_pages_skips_listing(self, site, tmp_path):
         site(SECTION_SITE, None)
