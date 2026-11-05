@@ -3,14 +3,14 @@
 import asyncio
 import re
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 
 from ..config import ScrapeConfig
 from ..engine.fetcher import fetch_page_http
 from .dates import _parse_iso_date, _parse_rfc2822_date
-from .robots import RobotsPolicy, policy_from_response, robots_url
+from .robots import ROBOTS_REDIRECT_FAILED, RobotsPolicy, policy_from_response, robots_url
 
 # Type alias for the discovery map: url_path -> datetime
 DiscoveryMap = dict[str, datetime]
@@ -203,19 +203,52 @@ _COMMON_FEED_PATHS = [
 ]
 
 
+# RFC 9309 asks crawlers to follow at least five redirects for robots.txt
+ROBOTS_MAX_REDIRECTS = 5
+_REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+
+
+def _header(headers, name: str) -> str:
+    for key, value in dict(headers or {}).items():
+        if key.lower() == name:
+            return value
+    return ""
+
+
 def fetch_robots_txt(config: ScrapeConfig) -> tuple[int, str | None]:
-    """Fetch /robots.txt. Returns (HTTP status, body); status 0 when unreachable."""
+    """Fetch /robots.txt, following up to five redirects (to any host).
+
+    Returns (HTTP status, body). Status 0 means unreachable, including a
+    redirect loop, a chain longer than five, or a redirect with no Location.
+    The file reached applies to this site, wherever it was served from.
+    """
     url = robots_url(config.base_url)
-    try:
-        response = fetch_page_http(url, config)
-    except Exception as e:
-        if config.verbose:
-            print(f"    robots.txt fetch failed ({type(e).__name__}: {e})")
-        return 0, None
-    status = response.status
-    if 200 <= status < 300:
-        return status, response.body.decode(response.encoding or "utf-8", errors="replace")
-    return status, None
+    seen = {url}
+    for _ in range(ROBOTS_MAX_REDIRECTS + 1):
+        try:
+            response = fetch_page_http(url, config, follow_redirects=False)
+        except Exception as e:
+            if config.verbose:
+                print(f"    robots.txt fetch failed ({type(e).__name__}: {e})")
+            return 0, None
+        status = response.status
+        if status in _REDIRECT_STATUSES:
+            location = _header(getattr(response, "headers", {}), "location")
+            if not location:
+                return ROBOTS_REDIRECT_FAILED, None
+            url = urljoin(url, location)
+            if url in seen:
+                if config.verbose:
+                    print(f"    robots.txt redirect loop at {url}")
+                return ROBOTS_REDIRECT_FAILED, None
+            seen.add(url)
+            continue
+        if 200 <= status < 300:
+            return status, response.body.decode(response.encoding or "utf-8", errors="replace")
+        return status, None
+    if config.verbose:
+        print(f"    robots.txt: more than {ROBOTS_MAX_REDIRECTS} redirects")
+    return ROBOTS_REDIRECT_FAILED, None
 
 
 def load_robots_policy(config: ScrapeConfig) -> tuple[RobotsPolicy, str | None]:

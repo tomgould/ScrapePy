@@ -364,7 +364,7 @@ class FakeResponse:
 
 class TestLoadRobotsPolicy:
     def _patch(self, monkeypatch, response):
-        def fake(url, config, headers=None):
+        def fake(url, config, headers=None, follow_redirects=True):
             if isinstance(response, Exception):
                 raise response
             return response
@@ -428,3 +428,173 @@ class TestDiscoveryRespectsRobots:
         assert fetched == []
         assert homepage is None
         assert date_map == {}
+
+
+class TestGlobMatcher:
+    """The matcher is linear-time and agrees with a straightforward regex."""
+
+    def test_pathological_pattern_is_fast(self):
+        import time
+        from scrapepy.processing.robots import glob_match
+        rules = "User-agent: *\nDisallow: /*a*a*a*a*a*a*a*a*a*a*a*a*b\nDisallow: /a*a*a*a*a*a*b$\n"
+        policy = RobotsPolicy.from_text(rules, base_url=BASE)
+        start = time.perf_counter()
+        for n in (81, 150, 200, 2000, 20000):
+            assert policy.can_fetch("/" + "a" * n)
+        assert not glob_match("*a*a*a*a*a*a*a*a*b", "a" * 5000)
+        assert time.perf_counter() - start < 0.5
+
+    def test_many_rules_on_long_path_are_fast(self):
+        import time
+        rules = "User-agent: *\n" + "".join(f"Disallow: /*x{i}*y*z*q\n" for i in range(500))
+        policy = RobotsPolicy.from_text(rules, base_url=BASE)
+        start = time.perf_counter()
+        assert policy.can_fetch("/" + "x1y" * 700)
+        assert time.perf_counter() - start < 0.5
+
+    def test_glob_basics(self):
+        from scrapepy.processing.robots import glob_match
+        assert glob_match("", "")
+        assert not glob_match("", "a")
+        assert glob_match("*", "")
+        assert glob_match("a*", "abc")
+        assert glob_match("*c", "abc")
+        assert not glob_match("*d", "abc")
+        assert glob_match("a*b*c", "aXXbYYc")
+        assert not glob_match("a*b*c", "aXXbYY")
+        assert glob_match("a**b", "ab")
+
+    def test_agrees_with_reference_regex(self):
+        import random
+        import re
+        from scrapepy.processing.robots import Rule
+
+        def reference(pattern, path):
+            anchored = pattern.endswith("$")
+            body = pattern[:-1] if anchored else pattern
+            rx = ".*".join(re.escape(part) for part in body.split("*"))
+            return re.match(rx + ("\\Z" if anchored else ""), path, re.DOTALL) is not None
+
+        rng = random.Random(9309)
+        for _ in range(3000):
+            pattern = "/" + "".join(rng.choice("ab*.$") for _ in range(rng.randint(0, 6)))
+            pattern = pattern.replace("$", "") + ("$" if rng.random() < 0.3 else "")
+            path = "/" + "".join(rng.choice("ab.$") for _ in range(rng.randint(0, 8)))
+            rule = Rule(allow=False, pattern=pattern)
+            assert rule.matches(path) == reference(rule.pattern, path), (pattern, path)
+
+
+class TestBom:
+    def test_bom_does_not_drop_first_group(self):
+        rules = "﻿User-agent: *\nDisallow: /private\n"
+        assert not allowed(rules, "/private/x")
+
+    def test_bom_bytes_from_server(self, monkeypatch):
+        body = "﻿User-agent: *\nDisallow: /private\n".encode("utf-8")
+        monkeypatch.setattr(discovery, "fetch_page_http",
+                            lambda url, config, headers=None, follow_redirects=True: FakeResponse(200, body))
+        policy, _ = discovery.load_robots_policy(ScrapeConfig(url=BASE))
+        assert not policy.can_fetch("/private/x")
+
+
+class TestProductTokenGroups:
+    def test_short_name_does_not_capture_longer_token(self):
+        rules = "User-agent: *\nDisallow: /\n\nUser-agent: M\nAllow: /\n"
+        assert not allowed(rules, "/page", ua="MyBot/1.0")
+
+    def test_version_suffix_in_robots_line_is_ignored(self):
+        rules = "User-agent: *\nDisallow: /\n\nUser-agent: MyBot/1.0\nDisallow: /private\n"
+        assert allowed(rules, "/page", ua="MyBot/2.0")
+        assert not allowed(rules, "/private", ua="MyBot/2.0")
+
+    def test_token_match_is_case_insensitive(self):
+        rules = "User-agent: *\nDisallow: /\n\nUser-agent: MYBOT\nAllow: /\n"
+        assert allowed(rules, "/page", ua="mybot")
+
+    def test_prefix_of_token_does_not_match(self):
+        rules = "User-agent: *\nDisallow: /\n\nUser-agent: MyBot\nAllow: /\n"
+        assert not allowed(rules, "/page", ua="MyBotX/1.0")
+
+
+class RedirectingServer:
+    """Fake fetch_page_http: maps URL -> (status, location or body)."""
+
+    def __init__(self, routes):
+        self.routes = routes
+        self.requested: list[str] = []
+
+    def __call__(self, url, config, headers=None, follow_redirects=True):
+        assert follow_redirects is False
+        self.requested.append(url)
+        status, value = self.routes.get(url, (404, ""))
+        response = FakeResponse(status, value.encode() if status == 200 else b"")
+        response.headers = {"Location": value} if 300 <= status < 400 else {}
+        return response
+
+
+class TestRobotsRedirects:
+    def _load(self, monkeypatch, routes):
+        server = RedirectingServer(routes)
+        monkeypatch.setattr(discovery, "fetch_page_http", server)
+        policy, text = discovery.load_robots_policy(ScrapeConfig(url=BASE))
+        return policy, text, server
+
+    def test_redirect_to_other_host_applies_its_rules(self, monkeypatch):
+        policy, text, _ = self._load(monkeypatch, {
+            BASE + "/robots.txt": (301, "https://cdn.example.net/robots.txt"),
+            "https://cdn.example.net/robots.txt": (200, "User-agent: *\nDisallow: /secret\n"),
+        })
+        assert not policy.can_fetch("/secret")
+        assert policy.can_fetch("/page")
+
+    def test_relative_location(self, monkeypatch):
+        policy, _, _ = self._load(monkeypatch, {
+            BASE + "/robots.txt": (302, "/real/robots.txt"),
+            BASE + "/real/robots.txt": (200, "User-agent: *\nDisallow: /x\n"),
+        })
+        assert not policy.can_fetch("/x")
+
+    def test_five_redirects_are_followed(self, monkeypatch):
+        routes = {BASE + "/robots.txt": (301, BASE + "/r1")}
+        for i in range(1, 5):
+            routes[BASE + f"/r{i}"] = (308, BASE + f"/r{i + 1}")
+        routes[BASE + "/r5"] = (200, "User-agent: *\nDisallow: /x\n")
+        policy, _, server = self._load(monkeypatch, routes)
+        assert len(server.requested) == 6
+        assert not policy.disallow_all
+        assert not policy.can_fetch("/x")
+        assert policy.can_fetch("/y")
+
+    def test_six_redirects_disallow_everything(self, monkeypatch):
+        routes = {BASE + "/robots.txt": (301, BASE + "/r1")}
+        for i in range(1, 6):
+            routes[BASE + f"/r{i}"] = (301, BASE + f"/r{i + 1}")
+        routes[BASE + "/r6"] = (200, "User-agent: *\nDisallow:\n")
+        policy, _, server = self._load(monkeypatch, routes)
+        assert len(server.requested) == 6
+        assert policy.disallow_all
+        assert not policy.can_fetch("/y")
+        assert "redirect" in policy.note
+
+    def test_loop_disallows_everything(self, monkeypatch):
+        policy, _, server = self._load(monkeypatch, {
+            BASE + "/robots.txt": (301, BASE + "/a"),
+            BASE + "/a": (302, BASE + "/robots.txt"),
+        })
+        assert policy.disallow_all
+        assert len(server.requested) == 2
+
+    def test_redirect_without_location_disallows_everything(self, monkeypatch):
+        policy, _, _ = self._load(monkeypatch, {BASE + "/robots.txt": (301, "")})
+        assert policy.disallow_all
+
+    def test_redirect_to_404_means_no_restrictions(self, monkeypatch):
+        policy, _, _ = self._load(monkeypatch, {BASE + "/robots.txt": (301, BASE + "/gone")})
+        assert policy.can_fetch("/anything")
+
+    def test_ignore_robots_overrides_redirect_failure(self, monkeypatch):
+        monkeypatch.setattr(discovery, "fetch_page_http", RedirectingServer({
+            BASE + "/robots.txt": (301, BASE + "/robots.txt"),
+        }))
+        policy, _ = discovery.load_robots_policy(ScrapeConfig(url=BASE, ignore_robots=True))
+        assert policy.can_fetch("/x")

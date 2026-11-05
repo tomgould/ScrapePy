@@ -29,13 +29,16 @@ def page_headers(config: ScrapeConfig, headers: dict | None = None) -> dict:
     return merged
 
 
-def fetch_page_http(url: str, config: ScrapeConfig, headers: dict | None = None):
+def fetch_page_http(
+    url: str, config: ScrapeConfig, headers: dict | None = None,
+    follow_redirects: bool = True,
+):
     """Fetch a page using Scrapling's HTTP-only Fetcher (fast, no browser)."""
     merged = page_headers(config, headers)
     return Fetcher.get(
         url,
         stealthy_headers=True,
-        follow_redirects=True,
+        follow_redirects=follow_redirects,
         timeout=30,
         headers=merged,
     )

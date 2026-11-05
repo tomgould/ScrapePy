@@ -2,8 +2,9 @@
 
 Matching follows RFC 9309, the robots exclusion protocol:
 
-- The group for our user agent is chosen by product token. A group naming
-  our token (case-insensitive prefix, longest name wins) replaces the
+- The group for our user agent is chosen by product token ("mybot" in
+  "MyBot/1.0"): a group whose User-agent line names the same token,
+  compared case-insensitively and ignoring any version suffix, replaces the
   catch-all "*" group. Several groups for the same agent are merged.
 - Within the group, the rule with the longest path pattern that matches
   wins. On a tie, Allow wins. No matching rule means allowed.
@@ -12,6 +13,9 @@ Matching follows RFC 9309, the robots exclusion protocol:
 - Percent-encoding is normalised on both the pattern and the URL, so
   "/caf%C3%A9" and "/café" are the same path.
 - An empty Disallow allows everything. /robots.txt itself is always allowed.
+- A UTF-8 byte order mark at the start of the file is ignored.
+- Path parameters (";") get no special treatment: they are matched as
+  ordinary characters.
 
 What a missing file means is decided by the HTTP status when it is fetched:
 see policy_from_response().
@@ -52,27 +56,62 @@ def product_token(user_agent: str | None) -> str:
     return token or DEFAULT_ROBOTS_AGENT
 
 
+def glob_match(pattern: str, text: str) -> bool:
+    """True when pattern matches all of text. "*" matches any run of characters.
+
+    Two pointers, backtracking only to the most recent "*": O(len(pattern) *
+    len(text)) at worst, with no regex, so a hostile pattern cannot make it
+    take exponential time.
+    """
+    p = t = 0
+    star = -1
+    mark = 0
+    plen, tlen = len(pattern), len(text)
+    while t < tlen:
+        if p < plen and pattern[p] == "*":
+            star, mark = p, t
+            p += 1
+        elif p < plen and pattern[p] == text[t]:
+            p += 1
+            t += 1
+        elif star != -1:
+            p = star + 1
+            mark += 1
+            t = mark
+        else:
+            return False
+    while p < plen and pattern[p] == "*":
+        p += 1
+    return p == plen
+
+
 @dataclass
 class Rule:
     allow: bool
     pattern: str
-    _regex: re.Pattern = field(init=False, repr=False)
+    _glob: str = field(init=False, repr=False)
+    _literal: bool = field(init=False, repr=False)
 
     def __post_init__(self):
         pattern = normalise_path(self.pattern)
         anchored = pattern.endswith("$")
         if anchored:
             pattern = pattern[:-1]
+        # Collapse runs of "*": they mean the same and cost more to match
+        pattern = re.sub(r"\*{2,}", "*", pattern)
         self.pattern = pattern + ("$" if anchored else "")
-        body = ".*".join(re.escape(part) for part in pattern.split("*"))
-        self._regex = re.compile(body + ("\\Z" if anchored else ""), re.DOTALL)
+        self._literal = "*" not in pattern and not anchored
+        # Without "$" a rule matches any path that starts with it
+        self._glob = pattern if anchored else pattern + "*"
 
     @property
     def length(self) -> int:
         return len(self.pattern)
 
     def matches(self, path: str) -> bool:
-        return self._regex.match(path) is not None
+        if self._literal:
+            return path.startswith(self.pattern)
+        return glob_match(self._glob, path)
 
 
 @dataclass
@@ -88,7 +127,7 @@ def parse_robots(text: str) -> list[Group]:
     current: Group | None = None
     last_was_agent = False
 
-    for raw in text.splitlines():
+    for raw in text.lstrip("\ufeff").splitlines():
         line = raw.split("#", 1)[0].strip()
         if not line or ":" not in line:
             continue
@@ -101,7 +140,8 @@ def parse_robots(text: str) -> list[Group]:
                 current = Group()
                 groups.append(current)
             if value:
-                current.agents.append(value.lower())
+                # "MyBot/1.0" in robots.txt names the product token "mybot"
+                current.agents.append("*" if value == "*" else product_token(value))
             last_was_agent = True
             continue
 
@@ -122,19 +162,14 @@ def parse_robots(text: str) -> list[Group]:
 
 
 def select_groups(groups: list[Group], token: str) -> list[Group]:
-    """Groups that apply to our product token: the longest matching name, else "*"."""
-    best_len = -1
-    best: list[Group] = []
+    """Groups naming our product token exactly (case-insensitive), else the "*" groups.
+
+    All groups for the chosen name are merged, as RFC 9309 asks.
+    """
     if token != DEFAULT_ROBOTS_AGENT:
-        for group in groups:
-            for agent in group.agents:
-                if agent != "*" and token.startswith(agent):
-                    if len(agent) > best_len:
-                        best_len, best = len(agent), [group]
-                    elif len(agent) == best_len and group not in best:
-                        best.append(group)
-    if best:
-        return best
+        named = [g for g in groups if token in g.agents]
+        if named:
+            return named
     return [g for g in groups if "*" in g.agents]
 
 
@@ -238,6 +273,11 @@ class RobotsPolicy:
         return delay
 
 
+# Status values for robots.txt fetches that produced no HTTP answer to use
+ROBOTS_UNREACHABLE = 0
+ROBOTS_REDIRECT_FAILED = -1
+
+
 def policy_from_response(
     status: int,
     text: str | None,
@@ -254,7 +294,12 @@ def policy_from_response(
         return RobotsPolicy.from_text(text or "", user_agent, base_url, enforced)
     if 400 <= status < 500:
         return RobotsPolicy.from_text(None, user_agent, base_url, enforced)
-    reason = f"HTTP {status}" if status else "unreachable"
+    if status == ROBOTS_REDIRECT_FAILED:
+        reason = f"more than five redirects, a redirect loop or a redirect without a Location"
+    elif status == 0:
+        reason = "unreachable"
+    else:
+        reason = f"HTTP {status}"
     return RobotsPolicy.blocked(
         f"robots.txt could not be read ({reason}), so the site is treated as disallowed",
         user_agent, base_url, enforced,
