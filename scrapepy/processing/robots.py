@@ -16,6 +16,9 @@ Matching follows RFC 9309, the robots exclusion protocol:
 - A UTF-8 byte order mark at the start of the file is ignored.
 - Path parameters (";") get no special treatment: they are matched as
   ordinary characters.
+- Allow/Disallow patterns longer than MAX_RULE_LENGTH are ignored, and a
+  URL whose path and query exceed MAX_PATH_LENGTH (after normalising) is
+  treated as disallowed whenever the site has rules for us.
 
 What a missing file means is decided by the HTTP status when it is fetched:
 see policy_from_response().
@@ -56,33 +59,39 @@ def product_token(user_agent: str | None) -> str:
     return token or DEFAULT_ROBOTS_AGENT
 
 
+# Matching limits. Together they bound the work for one rule and one URL.
+MAX_RULE_LENGTH = 2000    # longer Allow/Disallow patterns are ignored
+MAX_PATH_LENGTH = 8192    # longer path+query: treated as disallowed when rules apply
+
+
 def glob_match(pattern: str, text: str) -> bool:
     """True when pattern matches all of text. "*" matches any run of characters.
 
-    Two pointers, backtracking only to the most recent "*": O(len(pattern) *
-    len(text)) at worst, with no regex, so a hostile pattern cannot make it
-    take exponential time.
+    The pattern is split on "*" into literal pieces. The first piece must
+    start the text, the last must end it, and each piece in between is found
+    with str.find, leftmost first, which is correct for "*"-only globs. There
+    is no regex and no backtracking, so the cost is at most about
+    len(pattern) * len(text) character comparisons done in C, and usually
+    close to len(text).
     """
-    p = t = 0
-    star = -1
-    mark = 0
-    plen, tlen = len(pattern), len(text)
-    while t < tlen:
-        if p < plen and pattern[p] == "*":
-            star, mark = p, t
-            p += 1
-        elif p < plen and pattern[p] == text[t]:
-            p += 1
-            t += 1
-        elif star != -1:
-            p = star + 1
-            mark += 1
-            t = mark
-        else:
+    parts = pattern.split("*")
+    if len(parts) == 1:
+        return pattern == text
+    first, last = parts[0], parts[-1]
+    if not text.startswith(first):
+        return False
+    pos = len(first)
+    end = len(text) - len(last)
+    if end < pos:
+        return False
+    for piece in parts[1:-1]:
+        if not piece:
+            continue
+        found = text.find(piece, pos, end)
+        if found < 0:
             return False
-    while p < plen and pattern[p] == "*":
-        p += 1
-    return p == plen
+        pos = found + len(piece)
+    return text.endswith(last)
 
 
 @dataclass
@@ -149,7 +158,8 @@ def parse_robots(text: str) -> list[Group]:
         if current is None:
             continue
         if key in ("allow", "disallow"):
-            if value:  # An empty rule matches nothing
+            # An empty rule matches nothing; an over-long one is ignored
+            if value and len(value) <= MAX_RULE_LENGTH:
                 current.rules.append(Rule(allow=(key == "allow"), pattern=value))
         elif key == "crawl-delay" and current.crawl_delay is None:
             try:
@@ -254,7 +264,10 @@ class RobotsPolicy:
             return True
         if parsed.query:
             path += "?" + parsed.query
-        return decide(self._rules, normalise_path(path))
+        path = normalise_path(path)
+        if len(path) > MAX_PATH_LENGTH:
+            return False  # Too long to check within our limits: do not fetch it
+        return decide(self._rules, path)
 
     @property
     def crawl_delay(self) -> float | None:

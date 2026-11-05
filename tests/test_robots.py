@@ -439,7 +439,7 @@ class TestGlobMatcher:
         rules = "User-agent: *\nDisallow: /*a*a*a*a*a*a*a*a*a*a*a*a*b\nDisallow: /a*a*a*a*a*a*b$\n"
         policy = RobotsPolicy.from_text(rules, base_url=BASE)
         start = time.perf_counter()
-        for n in (81, 150, 200, 2000, 20000):
+        for n in (81, 150, 200, 2000, 8000):
             assert policy.can_fetch("/" + "a" * n)
         assert not glob_match("*a*a*a*a*a*a*a*a*b", "a" * 5000)
         assert time.perf_counter() - start < 0.5
@@ -599,6 +599,52 @@ class TestRobotsRedirects:
         }))
         policy, _ = discovery.load_robots_policy(ScrapeConfig(url=BASE, ignore_robots=True))
         assert policy.can_fetch("/x")
+
+
+class TestMatchLimits:
+    def test_worst_case_is_bounded(self):
+        """Longest allowed patterns, built to be slow, against the longest checked path."""
+        import time
+        from scrapepy.processing.robots import MAX_PATH_LENGTH, MAX_RULE_LENGTH
+        star_heavy = "/" + "*a" * ((MAX_RULE_LENGTH - 2) // 2) + "b"
+        near_miss = "/" + "a" * (MAX_RULE_LENGTH - 2) + "b"
+        mixed = "/" + ("a*" * 40 + "a" * 40 + "b*") * ((MAX_RULE_LENGTH - 1) // 202)
+        for pattern in (star_heavy, near_miss, mixed):
+            assert len(pattern) <= MAX_RULE_LENGTH
+        rules = "User-agent: *\n" + "".join(
+            f"Disallow: {p}\nDisallow: {p}$\n" for p in (star_heavy, near_miss, mixed)
+        ) * 20
+        policy = RobotsPolicy.from_text(rules, base_url=BASE)
+        path = "/" + "a" * (MAX_PATH_LENGTH - 1)
+        start = time.perf_counter()
+        assert policy.can_fetch(path)
+        elapsed = time.perf_counter() - start
+        assert elapsed < 1.0, elapsed
+
+    def test_long_rule_is_ignored(self):
+        from scrapepy.processing.robots import MAX_RULE_LENGTH
+        long_rule = "/x" + "y" * MAX_RULE_LENGTH
+        assert allowed(f"User-agent: *\nDisallow: {long_rule}\n", long_rule)
+        ok_rule = "/x" + "y" * (MAX_RULE_LENGTH - 2)
+        assert not allowed(f"User-agent: *\nDisallow: {ok_rule}\n", ok_rule)
+
+    def test_overlong_path_is_disallowed_when_rules_apply(self):
+        from scrapepy.processing.robots import MAX_PATH_LENGTH
+        rules = "User-agent: *\nDisallow: /private\n"
+        assert allowed(rules, "/" + "a" * (MAX_PATH_LENGTH - 1))
+        assert not allowed(rules, "/" + "a" * MAX_PATH_LENGTH)
+        assert not allowed(rules, "/page?" + "q" * MAX_PATH_LENGTH)
+
+    def test_overlong_path_allowed_without_rules(self):
+        from scrapepy.processing.robots import MAX_PATH_LENGTH
+        long_path = "/" + "a" * (MAX_PATH_LENGTH * 2)
+        assert RobotsPolicy.from_text(None, base_url=BASE).can_fetch(long_path)
+        assert allowed("User-agent: *\nDisallow:\n", long_path)
+
+    def test_overlong_path_allowed_with_ignore_robots(self):
+        from scrapepy.processing.robots import MAX_PATH_LENGTH
+        policy = RobotsPolicy.from_text("User-agent: *\nDisallow: /x\n", base_url=BASE, enforced=False)
+        assert policy.can_fetch("/" + "a" * (MAX_PATH_LENGTH * 2))
 
 
 class TestRedirectSchemes:
