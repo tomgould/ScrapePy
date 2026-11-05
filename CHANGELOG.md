@@ -6,7 +6,7 @@ All notable changes to ScrapePy are listed here. The format follows [Keep a Chan
 
 ### Added
 
-- robots.txt is enforced following RFC 9309 (longest match wins, `*` and `$` wildcards in a linear-time matcher, exact product-token groups, up to five redirects) in the default crawl, `-j`, `-d`, `-1`, `--swagger` and `--audit`, and `Crawl-delay` sets a minimum gap between requests to the site. A 4xx robots.txt allows everything; a 5xx or unreachable one disallows everything. Instagram mode does not check robots.txt.
+- robots.txt is enforced following RFC 9309 (longest match wins, `*` and `$` wildcards in a linear-time matcher, exact product-token groups, up to five http or https redirects, a 10 second single-attempt fetch, and bounded pattern and URL lengths) in the default crawl, `-j`, `-d`, `-1`, `--swagger` and `--audit`, and `Crawl-delay` sets a minimum gap between requests to the site. A 4xx robots.txt allows everything; a 5xx or unreachable one disallows everything. Instagram mode does not check robots.txt.
 - `--ignore-robots` turns robots.txt rules and `Crawl-delay` off and prints a warning.
 - `--user-agent` sets the User-Agent for page, browser and asset requests and is matched against robots.txt groups.
 - `--output-dir` (`-o`) chooses the folder under which `ScrapedSites/` and `MarkdownSites/` are created.

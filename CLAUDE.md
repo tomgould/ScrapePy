@@ -59,6 +59,7 @@ tests/fixtures/         per-site HTML snapshots plus test_config.json
 - Markdown output always carries YAML frontmatter from `FRONTMATTER_FIELDS` in `convert/to_markdown.py` (title, url, date, date_source, page_type, word_count, description, domain, scraped_at, content_hash). Only non-null values are written; keys and values like `page_type` are lowercase.
 - Output paths come from `config.output_dir` and `config.markdown_dir`, both built by `derive_output_dirs()`. Never derive one from the other by string replacement.
 - Every page fetch checks `RobotsPolicy.can_fetch()` and waits on the run's single `HostRateLimiter` (`processing/robots.py`). New fetch paths must do the same. Do not hand robots.txt matching to `urllib.robotparser` (it ignores wildcards and longest-match precedence) or to regexes (`.*` backtracking can take exponential time); use `glob_match()`.
+- Run blocking fetches with `engine/threads.run_blocking()`, not `loop.run_in_executor()`: executor threads are joined at exit, so an interrupted run would wait for a hung request.
 - Crawl mode returns the run summary; `run_summary.json` is documented in README.md, so update both together. Exit codes live in `output/run_summary.py`.
 - Instagram mode keeps its browser profile in `~/.scrapepy/instagram_profile/`.
 
