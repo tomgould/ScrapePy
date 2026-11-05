@@ -1,0 +1,33 @@
+# Changelog
+
+All notable changes to ScrapePy are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [semantic versioning](https://semver.org/).
+
+## 0.2.0
+
+### Added
+
+- robots.txt is enforced. `Disallow` rules are applied in the default crawl, `-j`, `-d`, `-1`, `--swagger` and `--audit`, and `Crawl-delay` sets a minimum gap between requests to the site. A missing robots.txt allows everything. Instagram mode does not check robots.txt.
+- `--ignore-robots` turns robots.txt rules and `Crawl-delay` off and prints a warning.
+- `--user-agent` sets the User-Agent for page, browser and asset requests and is matched against robots.txt groups.
+- `--output-dir` (`-o`) chooses the folder under which `ScrapedSites/` and `MarkdownSites/` are created.
+- `run_summary.json` is written after every crawl with counts and lists of new, changed, unchanged, failed and robots-blocked pages. The schema is in the README.
+- Documented exit codes: 0 success, 1 nothing fetched or every fetch failed, 2 bad arguments, 130 interrupted.
+- `scraped_at` and `content_hash` in every Markdown file's frontmatter.
+- `--no-index-pages` skips the generated `_index.md` section listings.
+- `--version`, `scrapepy.__version__` and `python -m scrapepy`.
+- Package metadata (readme, project URLs, keywords, classifiers), a `dev` extra with pytest, and a GitHub Actions workflow running the tests on Python 3.11, 3.12 and 3.13.
+
+### Changed
+
+- Default concurrency is 4 instead of 10.
+- Page requests, prefetches included, now wait on a per-host rate limiter instead of sleeping after each page, so a prefetch burst keeps the `--wait` gap.
+- Reconnaissance requests (sitemaps, feeds, homepage) are spaced out instead of sent all at once.
+- Frontmatter no longer writes `null` for a missing `date`, `date_source` or `page_type`; missing fields are left out, as the README already said.
+- Generated `_index.md` pages write `page_type: section` instead of `SECTION`.
+- `--wait` and `-c` reject negative or zero values, and a bad `--since` or `--recent` is reported as an argument error instead of a traceback.
+- The Markdown output folder is derived once on the config instead of by replacing `ScrapedSites` in paths.
+- The build requires setuptools 77 or later, which the `license` and `license-files` fields need.
+
+## 0.1.0
+
+- First public release.
