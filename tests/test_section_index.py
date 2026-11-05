@@ -132,7 +132,9 @@ class TestGenerateSectionIndex:
             articles=[],
             sub_sections=[],
         )
-        assert 'url: "https://example.com/test"' in result
+        import yaml
+        fm = yaml.safe_load(result.split("\n---\n", 1)[0].removeprefix("---\n"))
+        assert fm["url"] == "https://example.com/test"
 
     def test_multiple_articles_ordered(self):
         """Articles should appear in the order provided."""
@@ -281,9 +283,9 @@ class TestSectionIndexFrontmatter:
     def test_scraped_at_and_hash(self):
         import hashlib
         result = self._index()
-        assert 'scraped_at: "2026-01-01T00:00:00+00:00"\n' in result
+        assert "scraped_at: '2026-01-01T00:00:00+00:00'\n" in result
         body = result.split("\n---\n", 1)[1][1:]
-        assert f'content_hash: "sha256:{hashlib.sha256(body.encode()).hexdigest()}"\n' in result
+        assert f"content_hash: sha256:{hashlib.sha256(body.encode()).hexdigest()}\n" in result
 
     def test_body_starts_with_heading(self):
         assert self._index().split("\n---\n", 1)[1].startswith("\n# Sport\n")

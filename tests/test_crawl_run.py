@@ -244,7 +244,7 @@ class TestRunSummaryFile:
         with open(os.path.join(config.markdown_dir, "about.md"), encoding="utf-8") as f:
             text = f.read()
         assert "\nscraped_at: " in text
-        assert '\ncontent_hash: "sha256:' in text
+        assert "\ncontent_hash: sha256:" in text
         assert "null" not in text.split("\n---\n", 1)[0]
 
 

@@ -12,6 +12,7 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup
 import markdownify
+import yaml
 
 try:
     import trafilatura
@@ -80,6 +81,34 @@ FRONTMATTER_FIELDS = (
     "articles", "sub_sections",
     "scraped_at", "content_hash",
 )
+
+
+_RE_UNSAFE_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ud800-\udfff\ufffe\uffff]")
+
+
+def clean_text_value(value: str) -> str:
+    """Remove characters that YAML cannot represent (C0/C1 controls except tab
+    and newlines, lone surrogates, non-characters)."""
+    return _RE_UNSAFE_CHARS.sub("", value)
+
+
+def build_frontmatter(metadata: dict) -> str:
+    """YAML frontmatter ("---" ... "---") for metadata, safe for yaml.safe_load."""
+    data = {}
+    for key in FRONTMATTER_FIELDS:
+        value = metadata.get(key)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            value = clean_text_value(str(value))
+        data[key] = value
+    if not data:
+        return "---\n---\n"
+    body = yaml.safe_dump(
+        data, sort_keys=False, allow_unicode=True, default_flow_style=False,
+        width=2 ** 31 - 1,
+    )
+    return "---\n" + body + "---\n"
 
 
 def utc_now_iso() -> str:
@@ -988,28 +1017,14 @@ class HTMLToMarkdown:
 
     @staticmethod
     def _build_frontmatter(metadata: dict) -> str:
-        """Build YAML frontmatter string from metadata dict.
+        """Build the YAML frontmatter block from a metadata dict.
 
-        Fixed field order, lowercase keys. Only non-null fields are written,
-        so a missing key means the value is unknown.
+        Keys come out in FRONTMATTER_FIELDS order; None values are left out.
+        Values are written by yaml.safe_dump, so yaml.safe_load always gives
+        back the same strings and ints, whatever the text contains. Control
+        characters and lone surrogates, which YAML cannot carry, are removed.
         """
-        lines = ["---"]
-        for key in FRONTMATTER_FIELDS:
-            val = metadata.get(key)
-            if val is None:
-                continue
-            if isinstance(val, int):
-                lines.append(f"{key}: {val}")
-            else:
-                s = str(val)
-                if any(ch in s for ch in (":", '"', "#", "'", "{", "}", "[", "]", ",", "&", "*", "?", "|", ">", "!", "%", "@", "`")):
-                    # Escape internal double quotes, then wrap in double quotes
-                    s = s.replace("\\", "\\\\").replace('"', '\\"')
-                    lines.append(f'{key}: "{s}"')
-                else:
-                    lines.append(f"{key}: {s}")
-        lines.append("---")
-        return "\n".join(lines) + "\n"
+        return build_frontmatter(metadata)
 
     @staticmethod
     def _compute_word_count(md: str) -> int:

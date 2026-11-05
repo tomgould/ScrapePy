@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+import yaml
 
 from scrapepy.convert.to_markdown import HTMLToMarkdown
 
@@ -27,8 +28,8 @@ class TestBuildFrontmatter:
         assert result.startswith("---\n")
         assert result.endswith("---\n")
         assert "title: Test Article\n" in result
-        assert 'url: "https://example.com/news/test-article"\n' in result
-        assert "date: 2026-02-20\n" in result
+        assert "url: https://example.com/news/test-article\n" in result
+        assert "date: '2026-02-20'\n" in result
         assert "date_source: META_TAG\n" in result
         assert "page_type: article\n" in result
         assert "word_count: 1247\n" in result
@@ -57,12 +58,13 @@ class TestBuildFrontmatter:
     def test_yaml_special_chars_quoted(self):
         metadata = {"title": 'Article: "The Best" #1'}
         result = HTMLToMarkdown._build_frontmatter(metadata)
-        assert 'title: "Article: \\"The Best\\" #1"' in result
+        assert yaml.safe_load(result.strip("-\n")) == metadata
 
     def test_colon_in_value_quoted(self):
         metadata = {"description": "Summary: this is a test"}
         result = HTMLToMarkdown._build_frontmatter(metadata)
-        assert 'description: "Summary: this is a test"' in result
+        assert "description: 'Summary: this is a test'" in result
+        assert yaml.safe_load(result.strip("-\n")) == metadata
 
     def test_field_order(self):
         metadata = {
@@ -186,10 +188,10 @@ class TestConvertFileWithFrontmatter:
             assert md_path.exists()
             content = md_path.read_text()
             assert content.startswith("---\n")
-            assert 'url: "https://example.com/test-article"\n' in content
+            assert "url: https://example.com/test-article\n" in content
             assert "domain: example.com\n" in content
             assert "page_type: article\n" in content
-            assert "date: 2026-02-20\n" in content
+            assert "date: '2026-02-20'\n" in content
             assert "word_count:" in content
             assert "# Test Page" in content
 
@@ -273,7 +275,7 @@ class TestConvertFileWithFrontmatter:
 
             md_path = converter.output_dir / "breaking-news-story-b1234567.md"
             content = md_path.read_text()
-            assert 'date: "2026-02-15T10:30:00+00:00"' in content
+            assert "date: '2026-02-15T10:30:00+00:00'" in content
             assert "date_source: META_TAG\n" in content
 
 
@@ -299,7 +301,7 @@ class TestScrapedAtAndContentHash:
         assert content.startswith("---\n")
         end = content.index("\n---\n", 4)
         fm_lines = content[4:end].split("\n")
-        fm = {k: v.strip('"') for k, v in (line.split(": ", 1) for line in fm_lines)}
+        fm = yaml.safe_load("\n".join(fm_lines))
         body = content[end + len("\n---\n"):]
         return fm, body
 
