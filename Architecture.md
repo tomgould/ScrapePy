@@ -39,7 +39,8 @@
 2. scraper.py creates output dirs (css/, js/, images/, fonts/, media/), dispatches to crawl.py
 3. Phase 0: Site Reconnaissance (always runs)
    a. Fetch /robots.txt → RobotsPolicy (RFC 9309 matcher in processing/robots.py:
-      longest match, * and $ wildcards, user-agent groups, Crawl-delay) + Sitemap: lines.
+      longest match, * and $ wildcards via a linear-time glob_match(), exact product-token
+      groups, Crawl-delay, up to 5 redirects) + Sitemap: lines. Fetched in a worker thread.
       4xx allows everything; 5xx or unreachable disallows everything; --ignore-robots
       keeps the sitemaps only. Every later fetch (discovery, pages, prefetches) checks
       the policy and waits on one shared per-host HostRateLimiter: max(--wait,
@@ -129,8 +130,8 @@
 6. Save cache, write broken_links.txt if any
 7. Print summary: pages saved, unchanged, assets, outline stats, date filter stats, robots.txt blocks
 8. Write run_summary.json atomically (RunStats → build_summary) and return it; its exit_code becomes the process exit code.
-   Ctrl+C cancels the task under asyncio.run(); the loop catches CancelledError, then steps 5 to 8 still run
-   with status "interrupted" and exit code 130.
+   Ctrl+C (asyncio.run) or SIGTERM (interrupts.run_async) cancels the task; the loop catches CancelledError, then steps 5 to 8 still run
+   with status "interrupted" and exit code 130 (SIGINT) or 143 (SIGTERM).
 ```
 
 ### Browser Modes (-1, --swagger, -d)

@@ -13,9 +13,10 @@ You are responsible for how you use ScrapePy. Follow the terms of service of the
 What ScrapePy does to keep a crawl polite:
 
 - robots.txt is read at the start of every run and its rules are applied to the URLs a mode picks to fetch. Blocked URLs are skipped, counted in the run summary and listed in `run_summary.json`.
-- Rules follow [RFC 9309](https://www.rfc-editor.org/rfc/rfc9309): the longest matching `Allow` or `Disallow` pattern wins whatever order the lines are in, and `Allow` wins a tie. `*` matches any run of characters and a trailing `$` anchors the end of the URL, so `Disallow: /*.pdf$` blocks PDFs and `Disallow: /*?sort=` blocks sorted listings. Paths are case-sensitive and percent-encoding is normalised. An empty `Disallow:` allows everything.
-- The group is chosen by your `--user-agent` product token (`MyBot` in `MyBot/1.0`): a group naming it replaces the `User-agent: *` group, and the longest matching name wins. Without `--user-agent`, the `*` group applies. `Crawl-delay` is read from the chosen group only.
+- Rules follow [RFC 9309](https://www.rfc-editor.org/rfc/rfc9309): the longest matching `Allow` or `Disallow` pattern wins whatever order the lines are in, and `Allow` wins a tie. `*` matches any run of characters and a trailing `$` anchors the end of the URL, so `Disallow: /*.pdf$` blocks PDFs and `Disallow: /*?sort=` blocks sorted listings. Links found while crawling never carry query strings (they are stripped before queueing), so rules about query strings only affect sitemap and feed URLs. Paths are case-sensitive and percent-encoding is normalised. An empty `Disallow:` allows everything, and a UTF-8 byte order mark at the start of the file is ignored. Path parameters (`;`) are matched as ordinary characters. Matching takes time proportional to pattern length times path length at worst, so no robots.txt can stall a crawl.
+- The group is chosen by your `--user-agent` product token (`MyBot` in `MyBot/1.0`): a group whose `User-agent` line names the same token, compared case-insensitively and ignoring any version suffix, replaces the `User-agent: *` group. `User-agent: M` does not match `MyBot`. Groups naming the same token are merged. Without `--user-agent`, the `*` group applies. `Crawl-delay` is read from the chosen group only.
 - A robots.txt that returns 404 or another 4xx means there are no restrictions. One that returns a 5xx error, or a server that cannot be reached, means the whole site is treated as disallowed: ScrapePy prints why and fetches nothing.
+- Up to five redirects are followed when fetching robots.txt, to any host, and the file they lead to applies to the site being crawled. More than five redirects, a redirect loop or a redirect without a `Location` header count as unreachable, so the site is treated as disallowed.
 - Page requests to a site start at least `--wait` seconds apart (3 seconds by default, 5 in browser modes). A robots.txt `Crawl-delay` raises that gap and is never lowered by `--wait`. Prefetching does not get around the gap: it overlaps waiting, not requests. Reconnaissance and page requests share one limiter, so the gap also holds between the last reconnaissance request and the first page.
 - At most 4 requests run at once by default (`-c` changes this).
 - Reconnaissance requests (sitemaps, feeds, homepage) are spaced by one second or `--wait`, whichever is shorter, and never by less than `Crawl-delay`.
@@ -262,7 +263,7 @@ Fields are populated automatically: in crawl mode from live metadata (URL, date,
 
 Every crawl writes `run_summary.json` into the site's `ScrapedSites/<site>/` folder and prints its path at the end. Paths in it are relative to the output directory (`--output-dir`, or the current directory).
 
-The file is replaced as soon as a crawl starts with a placeholder whose `status` is `running`, so a summary left by an earlier run is never mistaken for the current one. If the process dies without finishing, the file still says `running`. Each write goes to a temporary file that is then renamed, so a reader never sees half a file. On Ctrl+C the crawl stops, saves the incremental cache so the next run carries on from there, and writes the summary with `status` set to `interrupted` and exit code 130.
+The file is replaced as soon as a crawl starts with a placeholder whose `status` is `running`, so a summary left by an earlier run is never mistaken for the current one. If the process dies without finishing, the file still says `running`. Each write goes to a temporary file that is then renamed, so a reader never sees half a file. On Ctrl+C or SIGTERM (from cron, systemd or `kill`) the crawl stops, saves the incremental cache so the next run carries on from there, and writes the summary with `status` set to `interrupted`, `interrupted_by` set to `SIGINT` or `SIGTERM`, and exit code 130 or 143. A second Ctrl+C while it is saving stops at once without saving.
 
 ```json
 {
@@ -285,6 +286,7 @@ The file is replaced as soon as a crawl starts with a placeholder whose `status`
   "failed": [{ "url": "https://quotes.toscrape.com/missing", "reason": "HTTP 404" }],
   "blocked_by_robots": [],
   "interrupted": false,
+  "interrupted_by": null,
   "exit_code": 0
 }
 ```
@@ -293,10 +295,11 @@ The file is replaced as soon as a crawl starts with a placeholder whose `status`
 |-------|---------|
 | `schema_version` | Goes up when a field is renamed or removed. New fields can appear without a bump |
 | `status` | `running` while the crawl is in progress, then `complete` or `interrupted`. `ended_at` and `exit_code` are `null` while it is `running` |
+| `interrupted`, `interrupted_by` | Whether the run was stopped early, and by which signal (`SIGINT` or `SIGTERM`, otherwise `null`) |
 | `start_url`, `started_at`, `ended_at` | The URL given and the run's start and end times (UTC, ISO 8601) |
 | `output_dir` | Absolute path of the output directory. `html_dir` and `markdown_dir` are relative to it; `markdown_dir` is `null` with `--no-markdown` |
 | `options` | The settings that shaped the run. Credentials are never written: `auth_used` and `proxy_used` only say whether they were set |
-| `counts.fetched` | Page requests made, including ones answered 304 Not Modified |
+| `counts.fetched` | Page requests that completed, with a response or a network error, including ones answered 304 Not Modified. A request still waiting for its turn when the run is interrupted is not counted |
 | `counts.new`, `counts.changed` | Pages saved this run. A page is changed when an earlier run saved it (it is in the incremental cache or its HTML file already exists). A second URL that saves to a file already written in the same run, such as `/index.html` after `/`, is fetched but not counted again |
 | `counts.unchanged` | Pages skipped because the server said 304 or the HTML matched the cache. Their URLs are in `unchanged_urls` |
 | `counts.failed` | Fetch errors, HTTP 4xx/5xx and error pages. `failed` lists each URL with a reason |
@@ -314,7 +317,8 @@ New, changed and unchanged are decided on the page HTML, so a page whose HTML ch
 | 0 | Success: at least one page was fetched without failing (unchanged pages count) |
 | 1 | Nothing was fetched (for example robots.txt blocked the start URL) or every fetch failed |
 | 2 | Bad arguments, such as an invalid `--since` date |
-| 130 | Interrupted with Ctrl+C |
+| 130 | Interrupted with Ctrl+C (SIGINT) |
+| 143 | Stopped with SIGTERM |
 
 Browser modes (`-1`, `--swagger`, `-d`) exit 1 when they save no page. Audit and Instagram modes exit 0 unless the arguments are bad.
 
