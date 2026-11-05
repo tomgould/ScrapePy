@@ -6,6 +6,7 @@ that removes or renames a field; adding a field does not need a bump.
 
 import json
 import os
+import tempfile
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -88,13 +89,27 @@ def relative_to_root(path: str, output_root: str) -> str:
     return rel.replace(os.sep, "/")
 
 
-def build_summary(config: ScrapeConfig, stats: RunStats, ended_at: str | None = None) -> dict:
+def run_status(stats: RunStats, in_progress: bool = False) -> str:
+    if in_progress:
+        return "running"
+    return "interrupted" if stats.interrupted else "complete"
+
+
+def build_summary(
+    config: ScrapeConfig,
+    stats: RunStats,
+    ended_at: str | None = None,
+    in_progress: bool = False,
+) -> dict:
+    """The run_summary.json content. in_progress=True gives the placeholder
+    written when a crawl starts: status "running", no end time, no exit code."""
     root = config.output_root or "."
     return {
         "schema_version": SCHEMA_VERSION,
+        "status": run_status(stats, in_progress),
         "start_url": config.url,
         "started_at": stats.started_at,
-        "ended_at": ended_at or utc_now_iso(),
+        "ended_at": None if in_progress else (ended_at or utc_now_iso()),
         "output_dir": os.path.abspath(root),
         "html_dir": relative_to_root(config.output_dir, root),
         "markdown_dir": relative_to_root(config.markdown_dir, root) if config.markdown else None,
@@ -114,16 +129,26 @@ def build_summary(config: ScrapeConfig, stats: RunStats, ended_at: str | None = 
         "failed": list(stats.failed),
         "blocked_by_robots": list(stats.blocked_by_robots),
         "interrupted": stats.interrupted,
-        "exit_code": exit_code_for(stats),
+        "exit_code": None if in_progress else exit_code_for(stats),
     }
 
 
 def write_summary(config: ScrapeConfig, summary: dict) -> str:
+    """Write the summary atomically: a temp file in the same folder, then os.replace."""
     path = os.path.join(config.output_dir, SUMMARY_FILENAME)
     os.makedirs(config.output_dir, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(summary, f, indent=2, ensure_ascii=False)
-        f.write("\n")
+    fd, tmp = tempfile.mkstemp(prefix=".run_summary.", suffix=".tmp", dir=config.output_dir)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     return path
 
 

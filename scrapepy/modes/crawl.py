@@ -49,6 +49,9 @@ DISCOVERY_MIN_INTERVAL = 1.0
 async def run_crawl_mode(config: ScrapeConfig) -> dict:
     """Run the crawl and return the run summary dict (also written to disk)."""
     stats = RunStats()
+    # Replace any summary from an earlier run straight away, so a reader never
+    # mistakes it for this run's. It is rewritten when the crawl ends.
+    _write_summary_quietly(config, build_summary(config, stats, in_progress=True))
     visited: set[str] = set()
     to_visit: deque[str] = deque()
     downloaded_assets: set[str] = set()
@@ -124,12 +127,19 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
     _print_robots_status(robots, config)
     page_delay = robots.min_delay(config.wait_time)
     discovery_delay = robots.min_delay(min(config.wait_time, DISCOVERY_MIN_INTERVAL))
+    # One limiter for the whole run, so the gap after the last discovery
+    # request also applies to the first page request.
+    limiter = HostRateLimiter(page_delay)
+    limiter.reserve(urlparse(config.base_url).netloc)  # the robots.txt request just made
 
     # 2. Run discovery (sitemaps + RSS), returns homepage HTML for reuse
-    discovery_map, homepage_html, feed_urls = await run_discovery(
-        config, extra_sitemaps=robots_sitemaps,
-        robots=robots, limiter=HostRateLimiter(discovery_delay),
-    )
+    try:
+        discovery_map, homepage_html, feed_urls = await run_discovery(
+            config, extra_sitemaps=robots_sitemaps,
+            robots=robots, limiter=limiter.with_interval(discovery_delay),
+        )
+    except asyncio.CancelledError:
+        _note_interrupt(stats)
     if discovery_map:
         print(f"  Found {len(discovery_map)} dated URLs from sitemaps/feeds")
     elif config.has_date_filter:
@@ -209,11 +219,17 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
     # Concurrency semaphore for page fetching (reuses -c flag)
     page_sem = asyncio.Semaphore(config.concurrent)
     # Per-host pacing for every page fetch, prefetches included
-    limiter = HostRateLimiter(page_delay)
 
     # Persistent HTTP client for asset downloads (connection reuse)
     asset_client = create_asset_client(config)
     await asset_client.__aenter__()
+
+    # Files written during this run: a second URL saving to the same file
+    # (such as / and /index.html) is not counted again.
+    written_this_run: set[str] = set()
+
+    if stats.interrupted:
+        to_visit.clear()
 
     while to_visit or current_section_batch or section_batches:
         # Early exit: all nav section batches processed in focused mode
@@ -324,6 +340,8 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                 try:
                     html, status, page_info = await prefetch_tasks.pop(url_path)
                 except asyncio.CancelledError:
+                    if _this_task_cancelled():
+                        raise  # Ctrl+C, not a cancelled prefetch
                     html, status, page_info = "", 0, {"error": "Prefetch cancelled"}
                 except Exception as e:
                     html, status, page_info = "", 0, {"error": f"{type(e).__name__}: {e}"}
@@ -572,10 +590,12 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
 
             # Save the page. It counts as changed when an earlier run saved it.
             filepath = url_to_filepath(url_path, config, hash_fragment)
-            existed_before = (
+            already_written = filepath in written_this_run
+            existed_before = not already_written and (
                 (cache is not None and cache.has_page(url_path))
                 or os.path.exists(filepath)
             )
+            written_this_run.add(filepath)
             write_file(filepath, rewritten_html)
             md_written: str | None = None
             print(f"  Saved: {filepath.replace(config.output_dir + '/', '')}")
@@ -665,7 +685,8 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                         "thumbnail": thumb_filename,
                     })
 
-            stats.record_saved(full_url, existed_before, md_written)
+            if not already_written:
+                stats.record_saved(full_url, existed_before, md_written)
 
             # Update cache
             if cache:
@@ -718,9 +739,9 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                                 )
                             )
 
-        except KeyboardInterrupt:
-            print("\nCrawl interrupted by user.")
-            stats.interrupted = True
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            # Ctrl+C under asyncio.run() arrives as a cancelled task
+            _note_interrupt(stats)
             break
         except Exception as e:
             print(f"Error on {full_url}: {type(e).__name__}: {e}")
@@ -789,15 +810,18 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                 md_output, section_articles, source_img_dir, config.verbose,
             )
 
-    # Close persistent HTTP client
-    await asset_client.aclose()
-
-    # Save cache before summary
+    # Save cache first, so an interrupted run still resumes from here
     if cache:
         cache.save()
 
+    # Close persistent HTTP client
+    try:
+        await asset_client.aclose()
+    except asyncio.CancelledError:
+        _note_interrupt(stats)
+
     # Summary
-    print("\n--- Scraping Complete ---")
+    print("\n--- Scraping Interrupted ---" if stats.interrupted else "\n--- Scraping Complete ---")
     saved_count = len(visited) - broken_links.count - unchanged_count - articles_skipped_old
     print(f"Pages saved: {saved_count}")
     if unchanged_count > 0:
@@ -840,12 +864,33 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
 
     stats.skipped_old = articles_skipped_old
     summary = build_summary(config, stats)
-    try:
-        summary_path = write_summary(config, summary)
+    summary_path = _write_summary_quietly(config, summary)
+    if summary_path:
         print(f"Run summary: {summary_path}")
+    return summary
+
+
+def _this_task_cancelled() -> bool:
+    task = asyncio.current_task()
+    return task is not None and task.cancelling() > 0
+
+
+def _note_interrupt(stats: RunStats) -> None:
+    """Record Ctrl+C and let the crawl finish its bookkeeping (cache, summary)."""
+    if not stats.interrupted:
+        print("\nCrawl interrupted by user. Saving progress...")
+    stats.interrupted = True
+    task = asyncio.current_task()
+    if task is not None and hasattr(task, "uncancel"):
+        task.uncancel()
+
+
+def _write_summary_quietly(config: ScrapeConfig, summary: dict) -> str | None:
+    try:
+        return write_summary(config, summary)
     except OSError as e:
         print(f"Warning: could not write run summary ({e})")
-    return summary
+        return None
 
 
 def _print_robots_status(robots: RobotsPolicy, config: ScrapeConfig) -> None:

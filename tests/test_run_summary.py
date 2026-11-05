@@ -20,7 +20,7 @@ from scrapepy.output.run_summary import (
 from scrapepy.scraper import exit_code_for_pages
 
 TOP_LEVEL_KEYS = {
-    "schema_version", "start_url", "started_at", "ended_at", "output_dir",
+    "schema_version", "status", "start_url", "started_at", "ended_at", "output_dir",
     "html_dir", "markdown_dir", "options", "counts", "new_markdown",
     "changed_markdown", "unchanged_urls", "failed", "blocked_by_robots",
     "interrupted", "exit_code",
@@ -157,3 +157,39 @@ class TestExitCodes:
         assert exit_code_for_pages(1) == EXIT_OK
         assert exit_code_for_pages(0) == EXIT_NOTHING_FETCHED
         assert exit_code_for_pages(None) == EXIT_OK
+
+
+class TestStatus:
+    def test_in_progress_placeholder(self, tmp_path):
+        summary = build_summary(_config(tmp_path), RunStats(), in_progress=True)
+        assert summary["status"] == "running"
+        assert summary["ended_at"] is None
+        assert summary["exit_code"] is None
+
+    def test_complete(self, tmp_path):
+        assert build_summary(_config(tmp_path), RunStats(fetched=1))["status"] == "complete"
+
+    def test_interrupted(self, tmp_path):
+        summary = build_summary(_config(tmp_path), RunStats(fetched=1, interrupted=True))
+        assert summary["status"] == "interrupted"
+        assert summary["exit_code"] == EXIT_INTERRUPTED
+
+
+class TestAtomicWrite:
+    def test_replaces_existing_file_and_leaves_no_temp(self, tmp_path):
+        config = _config(tmp_path)
+        write_summary(config, {"old": True})
+        write_summary(config, {"new": True})
+        with open(os.path.join(config.output_dir, SUMMARY_FILENAME), encoding="utf-8") as f:
+            assert json.load(f) == {"new": True}
+        assert os.listdir(config.output_dir) == [SUMMARY_FILENAME]
+
+    def test_failed_write_keeps_previous_file(self, tmp_path):
+        import pytest
+        config = _config(tmp_path)
+        write_summary(config, {"old": True})
+        with pytest.raises(TypeError):
+            write_summary(config, {"bad": object()})
+        with open(os.path.join(config.output_dir, SUMMARY_FILENAME), encoding="utf-8") as f:
+            assert json.load(f) == {"old": True}
+        assert os.listdir(config.output_dir) == [SUMMARY_FILENAME]
