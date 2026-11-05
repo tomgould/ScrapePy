@@ -58,13 +58,13 @@ tests/fixtures/         per-site HTML snapshots plus test_config.json
 - `url_to_filepath()` flattens numeric path segments into the filename (`/news/12345/1/slug` becomes `news/slug-12345-1.html`).
 - Markdown output always carries YAML frontmatter from `FRONTMATTER_FIELDS` in `convert/to_markdown.py` (title, url, date, date_source, page_type, word_count, description, domain, scraped_at, content_hash). Only non-null values are written; keys and values like `page_type` are lowercase.
 - Output paths come from `config.output_dir` and `config.markdown_dir`, both built by `derive_output_dirs()`. Never derive one from the other by string replacement.
-- Every page fetch checks `RobotsPolicy.can_fetch()` and waits on a `HostRateLimiter` (`processing/robots.py`). New fetch paths must do the same.
+- Every page fetch checks `RobotsPolicy.can_fetch()` and waits on the run's single `HostRateLimiter` (`processing/robots.py`). New fetch paths must do the same. Do not hand robots.txt matching to `urllib.robotparser`: it ignores wildcards and longest-match precedence.
 - Crawl mode returns the run summary; `run_summary.json` is documented in README.md, so update both together. Exit codes live in `output/run_summary.py`.
 - Instagram mode keeps its browser profile in `~/.scrapepy/instagram_profile/`.
 
 ## Testing
 
-- Tests are pure logic; do not add tests that need the network or a browser.
+- Tests are pure logic; do not add tests that need the network or a browser. The one exception is `tests/test_interrupt_localhost.py`, which crawls a server on 127.0.0.1 to send a real Ctrl+C.
 - `tests/test_audit_fixtures.py` discovers every `tests/fixtures/*/test_config.json` and checks navigation, page classification, dates and robots.txt parsing against the saved HTML. Missing fixture files cause a skip.
 - Committed fixtures come from sites made for scraping practice. To add one, run `python main.py --audit <url>`, review the generated `test_config.json`, and allow the `pages/` directory in `.gitignore`.
 - Add or update tests with every change to parsing, path mapping or conversion.

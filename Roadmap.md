@@ -357,7 +357,7 @@ All tests are pure logic with no network I/O. Run `python -m pytest tests/ -q` f
 
 ## Phase 17: Responsible Use and Building Block (0.2.0): Complete
 
-- [x] robots.txt enforcement with `urllib.robotparser`: `Disallow` rules apply to crawl, docs, single page, Swagger and audit fetches; `Crawl-delay` is a minimum per-host delay; `--ignore-robots` turns both off with a warning. Instagram mode does not check robots.txt.
+- [x] robots.txt enforcement with an RFC 9309 matcher: `Disallow` rules apply to crawl, docs, single page, Swagger and audit fetches; `Crawl-delay` is a minimum per-host delay; `--ignore-robots` turns both off with a warning. Instagram mode does not check robots.txt.
 - [x] Per-host request pacing (`HostRateLimiter`) for every page fetch, prefetches included
 - [x] `--user-agent`; default concurrency lowered from 10 to 4
 - [x] `--output-dir` with one derived Markdown path (`config.markdown_dir`)

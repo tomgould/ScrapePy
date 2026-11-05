@@ -12,9 +12,11 @@ You are responsible for how you use ScrapePy. Follow the terms of service of the
 
 What ScrapePy does to keep a crawl polite:
 
-- robots.txt is read at the start of every run and its `Disallow` rules are applied to the URLs a mode picks to fetch. Blocked URLs are skipped, counted in the run summary and listed in `run_summary.json`. A missing or unreachable robots.txt means everything is allowed.
-- Rules are matched against your `--user-agent` when you set one. Without it, the catch-all `User-agent: *` group applies.
-- Page requests to a site start at least `--wait` seconds apart (3 seconds by default, 5 in browser modes). A robots.txt `Crawl-delay` raises that gap and is never lowered by `--wait`. Prefetching does not get around the gap: it overlaps waiting, not requests. Fractional `Crawl-delay` values are rounded up to whole seconds.
+- robots.txt is read at the start of every run and its rules are applied to the URLs a mode picks to fetch. Blocked URLs are skipped, counted in the run summary and listed in `run_summary.json`.
+- Rules follow [RFC 9309](https://www.rfc-editor.org/rfc/rfc9309): the longest matching `Allow` or `Disallow` pattern wins whatever order the lines are in, and `Allow` wins a tie. `*` matches any run of characters and a trailing `$` anchors the end of the URL, so `Disallow: /*.pdf$` blocks PDFs and `Disallow: /*?sort=` blocks sorted listings. Paths are case-sensitive and percent-encoding is normalised. An empty `Disallow:` allows everything.
+- The group is chosen by your `--user-agent` product token (`MyBot` in `MyBot/1.0`): a group naming it replaces the `User-agent: *` group, and the longest matching name wins. Without `--user-agent`, the `*` group applies. `Crawl-delay` is read from the chosen group only.
+- A robots.txt that returns 404 or another 4xx means there are no restrictions. One that returns a 5xx error, or a server that cannot be reached, means the whole site is treated as disallowed: ScrapePy prints why and fetches nothing.
+- Page requests to a site start at least `--wait` seconds apart (3 seconds by default, 5 in browser modes). A robots.txt `Crawl-delay` raises that gap and is never lowered by `--wait`. Prefetching does not get around the gap: it overlaps waiting, not requests. Reconnaissance and page requests share one limiter, so the gap also holds between the last reconnaissance request and the first page.
 - At most 4 requests run at once by default (`-c` changes this).
 - Reconnaissance requests (sitemaps, feeds, homepage) are spaced by one second or `--wait`, whichever is shorter, and never by less than `Crawl-delay`.
 
@@ -25,12 +27,12 @@ Which modes check robots.txt:
 | Default crawl, `-j` | Every page URL, including prefetched ones, and the sitemap, feed and homepage requests made during reconnaissance |
 | `-d` docs | The start URL and every sidebar link |
 | `-1` single page, `--swagger` | The start URL |
-| `--audit` | Reconnaissance requests and the sample pages |
+| `--audit` | Reconnaissance requests and the sample pages. Audit writes into `tests/fixtures/` and ignores `-o` |
 | `--instagram` | Not checked. Instagram's robots.txt does not allow general crawling, so read its terms before using this mode |
 
 Asset downloads (images, CSS, JS) linked from an allowed page are not checked against robots.txt and are not paced, though they share the `-c` concurrency limit.
 
-`--ignore-robots` turns off the rules and `Crawl-delay`. ScrapePy prints a warning when it is used. Only use it on sites you own or have permission to crawl this way.
+`--ignore-robots` turns off the rules and `Crawl-delay`, and also overrides an unreadable (5xx) robots.txt. ScrapePy prints a warning when it is used. Only use it on sites you own or have permission to crawl this way.
 
 The stealth browser and proxy features exist because some sites block ordinary clients even for content they publish openly. They do not give you permission to access anything.
 
@@ -59,7 +61,7 @@ python -m pytest tests/ -v
 python -m pytest tests/test_navigation.py -v
 ```
 
-Tests cover date extraction, error detection, URL normalization, page classification, URL rewriting, config and CLI parsing, exit codes, robots.txt rules and request pacing, cache operations, sitemap/RSS/Atom parsing, navigation parsing (including mega-menu/dropdown), outline building, article detection, section splitting, path mapping, YAML frontmatter, section index generation, the run summary, and fixture-driven validation. A few tests run the whole crawl loop against in-memory pages. None of them touch the network.
+Tests cover date extraction, error detection, URL normalization, page classification, URL rewriting, config and CLI parsing, exit codes, robots.txt rules and request pacing, cache operations, sitemap/RSS/Atom parsing, navigation parsing (including mega-menu/dropdown), outline building, article detection, section splitting, path mapping, YAML frontmatter, section index generation, the run summary, and fixture-driven validation. A few tests run the whole crawl loop against in-memory pages, and one sends a real Ctrl+C to a crawl of a test server on 127.0.0.1. None of them reach the internet.
 
 ## Usage
 
@@ -97,7 +99,7 @@ python main.py <url> [options]
 | `--since DATE` | Only keep articles published after date: `YYYY-MM-DD` |
 | `--min-articles N` | Keep at least N articles per section even if old (use with `--recent`/`--since`) |
 | `--max-articles N` | Max articles per section (newest N, default: 0 = no limit) |
-| `--audit` | Reconnaissance only: analyze site structure and save test fixtures (no crawl) |
+| `--audit` | Reconnaissance only: analyze site structure and save test fixtures in `tests/fixtures/` (no crawl, ignores `-o`) |
 | `--instagram` | Instagram profile scraping mode |
 | `--accounts FILE` | File with Instagram usernames/URLs (one per line) |
 | `--ig-login` | Enable Instagram login (visible browser, saves cookies) |
@@ -260,9 +262,12 @@ Fields are populated automatically: in crawl mode from live metadata (URL, date,
 
 Every crawl writes `run_summary.json` into the site's `ScrapedSites/<site>/` folder and prints its path at the end. Paths in it are relative to the output directory (`--output-dir`, or the current directory).
 
+The file is replaced as soon as a crawl starts with a placeholder whose `status` is `running`, so a summary left by an earlier run is never mistaken for the current one. If the process dies without finishing, the file still says `running`. Each write goes to a temporary file that is then renamed, so a reader never sees half a file. On Ctrl+C the crawl stops, saves the incremental cache so the next run carries on from there, and writes the summary with `status` set to `interrupted` and exit code 130.
+
 ```json
 {
   "schema_version": 1,
+  "status": "complete",
   "start_url": "https://quotes.toscrape.com/",
   "started_at": "2026-11-05T12:00:00+00:00",
   "ended_at": "2026-11-05T12:01:10+00:00",
@@ -287,11 +292,12 @@ Every crawl writes `run_summary.json` into the site's `ScrapedSites/<site>/` fol
 | Field | Meaning |
 |-------|---------|
 | `schema_version` | Goes up when a field is renamed or removed. New fields can appear without a bump |
+| `status` | `running` while the crawl is in progress, then `complete` or `interrupted`. `ended_at` and `exit_code` are `null` while it is `running` |
 | `start_url`, `started_at`, `ended_at` | The URL given and the run's start and end times (UTC, ISO 8601) |
 | `output_dir` | Absolute path of the output directory. `html_dir` and `markdown_dir` are relative to it; `markdown_dir` is `null` with `--no-markdown` |
 | `options` | The settings that shaped the run. Credentials are never written: `auth_used` and `proxy_used` only say whether they were set |
 | `counts.fetched` | Page requests made, including ones answered 304 Not Modified |
-| `counts.new`, `counts.changed` | Pages saved this run. A page is changed when an earlier run saved it (it is in the incremental cache or its HTML file already exists) |
+| `counts.new`, `counts.changed` | Pages saved this run. A page is changed when an earlier run saved it (it is in the incremental cache or its HTML file already exists). A second URL that saves to a file already written in the same run, such as `/index.html` after `/`, is fetched but not counted again |
 | `counts.unchanged` | Pages skipped because the server said 304 or the HTML matched the cache. Their URLs are in `unchanged_urls` |
 | `counts.failed` | Fetch errors, HTTP 4xx/5xx and error pages. `failed` lists each URL with a reason |
 | `counts.blocked_by_robots` | URLs skipped because robots.txt disallows them, listed in `blocked_by_robots` |

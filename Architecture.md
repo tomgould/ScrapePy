@@ -38,11 +38,13 @@
 1. CLI parses args -> ScrapeConfig (incl. cutoff_date from --recent/--since)
 2. scraper.py creates output dirs (css/, js/, images/, fonts/, media/), dispatches to crawl.py
 3. Phase 0: Site Reconnaissance (always runs)
-   a. Fetch /robots.txt → RobotsPolicy (Disallow rules, Crawl-delay) + Sitemap: directives.
-      Missing robots.txt allows everything; --ignore-robots keeps the sitemaps only.
-      Every later fetch (discovery, pages, prefetches) checks the policy and waits on a
-      per-host HostRateLimiter: max(--wait, Crawl-delay) for pages, min(--wait, 1s) or
-      Crawl-delay for discovery.
+   a. Fetch /robots.txt → RobotsPolicy (RFC 9309 matcher in processing/robots.py:
+      longest match, * and $ wildcards, user-agent groups, Crawl-delay) + Sitemap: lines.
+      4xx allows everything; 5xx or unreachable disallows everything; --ignore-robots
+      keeps the sitemaps only. Every later fetch (discovery, pages, prefetches) checks
+      the policy and waits on one shared per-host HostRateLimiter: max(--wait,
+      Crawl-delay) for pages, min(--wait, 1s) or Crawl-delay for discovery.
+      Before this, run_summary.json is replaced with a "running" placeholder.
    b. Fetch /sitemap.xml + sub-sitemaps (cap 20) + robots.txt sitemaps
       Parse <loc> + <lastmod> dates into DiscoveryMap
    c. Fetch homepage HTML (reused for nav parsing, so no extra fetch)
@@ -126,7 +128,9 @@
    d. Copy referenced images from global images/ to each section's images/ dir (always)
 6. Save cache, write broken_links.txt if any
 7. Print summary: pages saved, unchanged, assets, outline stats, date filter stats, robots.txt blocks
-8. Write run_summary.json (RunStats → build_summary) and return it; its exit_code becomes the process exit code
+8. Write run_summary.json atomically (RunStats → build_summary) and return it; its exit_code becomes the process exit code.
+   Ctrl+C cancels the task under asyncio.run(); the loop catches CancelledError, then steps 5 to 8 still run
+   with status "interrupted" and exit code 130.
 ```
 
 ### Browser Modes (-1, --swagger, -d)
@@ -480,6 +484,8 @@ All tests are pure logic: no network calls, no file system side effects (except 
 | `test_errors.py` | `is_error_page_html()`, `is_error_page_content()`, `is_cloudflare_challenge()` |
 | `test_discovery.py` | robots.txt `Sitemap:` directive parsing |
 | `test_robots.py` | `RobotsPolicy` (Disallow, user agent groups, Crawl-delay, missing robots.txt, `--ignore-robots`), `HostRateLimiter`, discovery skipping disallowed URLs |
+| `test_interrupt_localhost.py` | Sends a real SIGINT to a crawl of a 127.0.0.1 test server and checks the interrupted summary and saved cache |
+| `test_browser_modes_robots.py` | robots.txt checks on the `-1`, `--swagger` and `-d` start URL and on docs sidebar links |
 | `test_crawl_run.py` | The crawl loop against in-memory pages: robots.txt enforcement, pacing of prefetches, `run_summary.json`, unchanged and changed pages on a second run, `--no-index-pages` |
 | `test_run_summary.py` | Summary schema, counts, relative paths, no credentials in options, exit codes |
 | `test_output_dir.py` | `--output-dir`, `derive_output_dirs()`, writer and converter paths |
