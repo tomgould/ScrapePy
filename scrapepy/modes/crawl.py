@@ -9,6 +9,7 @@ from collections import deque
 from datetime import datetime
 from urllib.parse import urlparse
 
+from .. import interrupts
 from ..config import ScrapeConfig
 from ..engine.fetcher import fetch_page_http, fetch_page_browser, create_asset_client
 from ..engine.browser_actions import (
@@ -119,7 +120,15 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
 
     # 1. Fetch robots.txt: access rules, Crawl-delay and extra sitemaps
     print("Running site reconnaissance...")
-    robots, robots_content = load_robots_policy(config)
+    # Fetched in a worker thread so Ctrl+C is not held up by a slow server
+    try:
+        robots, robots_content = await asyncio.get_running_loop().run_in_executor(
+            None, load_robots_policy, config,
+        )
+    except asyncio.CancelledError:
+        _note_interrupt(stats)
+        robots, robots_content = RobotsPolicy.blocked("interrupted before robots.txt was read",
+                                                      base_url=config.base_url), None
     if robots_content:
         robots_sitemaps = parse_robots_sitemaps(robots_content)
         if config.verbose and robots_sitemaps:
@@ -332,7 +341,6 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
 
         try:
             print(f"Fetching page: {full_url}")
-            stats.fetched += 1
 
             # Check prefetch buffer first (concurrent fetching)
             from_prefetch = url_path in prefetch_tasks
@@ -357,6 +365,9 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                 html, status, page_info = await _fetch_with_http_async(
                     full_url, config, page_sem, headers=cond_headers, limiter=limiter,
                 )
+
+            # Counted once the request has completed (response or network error)
+            stats.fetched += 1
 
             if not config.needs_browser:
                 # Handle 304 Not Modified
@@ -876,9 +887,10 @@ def _this_task_cancelled() -> bool:
 
 
 def _note_interrupt(stats: RunStats) -> None:
-    """Record Ctrl+C and let the crawl finish its bookkeeping (cache, summary)."""
+    """Record Ctrl+C or SIGTERM and let the crawl finish its bookkeeping (cache, summary)."""
     if not stats.interrupted:
-        print("\nCrawl interrupted by user. Saving progress...")
+        stats.interrupted_by = interrupts.signal_name(interrupts.received())
+        print(f"\nCrawl interrupted ({stats.interrupted_by}). Saving progress...")
     stats.interrupted = True
     task = asyncio.current_task()
     if task is not None and hasattr(task, "uncancel"):

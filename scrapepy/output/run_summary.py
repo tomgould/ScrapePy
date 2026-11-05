@@ -18,7 +18,8 @@ SCHEMA_VERSION = 1
 EXIT_OK = 0
 EXIT_NOTHING_FETCHED = 1
 EXIT_BAD_ARGS = 2
-EXIT_INTERRUPTED = 130
+EXIT_INTERRUPTED = 130   # SIGINT (Ctrl+C)
+EXIT_TERMINATED = 143    # SIGTERM
 
 
 def utc_now_iso() -> str:
@@ -40,6 +41,7 @@ class RunStats:
     blocked_by_robots: list[str] = field(default_factory=list)
     skipped_old: int = 0
     interrupted: bool = False
+    interrupted_by: str | None = None    # "SIGINT" or "SIGTERM"
 
     def record_saved(self, url: str, existed_before: bool, markdown_path: str | None):
         """Record a page that was fetched and written because it is new or changed."""
@@ -129,6 +131,7 @@ def build_summary(
         "failed": list(stats.failed),
         "blocked_by_robots": list(stats.blocked_by_robots),
         "interrupted": stats.interrupted,
+        "interrupted_by": stats.interrupted_by,
         "exit_code": None if in_progress else exit_code_for(stats),
     }
 
@@ -155,10 +158,10 @@ def write_summary(config: ScrapeConfig, summary: dict) -> str:
 def exit_code_for(stats: RunStats) -> int:
     """0 when at least one page was fetched without failing, 1 otherwise.
 
-    An interrupted run exits 130, the shell convention for Ctrl+C.
+    An interrupted run exits 130 for Ctrl+C (SIGINT) or 143 for SIGTERM.
     """
     if stats.interrupted:
-        return EXIT_INTERRUPTED
+        return EXIT_TERMINATED if stats.interrupted_by == "SIGTERM" else EXIT_INTERRUPTED
     if stats.fetched == 0 or len(stats.failed) >= stats.fetched:
         return EXIT_NOTHING_FETCHED
     return EXIT_OK

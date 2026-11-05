@@ -410,3 +410,29 @@ class TestCancellation:
             assert json.load(f)["status"] == "interrupted"
         with open(os.path.join(config.output_dir, ".scrapepy_cache.json"), encoding="utf-8") as f:
             assert BASE[len("https://example.com"):] + "/" in json.load(f)["pages"]
+
+
+class TestSlowRobotsDoesNotBlockInterrupt:
+    def test_cancel_while_robots_txt_is_slow(self, site, tmp_path, monkeypatch):
+        import time as _time
+        fake = site(SITE, None)
+
+        def slow_load(config):
+            _time.sleep(1.0)
+            return RobotsPolicy.from_text(None, base_url=config.base_url), None
+        monkeypatch.setattr(crawl, "load_robots_policy", slow_load)
+        config = ScrapeConfig(url=BASE + "/", output_root=str(tmp_path), wait=0)
+        create_output_dirs(config)
+
+        async def main():
+            task = asyncio.create_task(crawl.run_crawl_mode(config))
+            await asyncio.sleep(0.1)
+            start = _time.perf_counter()
+            task.cancel()
+            summary = await task
+            return summary, _time.perf_counter() - start
+
+        summary, elapsed = asyncio.run(main())
+        assert elapsed < 0.5
+        assert summary["status"] == "interrupted"
+        assert fake.requested == []

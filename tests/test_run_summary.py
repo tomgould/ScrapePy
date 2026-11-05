@@ -5,6 +5,7 @@ import os
 
 from scrapepy.config import ScrapeConfig
 from scrapepy.output.run_summary import (
+    EXIT_TERMINATED,
     EXIT_BAD_ARGS,
     EXIT_INTERRUPTED,
     EXIT_NOTHING_FETCHED,
@@ -23,7 +24,7 @@ TOP_LEVEL_KEYS = {
     "schema_version", "status", "start_url", "started_at", "ended_at", "output_dir",
     "html_dir", "markdown_dir", "options", "counts", "new_markdown",
     "changed_markdown", "unchanged_urls", "failed", "blocked_by_robots",
-    "interrupted", "exit_code",
+    "interrupted", "interrupted_by", "exit_code",
 }
 COUNT_KEYS = {"fetched", "new", "changed", "unchanged", "failed", "blocked_by_robots", "skipped_old"}
 
@@ -193,3 +194,65 @@ class TestAtomicWrite:
         with open(os.path.join(config.output_dir, SUMMARY_FILENAME), encoding="utf-8") as f:
             assert json.load(f) == {"old": True}
         assert os.listdir(config.output_dir) == [SUMMARY_FILENAME]
+
+
+class TestSigterm:
+    def test_sigterm_exit_code(self, tmp_path):
+        stats = RunStats(fetched=2, interrupted=True, interrupted_by="SIGTERM")
+        assert exit_code_for(stats) == EXIT_TERMINATED == 143
+        summary = build_summary(_config(tmp_path), stats)
+        assert summary["interrupted_by"] == "SIGTERM"
+        assert summary["exit_code"] == 143
+
+    def test_interrupt_helpers(self):
+        import signal
+        from scrapepy import interrupts
+        assert interrupts.exit_code(signal.SIGINT) == 130
+        assert interrupts.exit_code(signal.SIGTERM) == 143
+        assert interrupts.signal_name(None) == "SIGINT"
+        interrupts.reset()
+        interrupts.record(signal.SIGTERM)
+        interrupts.record(signal.SIGINT)
+        assert interrupts.received() == signal.SIGTERM
+        interrupts.reset()
+
+
+class TestReadersNeverSeePartialFile:
+    def test_final_path_untouched_until_complete(self, tmp_path, monkeypatch):
+        """Fails if the summary is written straight to its final path."""
+        import scrapepy.output.run_summary as rs
+        config = _config(tmp_path)
+        path = os.path.join(config.output_dir, SUMMARY_FILENAME)
+        write_summary(config, {"old": True})
+        seen_during_write = []
+        real_dump = json.dump
+
+        def spying_dump(obj, f, **kw):
+            real_dump(obj, f, **kw)
+            f.flush()
+            with open(path, encoding="utf-8") as reader:
+                seen_during_write.append(reader.read())
+
+        monkeypatch.setattr(rs.json, "dump", spying_dump)
+        write_summary(config, {"new": True})
+        assert len(seen_during_write) == 1
+        assert json.loads(seen_during_write[0]) == {"old": True}
+        with open(path, encoding="utf-8") as f:
+            assert json.load(f) == {"new": True}
+
+    def test_uses_os_replace_from_same_folder(self, tmp_path, monkeypatch):
+        import scrapepy.output.run_summary as rs
+        config = _config(tmp_path)
+        calls = []
+        real_replace = os.replace
+
+        def spy(src, dst):
+            calls.append((src, dst))
+            real_replace(src, dst)
+
+        monkeypatch.setattr(rs.os, "replace", spy)
+        path = write_summary(config, {"x": 1})
+        assert len(calls) == 1
+        src, dst = calls[0]
+        assert dst == path
+        assert os.path.dirname(src) == os.path.dirname(path)

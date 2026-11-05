@@ -1,4 +1,4 @@
-"""Send a real SIGINT to a crawl of a local test server (127.0.0.1 only).
+"""Send a real SIGINT or SIGTERM to a crawl of a local test server (127.0.0.1 only).
 
 This is the one test that uses sockets. The server runs in this process and
 the crawl runs as a subprocess, as a user would run it.
@@ -69,7 +69,11 @@ def _crawl(url, out_dir):
     )
 
 
-def test_sigint_writes_interrupted_summary_and_cache(server, tmp_path):
+@pytest.mark.parametrize("sig,code,name", [
+    (signal.SIGINT, 130, "SIGINT"),
+    (signal.SIGTERM, 143, "SIGTERM"),
+])
+def test_signal_writes_interrupted_summary_and_cache(server, tmp_path, sig, code, name):
     out = tmp_path / "out"
     out.mkdir()
     site_dir = out / "ScrapedSites" / "127_0_0_1:{}".format(server.rsplit(":", 1)[1])
@@ -87,7 +91,7 @@ def test_sigint_writes_interrupted_summary_and_cache(server, tmp_path):
                 break
             if time.monotonic() > deadline:
                 break
-        proc.send_signal(signal.SIGINT)
+        proc.send_signal(sig)
         rest, _ = proc.communicate(timeout=60)
         lines.append(rest)
     finally:
@@ -96,12 +100,13 @@ def test_sigint_writes_interrupted_summary_and_cache(server, tmp_path):
             proc.wait()
 
     output = "".join(lines)
-    assert proc.returncode == 130, output[-2000:]
+    assert proc.returncode == code, output[-2000:]
     summary = json.loads((site_dir / "run_summary.json").read_text())
     assert "stale" not in summary
     assert summary["status"] == "interrupted"
     assert summary["interrupted"] is True
-    assert summary["exit_code"] == 130
+    assert summary["exit_code"] == code
+    assert summary["interrupted_by"] == name
     assert 0 < summary["counts"]["fetched"] < len(PAGES) + 1
     cache = json.loads((site_dir / ".scrapepy_cache.json").read_text())
     assert "/" in cache["pages"]

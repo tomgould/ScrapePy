@@ -2,9 +2,10 @@
 
 import argparse
 import asyncio
+import signal
 import sys
 
-from . import __version__
+from . import __version__, interrupts
 from .config import DEFAULT_CONCURRENCY, ScrapeConfig, _parse_recent, _parse_since
 from .output.run_summary import EXIT_BAD_ARGS, EXIT_INTERRUPTED
 from .scraper import run_scraper
@@ -40,7 +41,7 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
         prog="scrapepy",
         description="ScrapePy - Python web scraper using Scrapling + Patchright",
         epilog="Exit codes: 0 success, 1 nothing fetched or every fetch failed, "
-               "2 bad arguments, 130 interrupted.",
+               "2 bad arguments, 130 interrupted (Ctrl+C), 143 terminated (SIGTERM).",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("url", nargs="?", default=None, help="URL to scrape")
@@ -197,6 +198,10 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\nInterrupted.")
         return EXIT_INTERRUPTED
+    except asyncio.CancelledError:
+        # SIGTERM in a mode that does not catch the cancellation itself
+        print("\nTerminated.")
+        return interrupts.exit_code(interrupts.received() or signal.SIGTERM)
 
 
 def _run(config: ScrapeConfig) -> int:
@@ -206,7 +211,7 @@ def _run(config: ScrapeConfig) -> int:
         if config.verbose:
             print("Verbose: enabled")
         print()
-        return asyncio.run(run_scraper(config))
+        return interrupts.run_async(run_scraper(config))
 
     if config.instagram:
         print("Instagram mode: enabled")
@@ -227,7 +232,7 @@ def _run(config: ScrapeConfig) -> int:
         print("robots.txt: not checked in Instagram mode")
         print(f"Output folder: {config.output_dir}")
         print()
-        return asyncio.run(run_scraper(config))
+        return interrupts.run_async(run_scraper(config))
 
     print(f"Base URL: {config.base_url}")
     print(f"Domain: {config.domain}")
@@ -279,4 +284,4 @@ def _run(config: ScrapeConfig) -> int:
             print("Section index pages: off")
     print()
 
-    return asyncio.run(run_scraper(config))
+    return interrupts.run_async(run_scraper(config))
