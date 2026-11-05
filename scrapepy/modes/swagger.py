@@ -10,7 +10,8 @@ from ..engine.browser_actions import expand_swagger_sections, find_spec_url, scr
 from ..output.writer import write_file
 
 
-async def run_swagger_mode(config: ScrapeConfig):
+async def run_swagger_mode(config: ScrapeConfig) -> int:
+    """Returns the number of pages saved."""
     print(f"Fetching Swagger/OpenAPI documentation: {config.url}")
 
     spec_file = None
@@ -47,7 +48,7 @@ async def run_swagger_mode(config: ScrapeConfig):
     except Exception as e:
         print(f"\nError: Failed to load page ({type(e).__name__}: {e})")
         print("Check that the URL is correct and the browser is installed (scrapling install).")
-        return
+        return 0
 
     html = response.body.decode(response.encoding or "utf-8")
 
@@ -61,6 +62,7 @@ async def run_swagger_mode(config: ScrapeConfig):
     if spec_file:
         print("OpenAPI spec: saved")
     print(f"Output folder: {config.output_dir}")
+    return 1
 
 
 async def _download_spec(page, spec_url: str, config: ScrapeConfig) -> str | None:

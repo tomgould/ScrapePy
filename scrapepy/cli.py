@@ -4,15 +4,45 @@ import argparse
 import asyncio
 import sys
 
-from .config import ScrapeConfig
+from . import __version__
+from .config import DEFAULT_CONCURRENCY, ScrapeConfig, _parse_recent, _parse_since
+from .output.run_summary import EXIT_BAD_ARGS, EXIT_INTERRUPTED
 from .scraper import run_scraper
+
+IGNORE_ROBOTS_WARNING = (
+    "Warning: --ignore-robots is set. robots.txt rules and Crawl-delay are not "
+    "applied; make sure you have the site owner's permission."
+)
+
+
+def _positive_int(value: str) -> int:
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a whole number, got '{value}'")
+    if n < 1:
+        raise argparse.ArgumentTypeError("must be 1 or more")
+    return n
+
+
+def _non_negative_float(value: str) -> float:
+    try:
+        n = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a number of seconds, got '{value}'")
+    if n < 0:
+        raise argparse.ArgumentTypeError("must be 0 or more")
+    return n
 
 
 def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
     parser = argparse.ArgumentParser(
         prog="scrapepy",
         description="ScrapePy - Python web scraper using Scrapling + Patchright",
+        epilog="Exit codes: 0 success, 1 nothing fetched or every fetch failed, "
+               "2 bad arguments, 130 interrupted.",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("url", nargs="?", default=None, help="URL to scrape")
     parser.add_argument("-m", "--markdown", action=argparse.BooleanOptionalAction,
                         default=True,
@@ -35,10 +65,21 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
     parser.add_argument("-i", "--incremental", action=argparse.BooleanOptionalAction,
                         default=True,
                         help="Only re-download pages/assets modified since last crawl (default: on)")
-    parser.add_argument("--wait", type=float, default=None,
-                        help="Custom wait time per page in seconds")
-    parser.add_argument("-c", "--concurrent", type=int, default=10,
-                        help="Max concurrent requests (default: 10)")
+    parser.add_argument("--wait", type=_non_negative_float, default=None,
+                        help="Minimum seconds between page requests to the site "
+                             "(default: 3 HTTP, 5 browser; robots.txt Crawl-delay raises it)")
+    parser.add_argument("-c", "--concurrent", type=_positive_int, default=DEFAULT_CONCURRENCY,
+                        help=f"Max concurrent requests (default: {DEFAULT_CONCURRENCY})")
+    parser.add_argument("--user-agent", type=str, default=None,
+                        help="User-Agent header for all requests, also used to match "
+                             "robots.txt rules (default: a browser-like user agent)")
+    parser.add_argument("--ignore-robots", action="store_true",
+                        help="Do not apply robots.txt rules or Crawl-delay (only with permission)")
+    parser.add_argument("-o", "--output-dir", type=str, default=".",
+                        help="Folder under which ScrapedSites/ and MarkdownSites/ are created "
+                             "(default: current directory)")
+    parser.add_argument("--index-pages", action=argparse.BooleanOptionalAction, default=True,
+                        help="Write generated _index.md listing pages for sections (default: on)")
     parser.add_argument("--auth", type=str, default=None,
                         help="HTTP Basic Auth credentials (user:pass)")
     parser.add_argument("--proxy", type=str, default=None,
@@ -93,6 +134,15 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
         parser.error("--recent and --since are mutually exclusive")
     if (args.recent or args.since) and args.instagram:
         parser.error("--recent/--since are not supported in Instagram mode")
+    try:
+        if args.recent:
+            _parse_recent(args.recent)
+        if args.since:
+            _parse_since(args.since)
+    except ValueError as e:
+        parser.error(str(e))
+    if args.user_agent is not None and not args.user_agent.strip():
+        parser.error("--user-agent must not be empty")
 
     # Default URL for instagram mode when only --accounts is provided
     url = args.url or ""
@@ -124,20 +174,39 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
         min_articles=args.min_articles,
         max_articles=args.max_articles,
         audit=args.audit,
+        user_agent=args.user_agent.strip() if args.user_agent else None,
+        ignore_robots=args.ignore_robots,
+        output_root=args.output_dir,
+        index_pages=args.index_pages,
     )
 
 
-def main(argv: list[str] | None = None):
-    config = parse_args(argv)
+def main(argv: list[str] | None = None) -> int:
+    """Run ScrapePy and return the process exit code."""
+    try:
+        config = parse_args(argv)
+    except SystemExit as e:
+        # argparse exits 2 on bad arguments and 0 for --help/--version
+        return e.code if isinstance(e.code, int) else EXIT_BAD_ARGS
 
+    if config.ignore_robots:
+        print(IGNORE_ROBOTS_WARNING)
+
+    try:
+        return _run(config)
+    except KeyboardInterrupt:
+        print("\nInterrupted.")
+        return EXIT_INTERRUPTED
+
+
+def _run(config: ScrapeConfig) -> int:
     if config.audit:
         print(f"Audit mode: {config.base_url}")
         print(f"Output: tests/fixtures/{config.output_dir_name}/")
         if config.verbose:
             print("Verbose: enabled")
         print()
-        asyncio.run(run_scraper(config))
-        return
+        return asyncio.run(run_scraper(config))
 
     if config.instagram:
         print("Instagram mode: enabled")
@@ -155,10 +224,10 @@ def main(argv: list[str] | None = None):
             print("Incremental: enabled (skip already-scraped posts)")
         if config.markdown:
             print("Markdown conversion: enabled")
+        print("robots.txt: not checked in Instagram mode")
         print(f"Output folder: {config.output_dir}")
         print()
-        asyncio.run(run_scraper(config))
-        return
+        return asyncio.run(run_scraper(config))
 
     print(f"Base URL: {config.base_url}")
     print(f"Domain: {config.domain}")
@@ -199,10 +268,15 @@ def main(argv: list[str] | None = None):
 
     if config.auth:
         print(f"HTTP Auth: {config.auth.split(':')[0]}:****")
-    print(f"Wait time: {config.wait_time}s per page")
+    if config.user_agent:
+        print(f"User agent: {config.user_agent}")
+    print(f"Wait time: at least {config.wait_time}s between page requests")
+    print(f"Concurrency: {config.concurrent}")
     print(f"Output folder: {config.output_dir}")
     if config.markdown:
-        print("Markdown conversion: enabled")
+        print(f"Markdown folder: {config.markdown_dir}")
+        if not config.index_pages:
+            print("Section index pages: off")
     print()
 
-    asyncio.run(run_scraper(config))
+    return asyncio.run(run_scraper(config))

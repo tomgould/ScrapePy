@@ -1,46 +1,62 @@
 """Orchestrator, dispatches to the correct scraping mode."""
 
-import sys
+import os
 
 from .config import ScrapeConfig
+from .output.run_summary import EXIT_NOTHING_FETCHED, EXIT_OK
 from .output.writer import create_output_dirs
 
 
-async def run_scraper(config: ScrapeConfig):
-    """Main entry point: create output dirs and dispatch to the right mode."""
+def exit_code_for_pages(pages_saved: int | None) -> int:
+    """Exit code for modes that report a page count. None means not reported."""
+    if pages_saved is None:
+        return EXIT_OK
+    return EXIT_OK if pages_saved > 0 else EXIT_NOTHING_FETCHED
+
+
+async def run_scraper(config: ScrapeConfig) -> int:
+    """Create output dirs, dispatch to the right mode and return an exit code."""
     if config.audit:
         from .modes.audit import run_audit_mode
         await run_audit_mode(config)
-        return
+        return EXIT_OK
 
     if config.instagram:
         from .modes.instagram import run_instagram_mode
         await run_instagram_mode(config)
-        return
+        return EXIT_OK
+
+    if not (config.swagger or config.docs or config.single_page):
+        create_output_dirs(config)
+        from .modes.crawl import run_crawl_mode
+        summary = await run_crawl_mode(config)
+        # Crawl mode converts markdown inline, skip batch conversion
+        return summary["exit_code"]
+
+    # Browser modes start from one URL the user named; check it against robots.txt.
+    from .processing.discovery import load_robots_policy
+    robots, _ = load_robots_policy(config)
+    if not robots.can_fetch(config.url):
+        print(f"Blocked by robots.txt: {config.url}")
+        print("Nothing fetched. Use --ignore-robots only if you have permission.")
+        return EXIT_NOTHING_FETCHED
 
     create_output_dirs(config)
 
     if config.swagger:
         from .modes.swagger import run_swagger_mode
-        await run_swagger_mode(config)
-
+        pages = await run_swagger_mode(config)
     elif config.docs:
         from .modes.docs import run_docs_mode
-        await run_docs_mode(config)
-
-    elif config.single_page:
-        from .modes.single_page import run_single_page_mode
-        await run_single_page_mode(config)
-
+        pages = await run_docs_mode(config, robots=robots)
     else:
-        from .modes.crawl import run_crawl_mode
-        await run_crawl_mode(config)
-        # Crawl mode converts markdown inline, skip batch conversion
-        return
+        from .modes.single_page import run_single_page_mode
+        pages = await run_single_page_mode(config)
 
     # Markdown conversion for non-crawl modes (if requested)
-    if config.markdown:
+    if config.markdown and pages:
         await _run_markdown_conversion(config)
+    return exit_code_for_pages(pages)
 
 
 async def _run_markdown_conversion(config: ScrapeConfig):
@@ -49,15 +65,12 @@ async def _run_markdown_conversion(config: ScrapeConfig):
 
     if config.swagger:
         # Try OpenAPI spec conversion first
-        import os
         for ext in ("yaml", "yml", "json"):
             spec_file = os.path.join(config.output_dir, f"openapi-spec.{ext}")
             if os.path.exists(spec_file):
                 try:
                     from .convert.openapi_to_markdown import convert_openapi_file
-                    md_output = os.path.join(config.output_dir, "..", "..",
-                                             "MarkdownSites", config.output_dir_name,
-                                             "api-documentation.md")
+                    md_output = os.path.join(config.markdown_dir, "api-documentation.md")
                     os.makedirs(os.path.dirname(md_output), exist_ok=True)
                     convert_openapi_file(spec_file, md_output)
                     print(f"OpenAPI spec converted to: {md_output}")
@@ -71,6 +84,7 @@ async def _run_markdown_conversion(config: ScrapeConfig):
         from .convert.to_markdown import HTMLToMarkdown
         converter = HTMLToMarkdown(
             config.output_dir,
+            output_dir=config.markdown_dir,
             base_url=config.base_url,
             domain=config.domain,
         )

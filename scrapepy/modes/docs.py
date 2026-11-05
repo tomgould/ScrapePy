@@ -15,10 +15,15 @@ from ..engine.browser_actions import (
     get_main_content_html,
 )
 from ..output.writer import write_file
+from ..processing.robots import HostRateLimiter, RobotsPolicy
 
 
-async def run_docs_mode(config: ScrapeConfig):
+async def run_docs_mode(config: ScrapeConfig, robots: RobotsPolicy | None = None) -> int:
+    """Returns the number of pages saved. Nav links robots.txt disallows are skipped."""
     print(f"Fetching documentation site: {config.url}")
+    robots = robots or RobotsPolicy.allow_all(config.base_url)
+    limiter = HostRateLimiter(robots.min_delay(config.wait_time))
+    blocked = 0
 
     all_content: list[dict] = []
     visited_urls: set[str] = set()
@@ -37,7 +42,7 @@ async def run_docs_mode(config: ScrapeConfig):
     except Exception as e:
         print(f"\nError: Failed to load page ({type(e).__name__}: {e})")
         print("Check that the URL is correct and the browser is installed (scrapling install).")
-        return
+        return 0
 
     # For docs mode we need direct browser access, use StealthyFetcher differently
     # We'll use a simpler approach: fetch each page individually
@@ -60,6 +65,11 @@ async def run_docs_mode(config: ScrapeConfig):
         if link["href"] in visited_urls:
             continue
         visited_urls.add(link["href"])
+        if not robots.can_fetch(link["href"]):
+            blocked += 1
+            if config.verbose:
+                print(f"  Skipped (robots.txt): {link['href']}")
+            continue
 
         short_text = link["text"][:40]
         print(f"  [{i + 1}/{len(nav_links)}] Loading: {short_text}...")
@@ -71,6 +81,7 @@ async def run_docs_mode(config: ScrapeConfig):
                 await scroll_full_page(page)
                 return page
 
+            await limiter.wait(link["href"])
             sub_response = await fetch_page_browser(
                 link["href"], config, page_action=sub_page_action, wait_time=1.0
             )
@@ -147,7 +158,10 @@ async def run_docs_mode(config: ScrapeConfig):
 
     print("\n--- Scraping Complete ---")
     print(f"Pages saved: {len(all_content)}")
+    if blocked:
+        print(f"Skipped (blocked by robots.txt): {blocked}")
     print(f"Output folder: {config.output_dir}")
+    return len(all_content)
 
 
 def _extract_nav_links(html: str, base_url: str) -> list[dict]:

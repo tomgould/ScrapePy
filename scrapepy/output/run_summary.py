@@ -1,0 +1,139 @@
+"""Machine-readable summary of a crawl, written as run_summary.json.
+
+The schema is documented in README.md. Bump SCHEMA_VERSION on any change
+that removes or renames a field; adding a field does not need a bump.
+"""
+
+import json
+import os
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+
+from ..config import ScrapeConfig
+
+SUMMARY_FILENAME = "run_summary.json"
+SCHEMA_VERSION = 1
+
+EXIT_OK = 0
+EXIT_NOTHING_FETCHED = 1
+EXIT_BAD_ARGS = 2
+EXIT_INTERRUPTED = 130
+
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+@dataclass
+class RunStats:
+    """Counters and lists collected while a crawl runs."""
+
+    started_at: str = field(default_factory=utc_now_iso)
+    fetched: int = 0
+    new: list[str] = field(default_factory=list)          # page URLs
+    changed: list[str] = field(default_factory=list)      # page URLs
+    unchanged: list[str] = field(default_factory=list)    # page URLs
+    new_markdown: list[str] = field(default_factory=list)
+    changed_markdown: list[str] = field(default_factory=list)
+    failed: list[dict] = field(default_factory=list)      # {"url", "reason"}
+    blocked_by_robots: list[str] = field(default_factory=list)
+    skipped_old: int = 0
+    interrupted: bool = False
+
+    def record_saved(self, url: str, existed_before: bool, markdown_path: str | None):
+        """Record a page that was fetched and written because it is new or changed."""
+        if existed_before:
+            self.changed.append(url)
+            if markdown_path:
+                self.changed_markdown.append(markdown_path)
+        else:
+            self.new.append(url)
+            if markdown_path:
+                self.new_markdown.append(markdown_path)
+
+    def record_failed(self, url: str, reason: str):
+        self.failed.append({"url": url, "reason": reason})
+
+    def record_blocked(self, url: str):
+        if url not in self.blocked_by_robots:
+            self.blocked_by_robots.append(url)
+
+
+def options_used(config: ScrapeConfig) -> dict:
+    """The options that shaped this run. Credentials are never included."""
+    return {
+        "markdown": config.markdown,
+        "stay_in_path": config.stay_in_path,
+        "path_wildcard": config.path_wildcard,
+        "js_render": config.js_render,
+        "include_assets": config.include_assets,
+        "incremental": config.incremental,
+        "index_pages": config.index_pages,
+        "wait_seconds": config.wait_time,
+        "concurrent": config.concurrent,
+        "user_agent": config.user_agent,
+        "ignore_robots": config.ignore_robots,
+        "recent": config.recent,
+        "since": config.since,
+        "min_articles": config.min_articles,
+        "max_articles": config.max_articles,
+        "auth_used": bool(config.auth),
+        "proxy_used": bool(config.proxy),
+    }
+
+
+def relative_to_root(path: str, output_root: str) -> str:
+    """Path relative to the --output-dir root, with forward slashes."""
+    rel = os.path.relpath(os.path.abspath(path), os.path.abspath(output_root or "."))
+    return rel.replace(os.sep, "/")
+
+
+def build_summary(config: ScrapeConfig, stats: RunStats, ended_at: str | None = None) -> dict:
+    root = config.output_root or "."
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "start_url": config.url,
+        "started_at": stats.started_at,
+        "ended_at": ended_at or utc_now_iso(),
+        "output_dir": os.path.abspath(root),
+        "html_dir": relative_to_root(config.output_dir, root),
+        "markdown_dir": relative_to_root(config.markdown_dir, root) if config.markdown else None,
+        "options": options_used(config),
+        "counts": {
+            "fetched": stats.fetched,
+            "new": len(stats.new),
+            "changed": len(stats.changed),
+            "unchanged": len(stats.unchanged),
+            "failed": len(stats.failed),
+            "blocked_by_robots": len(stats.blocked_by_robots),
+            "skipped_old": stats.skipped_old,
+        },
+        "new_markdown": [relative_to_root(p, root) for p in stats.new_markdown],
+        "changed_markdown": [relative_to_root(p, root) for p in stats.changed_markdown],
+        "unchanged_urls": list(stats.unchanged),
+        "failed": list(stats.failed),
+        "blocked_by_robots": list(stats.blocked_by_robots),
+        "interrupted": stats.interrupted,
+        "exit_code": exit_code_for(stats),
+    }
+
+
+def write_summary(config: ScrapeConfig, summary: dict) -> str:
+    path = os.path.join(config.output_dir, SUMMARY_FILENAME)
+    os.makedirs(config.output_dir, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(summary, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+    return path
+
+
+def exit_code_for(stats: RunStats) -> int:
+    """0 when at least one page was fetched without failing, 1 otherwise.
+
+    An interrupted run exits 130, the shell convention for Ctrl+C.
+    """
+    if stats.interrupted:
+        return EXIT_INTERRUPTED
+    if stats.fetched == 0 or len(stats.failed) >= stats.fetched:
+        return EXIT_NOTHING_FETCHED
+    return EXIT_OK

@@ -10,7 +10,7 @@ from ..config import ScrapeConfig
 from ..engine.fetcher import fetch_page_http
 from ..processing.discovery import (
     DiscoveryMap,
-    fetch_robots_txt,
+    load_robots_policy,
     parse_robots_sitemaps,
     run_discovery,
 )
@@ -19,6 +19,7 @@ from ..processing.outline import build_site_outline, SiteOutline
 from ..processing.urls import discover_section_pages, has_article_slug
 from ..processing.classifier import classify_page, PageType
 from ..processing.dates import get_best_date
+from ..processing.robots import HostRateLimiter
 
 
 def _sanitize_filename(path: str) -> str:
@@ -84,7 +85,7 @@ async def run_audit_mode(config: ScrapeConfig):
     print("Phase 1: Site reconnaissance...")
 
     # 1a. Fetch robots.txt
-    robots_content = fetch_robots_txt(config)
+    robots, robots_content = load_robots_policy(config)
     robots_sitemaps: list[str] = []
     if robots_content:
         robots_sitemaps = parse_robots_sitemaps(robots_content)
@@ -103,6 +104,7 @@ async def run_audit_mode(config: ScrapeConfig):
     # 1b. Run discovery (sitemaps + RSS + homepage)
     discovery_map, homepage_html, feed_urls = await run_discovery(
         config, extra_sitemaps=robots_sitemaps,
+        robots=robots, limiter=HostRateLimiter(robots.min_delay(1.0)),
     )
     audit_data["discovery_urls"] = len(discovery_map)
     audit_data["feed_urls"] = feed_urls
@@ -176,16 +178,20 @@ async def run_audit_mode(config: ScrapeConfig):
         for section in outline.nav_sections[:3]:
             section_paths.append(section.path)
 
+    sample_delay = robots.min_delay(1.0)
     for path in section_paths:
         full_url = config.base_url + path
+        if not robots.can_fetch(full_url):
+            print(f"  Skipped (robots.txt): {full_url}")
+            continue
         print(f"  Fetching section: {full_url}")
         html, status = _fetch_sample_page(full_url, config)
         if not html or status != 200:
             print(f"    Skipped (HTTP {status})")
             continue
 
-        # Wait briefly between fetches
-        await asyncio.sleep(1)
+        # Wait between fetches (robots.txt Crawl-delay raises this)
+        await asyncio.sleep(sample_delay)
 
         filename = _sanitize_filename(path)
         filepath = os.path.join(pages_dir, filename)
@@ -218,6 +224,9 @@ async def run_audit_mode(config: ScrapeConfig):
     # Sort by date descending (newest first)
     article_candidates.sort(key=lambda x: x[1], reverse=True)
 
+    article_candidates = [
+        (p, dt) for p, dt in article_candidates if robots.can_fetch(config.base_url + p)
+    ]
     for url_path, _ in article_candidates[:3]:
         full_url = config.base_url + url_path
         print(f"  Fetching article: {full_url}")
@@ -226,7 +235,7 @@ async def run_audit_mode(config: ScrapeConfig):
             print(f"    Skipped (HTTP {status})")
             continue
 
-        await asyncio.sleep(1)
+        await asyncio.sleep(sample_delay)
 
         filename = _sanitize_filename(url_path)
         filepath = os.path.join(pages_dir, filename)

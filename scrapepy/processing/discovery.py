@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 from ..config import ScrapeConfig
 from ..engine.fetcher import fetch_page_http
 from .dates import _parse_iso_date, _parse_rfc2822_date
+from .robots import RobotsPolicy, robots_url
 
 # Type alias for the discovery map: url_path -> datetime
 DiscoveryMap = dict[str, datetime]
@@ -27,8 +28,15 @@ def _fetch_url(url: str, config: ScrapeConfig) -> str | None:
     return None
 
 
-async def _fetch_url_async(url: str, config: ScrapeConfig) -> str | None:
-    """Async wrapper around _fetch_url, runs sync HTTP fetch in thread pool."""
+async def _fetch_url_async(
+    url: str, config: ScrapeConfig, limiter=None,
+) -> str | None:
+    """Async wrapper around _fetch_url, runs sync HTTP fetch in thread pool.
+
+    With a HostRateLimiter, waits for the host's next free slot first.
+    """
+    if limiter is not None:
+        await limiter.wait(url)
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _fetch_url, url, config)
 
@@ -197,7 +205,23 @@ _COMMON_FEED_PATHS = [
 
 def fetch_robots_txt(config: ScrapeConfig) -> str | None:
     """Fetch /robots.txt, returning content or None on error."""
-    return _fetch_url(config.base_url + "/robots.txt", config)
+    return _fetch_url(robots_url(config.base_url), config)
+
+
+def load_robots_policy(config: ScrapeConfig) -> tuple[RobotsPolicy, str | None]:
+    """Fetch robots.txt and build the policy for this run.
+
+    Returns (policy, raw robots.txt or None). With --ignore-robots the file is
+    still read for its Sitemap: lines but its rules are not applied.
+    """
+    content = fetch_robots_txt(config)
+    policy = RobotsPolicy.from_text(
+        content,
+        user_agent=config.user_agent,
+        base_url=config.base_url,
+        enforced=not config.ignore_robots,
+    )
+    return policy, content
 
 
 def parse_robots_sitemaps(robots_content: str) -> list[str]:
@@ -215,6 +239,8 @@ def parse_robots_sitemaps(robots_content: str) -> list[str]:
 async def run_discovery(
     config: ScrapeConfig,
     extra_sitemaps: list[str] | None = None,
+    robots: RobotsPolicy | None = None,
+    limiter=None,
 ) -> tuple[DiscoveryMap, str | None, list[str]]:
     """Run pre-crawl discovery: fetch sitemaps and feeds, build a URL date map.
 
@@ -224,9 +250,23 @@ async def run_discovery(
       - DiscoveryMap: dict mapping url_path -> datetime for known-dated URLs
       - homepage_html: raw HTML of the homepage (for nav parsing reuse), or None
       - discovered_feed_urls: list of RSS/Atom feed URLs found
+
+    URLs that robots.txt disallows are not fetched. A limiter spaces requests.
     """
     date_map: DiscoveryMap = {}
     verbose = config.verbose
+
+    def _allowed(url: str) -> bool:
+        if robots is None or robots.can_fetch(url):
+            return True
+        if verbose:
+            print(f"  Discovery: blocked by robots.txt: {url}")
+        return False
+
+    async def _fetch(url: str) -> str | None:
+        if not _allowed(url):
+            return None
+        return await _fetch_url_async(url, config, limiter)
 
     # 1. Fetch sitemap.xml and homepage concurrently (both are independent)
     sitemap_url = config.base_url + "/sitemap.xml"
@@ -235,8 +275,8 @@ async def run_discovery(
         print(f"  Discovery: fetching sitemap.xml + homepage concurrently")
 
     sitemap_xml, homepage_html = await asyncio.gather(
-        _fetch_url_async(sitemap_url, config),
-        _fetch_url_async(homepage_url, config),
+        _fetch(sitemap_url),
+        _fetch(homepage_url),
     )
 
     # Process main sitemap
@@ -266,7 +306,7 @@ async def run_discovery(
         if verbose:
             print(f"  Discovery: fetching {len(all_sub_urls)} sub-sitemaps concurrently")
         sub_results = await asyncio.gather(
-            *[_fetch_url_async(u, config) for u in all_sub_urls]
+            *[_fetch(u) for u in all_sub_urls]
         )
         # Process results + collect second-level sub-sitemaps
         level2_urls: list[str] = []
@@ -287,7 +327,7 @@ async def run_discovery(
             if verbose:
                 print(f"  Discovery: fetching {len(level2_urls)} level-2 sub-sitemaps concurrently")
             level2_results = await asyncio.gather(
-                *[_fetch_url_async(u, config) for u in level2_urls]
+                *[_fetch(u) for u in level2_urls]
             )
             for sub_xml in level2_results:
                 if not sub_xml:
@@ -323,7 +363,7 @@ async def run_discovery(
         if verbose:
             print(f"  Discovery: fetching {len(unique_feeds)} feeds concurrently")
         feed_results = await asyncio.gather(
-            *[_fetch_url_async(u, config) for u in unique_feeds]
+            *[_fetch(u) for u in unique_feeds]
         )
         for feed_url, feed_xml in zip(unique_feeds, feed_results):
             if not feed_xml:

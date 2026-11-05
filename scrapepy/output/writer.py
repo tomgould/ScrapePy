@@ -165,7 +165,7 @@ def article_filepath_in_section(
     section_dir = section_path.strip("/")
 
     # Build: <markdown_output_dir>/<section_dir>/<relpath><ext>
-    md_output = config.output_dir.replace("ScrapedSites", "MarkdownSites")
+    md_output = config.markdown_dir
     if section_dir:
         return os.path.join(md_output, section_dir, relpath + ext)
     return os.path.join(md_output, relpath + ext)
@@ -188,7 +188,7 @@ def section_index_filepath(url_path: str, config: ScrapeConfig) -> str:
         if section_dir.endswith(ext):
             section_dir = section_dir[: -len(ext)]
             break
-    md_output = config.output_dir.replace("ScrapedSites", "MarkdownSites")
+    md_output = config.markdown_dir
     if section_dir:
         return os.path.join(md_output, section_dir, "_index.md")
     return os.path.join(md_output, "_index.md")

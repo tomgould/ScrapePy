@@ -2,6 +2,7 @@
 
 import asyncio
 import itertools
+import os
 import re
 import posixpath
 from collections import deque
@@ -31,15 +32,23 @@ _RE_UI_ELEMENT_ID = re.compile(r'^(mintoc-|rh-|dropspot|#[a-z0-9]{8,})')
 _RE_RSS_FEED = re.compile(r'/(?:rss|feed|atom)(?:\.xml)?/?$', re.IGNORECASE)
 from ..processing.dates import get_best_date, url_has_old_date
 from ..processing.classifier import classify_page, PageType
-from ..processing.discovery import run_discovery, DiscoveryMap, fetch_robots_txt, parse_robots_sitemaps
+from ..processing.discovery import run_discovery, DiscoveryMap, load_robots_policy, parse_robots_sitemaps
+from ..processing.robots import HostRateLimiter, RobotsPolicy
 from ..processing.navigation import extract_navigation
 from ..processing.outline import build_site_outline, SiteOutline
 from ..output.writer import url_to_filepath, write_file
 from ..output.broken_links import BrokenLinkTracker
 from ..output.cache import CrawlCache
+from ..output.run_summary import RunStats, build_summary, write_summary
+
+# Discovery (sitemaps, feeds) spaces its requests at least this far apart,
+# or by robots.txt Crawl-delay when that is longer.
+DISCOVERY_MIN_INTERVAL = 1.0
 
 
-async def run_crawl_mode(config: ScrapeConfig):
+async def run_crawl_mode(config: ScrapeConfig) -> dict:
+    """Run the crawl and return the run summary dict (also written to disk)."""
+    stats = RunStats()
     visited: set[str] = set()
     to_visit: deque[str] = deque()
     downloaded_assets: set[str] = set()
@@ -54,6 +63,7 @@ async def run_crawl_mode(config: ScrapeConfig):
         from ..convert.to_markdown import HTMLToMarkdown
         md_converter = HTMLToMarkdown(
             config.output_dir,
+            output_dir=config.markdown_dir,
             base_url=config.base_url,
             domain=config.domain,
         )
@@ -104,17 +114,21 @@ async def run_crawl_mode(config: ScrapeConfig):
     homepage_html: str | None = None
     feed_urls: list[str] = []
 
-    # 1. Fetch robots.txt for additional sitemaps
+    # 1. Fetch robots.txt: access rules, Crawl-delay and extra sitemaps
     print("Running site reconnaissance...")
-    robots_content = fetch_robots_txt(config)
+    robots, robots_content = load_robots_policy(config)
     if robots_content:
         robots_sitemaps = parse_robots_sitemaps(robots_content)
         if config.verbose and robots_sitemaps:
             print(f"  Found {len(robots_sitemaps)} sitemaps in robots.txt")
+    _print_robots_status(robots, config)
+    page_delay = robots.min_delay(config.wait_time)
+    discovery_delay = robots.min_delay(min(config.wait_time, DISCOVERY_MIN_INTERVAL))
 
     # 2. Run discovery (sitemaps + RSS), returns homepage HTML for reuse
     discovery_map, homepage_html, feed_urls = await run_discovery(
         config, extra_sitemaps=robots_sitemaps,
+        robots=robots, limiter=HostRateLimiter(discovery_delay),
     )
     if discovery_map:
         print(f"  Found {len(discovery_map)} dated URLs from sitemaps/feeds")
@@ -194,6 +208,8 @@ async def run_crawl_mode(config: ScrapeConfig):
 
     # Concurrency semaphore for page fetching (reuses -c flag)
     page_sem = asyncio.Semaphore(config.concurrent)
+    # Per-host pacing for every page fetch, prefetches included
+    limiter = HostRateLimiter(page_delay)
 
     # Persistent HTTP client for asset downloads (connection reuse)
     asset_client = create_asset_client(config)
@@ -249,6 +265,12 @@ async def run_crawl_mode(config: ScrapeConfig):
             skipped_out_of_scope.add(url_path)
             continue
 
+        if not robots.can_fetch(full_url):
+            if full_url not in stats.blocked_by_robots and config.verbose:
+                print(f"  Skipped (robots.txt): {full_url}")
+            stats.record_blocked(full_url)
+            continue
+
         # Pre-crawl date filter: skip URLs known to be old before fetching.
         # Never skip the seed URL or non-article paths (sections must be fetched
         # so they can create article batches).
@@ -294,6 +316,7 @@ async def run_crawl_mode(config: ScrapeConfig):
 
         try:
             print(f"Fetching page: {full_url}")
+            stats.fetched += 1
 
             # Check prefetch buffer first (concurrent fetching)
             from_prefetch = url_path in prefetch_tasks
@@ -305,6 +328,7 @@ async def run_crawl_mode(config: ScrapeConfig):
                 except Exception as e:
                     html, status, page_info = "", 0, {"error": f"{type(e).__name__}: {e}"}
             elif config.needs_browser:
+                await limiter.wait(full_url)
                 html, status, page_info = await _fetch_with_browser(full_url, config)
             else:
                 # Build conditional headers for incremental mode
@@ -313,7 +337,7 @@ async def run_crawl_mode(config: ScrapeConfig):
                     cond_headers = cache.get_page_headers(url_path)
 
                 html, status, page_info = await _fetch_with_http_async(
-                    full_url, config, page_sem, headers=cond_headers,
+                    full_url, config, page_sem, headers=cond_headers, limiter=limiter,
                 )
 
             if not config.needs_browser:
@@ -321,6 +345,7 @@ async def run_crawl_mode(config: ScrapeConfig):
                 if status == 304:
                     print(f"  Unchanged (304): {full_url}")
                     unchanged_count += 1
+                    stats.unchanged.append(full_url)
                     cached_links = cache.get_page_links(url_path)
                     if cached_links:
                         _queue_links(
@@ -336,18 +361,21 @@ async def run_crawl_mode(config: ScrapeConfig):
                 error_msg = page_info.get("error", "Unknown error")
                 print(f"  Fetch failed ({error_msg}): {full_url}")
                 broken_links.add(full_url)
+                stats.record_failed(full_url, error_msg)
                 continue
 
             # Check HTTP status
             if status >= 400:
                 print(f"  Skipped (HTTP {status}): {full_url}")
                 broken_links.add(full_url)
+                stats.record_failed(full_url, f"HTTP {status}")
                 continue
 
             # Quick error page check
             if is_error_page_html(html):
                 print(f"  Skipped (error page): {full_url}")
                 broken_links.add(full_url)
+                stats.record_failed(full_url, "error page")
                 continue
 
             # Cloudflare challenge
@@ -355,26 +383,24 @@ async def run_crawl_mode(config: ScrapeConfig):
                 print("  Cloudflare challenge detected, waiting...")
                 await asyncio.sleep(5)
 
-            # JS content wait / politeness delay
+            # JS content wait. The politeness delay between requests is
+            # applied by the per-host limiter before each fetch.
             if config.js_render and page_info.get("page"):
                 await wait_for_js_content(page_info["page"], config.wait_time)
                 html = await page_info["page"].content()
-            elif from_section_batch or from_prefetch:
-                # Already fetched concurrently; brief yield for event loop.
-                await asyncio.sleep(0.2)
-            else:
-                await asyncio.sleep(config.wait_time)
 
             # Detailed error page check on rendered content
             if _check_rendered_error_page(html):
                 print(f"  Skipped (error page): {full_url}")
                 broken_links.add(full_url)
+                stats.record_failed(full_url, "error page")
                 continue
 
             # Content-hash check: skip if content hasn't changed
             if cache and cache.is_page_unchanged(url_path, html):
                 print(f"  Unchanged (same content): {full_url}")
                 unchanged_count += 1
+                stats.unchanged.append(full_url)
                 links = _extract_links_from_html(html)
                 _queue_links(
                     links, url_path, config, visited, visited_hashes,
@@ -443,12 +469,14 @@ async def run_crawl_mode(config: ScrapeConfig):
                             # Start prefetching first batch of articles immediately
                             if not config.needs_browser:
                                 for p in article_links[:config.concurrent]:
-                                    if p not in prefetch_tasks and p not in visited:
+                                    if (p not in prefetch_tasks and p not in visited
+                                            and robots.can_fetch(p)):
                                         pf_url = config.base_url + p
                                         pf_headers = cache.get_page_headers(p) if cache else None
                                         prefetch_tasks[p] = asyncio.create_task(
                                             _fetch_with_http_async(
                                                 pf_url, config, page_sem, headers=pf_headers,
+                                                limiter=limiter,
                                             )
                                         )
                         # Only queue non-article links below (articles are in the batch)
@@ -542,9 +570,14 @@ async def run_crawl_mode(config: ScrapeConfig):
             # Rewrite URLs for offline viewing
             rewritten_html = rewrite_urls(html, url_path, config)
 
-            # Save the page
+            # Save the page. It counts as changed when an earlier run saved it.
             filepath = url_to_filepath(url_path, config, hash_fragment)
+            existed_before = (
+                (cache is not None and cache.has_page(url_path))
+                or os.path.exists(filepath)
+            )
             write_file(filepath, rewritten_html)
+            md_written: str | None = None
             print(f"  Saved: {filepath.replace(config.output_dir + '/', '')}")
 
             # Inline markdown conversion
@@ -592,6 +625,7 @@ async def run_crawl_mode(config: ScrapeConfig):
                         _Path(filepath), metadata=md_meta,
                         output_path=md_output_path,
                     )
+                    md_written = md_converter.last_output_path
                 elif is_section_page:
                     # Section pages become _index.md in their own directory
                     from ..output.writer import section_index_filepath
@@ -600,8 +634,10 @@ async def run_crawl_mode(config: ScrapeConfig):
                         _Path(filepath), metadata=md_meta,
                         output_path=md_output_path,
                     )
+                    md_written = md_converter.last_output_path
                 else:
                     md_converter.convert_file(_Path(filepath), metadata=md_meta)
+                    md_written = md_converter.last_output_path
 
                 # Track article metadata for section index generation
                 # (skip section pages, they are sub-sections, not articles)
@@ -629,6 +665,8 @@ async def run_crawl_mode(config: ScrapeConfig):
                         "thumbnail": thumb_filename,
                     })
 
+            stats.record_saved(full_url, existed_before, md_written)
+
             # Update cache
             if cache:
                 resp_headers = page_info.get("headers", {})
@@ -654,12 +692,14 @@ async def run_crawl_mode(config: ScrapeConfig):
                 if current_section_batch:
                     _, upcoming = current_section_batch
                     for p in itertools.islice(upcoming, config.concurrent):
-                        if p not in prefetch_tasks and p not in visited:
+                        if (p not in prefetch_tasks and p not in visited
+                                and robots.can_fetch(p)):
                             pf_url = config.base_url + p
                             pf_headers = cache.get_page_headers(p) if cache else None
                             prefetch_tasks[p] = asyncio.create_task(
                                 _fetch_with_http_async(
                                     pf_url, config, page_sem, headers=pf_headers,
+                                    limiter=limiter,
                                 )
                             )
                 # Regular queue: prefetch upcoming items for parallelism
@@ -667,20 +707,24 @@ async def run_crawl_mode(config: ScrapeConfig):
                     for p in itertools.islice(to_visit, config.concurrent):
                         if p.startswith(("http://", "https://", "#")):
                             continue
-                        if p not in prefetch_tasks and p not in visited:
+                        if (p not in prefetch_tasks and p not in visited
+                                and robots.can_fetch(p)):
                             pf_url = config.base_url + p
                             pf_headers = cache.get_page_headers(p) if cache else None
                             prefetch_tasks[p] = asyncio.create_task(
                                 _fetch_with_http_async(
                                     pf_url, config, page_sem, headers=pf_headers,
+                                    limiter=limiter,
                                 )
                             )
 
         except KeyboardInterrupt:
             print("\nCrawl interrupted by user.")
+            stats.interrupted = True
             break
         except Exception as e:
             print(f"Error on {full_url}: {type(e).__name__}: {e}")
+            stats.record_failed(full_url, f"{type(e).__name__}: {e}")
             if config.verbose:
                 import traceback
                 traceback.print_exc()
@@ -690,11 +734,11 @@ async def run_crawl_mode(config: ScrapeConfig):
         task.cancel()
     prefetch_tasks.clear()
 
-    # Generate section index.md files
-    if md_converter and section_articles:
+    # Generate section _index.md listing pages (skipped with --no-index-pages)
+    md_output = config.markdown_dir
+    if md_converter and section_articles and config.index_pages:
         from ..convert.to_markdown import generate_section_index
         import os as _os
-        md_output = config.output_dir.replace("ScrapedSites", "MarkdownSites")
         for sec_path, articles in section_articles.items():
             if not articles:
                 continue
@@ -737,9 +781,10 @@ async def run_crawl_mode(config: ScrapeConfig):
             if config.verbose:
                 print(f"  Generated section index: {section_dir or 'root'}/_index.md ({len(articles)} articles)")
 
-        # Copy referenced images to each section's images/ directory
-        source_img_dir = _os.path.join(config.output_dir, "images")
-        if _os.path.isdir(source_img_dir):
+    # Copy referenced images to each section's images/ directory
+    if md_converter and section_articles:
+        source_img_dir = os.path.join(config.output_dir, "images")
+        if os.path.isdir(source_img_dir):
             _copy_section_images(
                 md_output, section_articles, source_img_dir, config.verbose,
             )
@@ -788,7 +833,32 @@ async def run_crawl_mode(config: ScrapeConfig):
     if config.stay_in_path and skipped_out_of_scope:
         print(f"Skipped (out of scope): {len(skipped_out_of_scope)}")
 
+    if stats.blocked_by_robots:
+        print(f"Skipped (blocked by robots.txt): {len(stats.blocked_by_robots)}")
+
     print(f"Output folder: {config.output_dir}")
+
+    stats.skipped_old = articles_skipped_old
+    summary = build_summary(config, stats)
+    try:
+        summary_path = write_summary(config, summary)
+        print(f"Run summary: {summary_path}")
+    except OSError as e:
+        print(f"Warning: could not write run summary ({e})")
+    return summary
+
+
+def _print_robots_status(robots: RobotsPolicy, config: ScrapeConfig) -> None:
+    """One line on how robots.txt shapes this run."""
+    if not robots.enforced:
+        return  # The CLI already printed the --ignore-robots warning
+    if not robots.has_rules:
+        print("  robots.txt: none found, all URLs allowed")
+        return
+    line = "  robots.txt: rules applied"
+    if robots.crawl_delay is not None:
+        line += f", Crawl-delay {robots.crawl_delay:g}s"
+    print(line)
 
 
 # ---------------------------------------------------------------------------
@@ -860,13 +930,17 @@ def _fetch_with_http(
 async def _fetch_with_http_async(
     url: str, config: ScrapeConfig, sem: asyncio.Semaphore,
     headers: dict | None = None,
+    limiter: HostRateLimiter | None = None,
 ) -> tuple[str, int, dict]:
     """Fetch via HTTP with semaphore for concurrency control.
 
     Scrapling's Fetcher.get() is synchronous, so we run it in a thread pool
-    to allow concurrent fetching of multiple pages.
+    to allow concurrent fetching of multiple pages. The limiter spaces
+    request starts per host, so prefetch bursts keep the politeness delay.
     """
     async with sem:
+        if limiter is not None:
+            await limiter.wait(url)
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(
             None, _fetch_with_http, url, config, headers,

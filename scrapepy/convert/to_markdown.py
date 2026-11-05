@@ -81,13 +81,16 @@ class HTMLToMarkdown:
         if output_dir:
             self.output_dir = Path(output_dir)
         else:
-            parent = self.input_dir.parent.parent
-            site_name = self.input_dir.name
-            self.output_dir = parent / "MarkdownSites" / site_name
+            # Standalone use: <root>/ScrapedSites/<site> -> <root>/MarkdownSites/<site>
+            from ..config import derive_output_dirs
+            root = self.input_dir.parent.parent
+            self.output_dir = Path(derive_output_dirs(str(root), self.input_dir.name)[1])
 
         self.converted = 0
         self.failed = 0
         self.skipped = 0
+        # Path of the file the most recent convert_file() call wrote, or None
+        self.last_output_path: str | None = None
 
     def is_asset_directory(self, rel_path):
         first_part = rel_path.parts[0] if rel_path.parts else ""
@@ -1066,6 +1069,7 @@ class HTMLToMarkdown:
         return metadata
 
     def convert_file(self, filepath, metadata=None, output_path=None):
+        self.last_output_path = None
         explicit_output = output_path is not None
         if output_path:
             output_path = Path(output_path)
@@ -1188,6 +1192,7 @@ class HTMLToMarkdown:
 
             print(f"  Converted: {filepath.name}")
             self.converted += 1
+            self.last_output_path = str(output_path)
             return True
 
         except Exception as e:

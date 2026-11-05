@@ -186,9 +186,9 @@ class TestScrapeConfigDefaults:
         config = ScrapeConfig(url="https://example.com")
         assert config.include_assets is True
 
-    def test_concurrent_default_10(self):
+    def test_concurrent_default_4(self):
         config = ScrapeConfig(url="https://example.com")
-        assert config.concurrent == 10
+        assert config.concurrent == 4
 
     def test_markdown_explicit_false(self):
         config = ScrapeConfig(url="https://example.com", markdown=False)
@@ -226,9 +226,9 @@ class TestCLIDefaults:
         config = parse_args(["https://example.com", "--no-include-assets"])
         assert config.include_assets is False
 
-    def test_concurrent_default_10(self):
+    def test_concurrent_default_4(self):
         config = parse_args(["https://example.com"])
-        assert config.concurrent == 10
+        assert config.concurrent == 4
 
     def test_m_flag_still_works(self):
         config = parse_args(["https://example.com", "-m"])

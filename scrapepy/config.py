@@ -1,6 +1,7 @@
 """Configuration dataclass for ScrapePy."""
 
 import base64
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -46,6 +47,23 @@ def _parse_since(value: str) -> datetime:
     )
 
 
+DEFAULT_CONCURRENCY = 4
+HTML_ROOT_NAME = "ScrapedSites"
+MARKDOWN_ROOT_NAME = "MarkdownSites"
+
+
+def derive_output_dirs(output_root: str, site_dir_name: str) -> tuple[str, str]:
+    """Return (html_dir, markdown_dir) for a site under output_root.
+
+    This is the single place the ScrapedSites and MarkdownSites paths are built.
+    """
+    root = output_root or "."
+    return (
+        os.path.join(root, HTML_ROOT_NAME, site_dir_name),
+        os.path.join(root, MARKDOWN_ROOT_NAME, site_dir_name),
+    )
+
+
 @dataclass
 class ScrapeConfig:
     url: str
@@ -59,7 +77,7 @@ class ScrapeConfig:
     include_assets: bool = True
     incremental: bool = True
     wait: float | None = None
-    concurrent: int = 10
+    concurrent: int = DEFAULT_CONCURRENCY
     proxy: str | None = None
     headless: bool = False
     verbose: bool = False
@@ -74,6 +92,10 @@ class ScrapeConfig:
     max_articles: int = 0
     audit: bool = False
     auth: str | None = None
+    user_agent: str | None = None
+    ignore_robots: bool = False
+    output_root: str = "."
+    index_pages: bool = True
 
     # Derived fields (set in __post_init__)
     cutoff_date: datetime | None = field(init=False, default=None)
@@ -82,6 +104,7 @@ class ScrapeConfig:
     starting_path: str = field(init=False, default="")
     starting_hash: str = field(init=False, default="")
     output_dir: str = field(init=False, default="")
+    markdown_dir: str = field(init=False, default="")
     output_dir_name: str = field(init=False, default="")
 
     def __post_init__(self):
@@ -116,18 +139,15 @@ class ScrapeConfig:
             self.cutoff_date = _parse_since(self.since)
 
         if self.instagram:
-            self.output_dir_name = "instagram"
-            self.output_dir = "./ScrapedSites/instagram"
-            return
-
-        # Generate output directory name
-        dir_name = self.domain.removeprefix("www.").replace(".", "_")
-        if self.stay_in_path and self.starting_path:
-            path_suffix = self.starting_path.lstrip("/").replace("/", "_")
-            if path_suffix:
-                dir_name += "_" + path_suffix
+            dir_name = "instagram"
+        else:
+            dir_name = self.domain.removeprefix("www.").replace(".", "_")
+            if self.stay_in_path and self.starting_path:
+                path_suffix = self.starting_path.lstrip("/").replace("/", "_")
+                if path_suffix:
+                    dir_name += "_" + path_suffix
         self.output_dir_name = dir_name
-        self.output_dir = f"./ScrapedSites/{dir_name}"
+        self.output_dir, self.markdown_dir = derive_output_dirs(self.output_root, dir_name)
 
     @property
     def wait_time(self) -> float:

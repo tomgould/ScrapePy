@@ -99,6 +99,10 @@ class CrawlCache:
             entry["page_type"] = page_type
         self._data["pages"][url_path] = entry
 
+    def has_page(self, url_path: str) -> bool:
+        """True when an earlier run cached this page."""
+        return url_path in self._data["pages"]
+
     def get_page_links(self, url_path: str) -> list[str]:
         """Return cached links for a page, or empty list."""
         entry = self._data["pages"].get(url_path)

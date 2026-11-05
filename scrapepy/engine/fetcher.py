@@ -7,10 +7,31 @@ from scrapling import Fetcher, StealthyFetcher
 
 from ..config import ScrapeConfig
 
+# User agent for asset downloads when --user-agent is not set. Page fetches
+# without --user-agent use the browser-like headers Scrapling generates.
+DEFAULT_ASSET_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/131.0.0.0 Safari/537.36"
+)
+
+
+def asset_user_agent(config: ScrapeConfig) -> str:
+    return config.user_agent or DEFAULT_ASSET_USER_AGENT
+
+
+def page_headers(config: ScrapeConfig, headers: dict | None = None) -> dict:
+    """Headers for an HTTP page fetch: auth, --user-agent, then per-request headers."""
+    merged = dict(config.auth_header)
+    if config.user_agent:
+        merged["User-Agent"] = config.user_agent
+    merged.update(headers or {})
+    return merged
+
 
 def fetch_page_http(url: str, config: ScrapeConfig, headers: dict | None = None):
     """Fetch a page using Scrapling's HTTP-only Fetcher (fast, no browser)."""
-    merged = {**config.auth_header, **(headers or {})}
+    merged = page_headers(config, headers)
     return Fetcher.get(
         url,
         stealthy_headers=True,
@@ -52,6 +73,8 @@ async def fetch_page_browser(
         kwargs["extra_headers"] = config.auth_header
     if config.proxy:
         kwargs["proxy"] = config.proxy
+    if config.user_agent:
+        kwargs["useragent"] = config.user_agent
     if user_data_dir:
         kwargs["user_data_dir"] = user_data_dir
 
@@ -68,11 +91,7 @@ def create_asset_client(config: ScrapeConfig):
     import httpx
 
     default_headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/131.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": asset_user_agent(config),
         **config.auth_header,
     }
     return httpx.AsyncClient(
@@ -99,11 +118,7 @@ async def download_asset(
             resp = await client.get(url, headers=headers or {})
         else:
             default_headers = {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/131.0.0.0 Safari/537.36"
-                ),
+                "User-Agent": asset_user_agent(config),
                 **config.auth_header,
             }
             req_headers = {**default_headers, **(headers or {})}

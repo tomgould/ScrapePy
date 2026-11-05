@@ -9,7 +9,8 @@ from ..engine.browser_actions import scroll_full_page
 from ..output.writer import write_file
 
 
-async def run_single_page_mode(config: ScrapeConfig):
+async def run_single_page_mode(config: ScrapeConfig) -> int:
+    """Returns the number of pages saved."""
     print(f"Fetching single page: {config.url}")
 
     async def page_action(page):
@@ -29,7 +30,7 @@ async def run_single_page_mode(config: ScrapeConfig):
     except Exception as e:
         print(f"\nError: Failed to load page ({type(e).__name__}: {e})")
         print("Check that the URL is correct and the browser is installed (scrapling install).")
-        return
+        return 0
 
     html = response.body.decode(response.encoding or "utf-8")
 
@@ -41,3 +42,4 @@ async def run_single_page_mode(config: ScrapeConfig):
     print("\n--- Scraping Complete ---")
     print("Pages saved: 1")
     print(f"Output folder: {config.output_dir}")
+    return 1
