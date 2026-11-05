@@ -11,6 +11,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from bs4 import BeautifulSoup
+
+from .html_prep import (
+    absolutize_links,
+    canonical_url,
+    clean_title,
+    code_language,
+    dominant_container,
+    expand_truncated_link_text,
+    fix_block_links,
+    normalize_headings,
+    same_site,
+)
 import markdownify
 import yaml
 
@@ -76,7 +88,7 @@ _JUNK_CLASS_KEYWORDS = (
 
 # Frontmatter keys in output order. Every Markdown file uses this set.
 FRONTMATTER_FIELDS = (
-    "title", "url", "date", "date_source", "page_type",
+    "title", "url", "fetched_url", "date", "date_source", "page_type",
     "word_count", "description", "domain",
     "articles", "sub_sections",
     "scraped_at", "content_hash",
@@ -122,11 +134,14 @@ def content_hash(body: str) -> str:
 
 
 class HTMLToMarkdown:
-    def __init__(self, input_dir, output_dir=None, flatten=False, base_url=None, domain=None):
+    def __init__(self, input_dir, output_dir=None, flatten=False, base_url=None, domain=None,
+                 absolute_links=False):
         self.input_dir = Path(input_dir)
         self.flatten = flatten
         self.base_url = base_url
         self.domain = domain
+        # Markdown-only mode: links and images point at absolute live URLs
+        self.absolute_links = absolute_links
 
         if output_dir:
             self.output_dir = Path(output_dir)
@@ -141,6 +156,31 @@ class HTMLToMarkdown:
         self.skipped = 0
         # Path of the file the most recent convert_file() call wrote, or None
         self.last_output_path: str | None = None
+
+    def _prepare_html(self, html: str, metadata: dict) -> str:
+        """Unwrap block links, read the canonical URL, and in markdown-only
+        mode make links absolute. Updates metadata["url"] from the canonical."""
+        soup = BeautifulSoup(html, "lxml")
+        fix_block_links(soup)
+        expand_truncated_link_text(soup)
+        page_url = metadata.get("url")
+        if page_url:
+            canonical = canonical_url(soup, page_url)
+            if canonical and canonical != page_url and same_site(canonical, page_url):
+                metadata["fetched_url"] = page_url
+                metadata["url"] = canonical
+            if self.absolute_links:
+                absolutize_links(soup, page_url)
+        return str(soup)
+
+    @staticmethod
+    def _md(html_text: str, **extra) -> str:
+        """markdownify with the house options: ATX headings, "-" bullets,
+        fenced code blocks labelled with the language the HTML gives."""
+        return markdownify.markdownify(
+            html_text, heading_style="ATX", bullets="-",
+            code_language_callback=code_language, **extra,
+        )
 
     def is_asset_directory(self, rel_path):
         first_part = rel_path.parts[0] if rel_path.parts else ""
@@ -252,9 +292,9 @@ class HTMLToMarkdown:
                         md_parts.append("\n**Response:**\n")
                         md_parts.append(f"{response_section.get_text(strip=True)}\n")
             else:
-                md = markdownify.markdownify(str(main_content), heading_style="ATX", bullets="-")
+                md = self._md(str(main_content))
                 if title and not md.strip().startswith("# "):
-                    md = f"# {title}\n\n{md}"
+                    md = f"# {clean_title(title)}\n\n{md}"
                 return md
 
         result = "\n".join(md_parts)
@@ -421,10 +461,10 @@ class HTMLToMarkdown:
             if "icon" in src.lower():
                 img.decompose()
 
-        md = markdownify.markdownify(str(body), heading_style="ATX", bullets="-", strip=["img"])
+        md = self._md(str(body), strip=["img"])
 
         if title and not md.strip().startswith(f"# {title}") and not md.strip().startswith("# "):
-            md = f"# {title}\n\n{md}"
+            md = f"# {clean_title(title)}\n\n{md}"
 
         return md
 
@@ -432,6 +472,9 @@ class HTMLToMarkdown:
         """Remove non-content HTML elements before content extraction."""
         # Structural non-content
         for tag in soup.find_all(["script", "style", "noscript", "svg", "link"]):
+            tag.decompose()
+        # Form controls: button labels ("Add to basket", "Search") are not content
+        for tag in soup.find_all(["button", "input", "select", "textarea", "iframe"]):
             tag.decompose()
         for tag in soup.find_all(["nav", "header", "footer"]):
             tag.decompose()
@@ -484,7 +527,11 @@ class HTMLToMarkdown:
             if content and len(content.get_text(strip=True).split()) > 50:
                 break
         else:
-            return None
+            # No known container: take the element that holds most of the
+            # text (skips header rows, sidebars and footers on listing pages)
+            content = dominant_container(soup)
+            if content is None or len(content.get_text(strip=True).split()) <= 50:
+                return None
 
         # Extract title
         title = ""
@@ -495,10 +542,10 @@ class HTMLToMarkdown:
             title = soup.find("title").get_text(strip=True)
 
         # Convert to markdown
-        md = markdownify.markdownify(str(content), heading_style="ATX", bullets="-")
+        md = self._md(str(content))
 
         if title and not md.strip().startswith("# "):
-            md = f"# {title}\n\n{md}"
+            md = f"# {clean_title(title)}\n\n{md}"
 
         return md
 
@@ -588,9 +635,9 @@ class HTMLToMarkdown:
                 if soup.find("h1"):
                     title = soup.find("h1").get_text().strip()
 
-                md = markdownify.markdownify(str(main_content), heading_style="ATX", bullets="-")
+                md = self._md(str(main_content))
                 if title and not md.strip().startswith("# "):
-                    md = f"# {title}\n\n{md}"
+                    md = f"# {clean_title(title)}\n\n{md}"
 
                 if len(md.strip()) > 100:
                     return md
@@ -842,10 +889,11 @@ class HTMLToMarkdown:
             '', md, flags=re.MULTILINE | re.IGNORECASE)
 
         # Linked heading + thumbnail grid (Hearst related content sections)
-        # Pattern: ## [Section Title](link) followed by image+text link blocks
+        # Pattern: ## [Section Title](link) followed by one or more image+text
+        # link blocks. A linked heading on its own is content and is kept.
         md = re.sub(
             r'^#{2,3}\s+\[.+?\]\(.+?\)\s*$\n+'
-            r'(?:\s*\[?!\[.*?\]\(https?://[^)]*\)[\s\S]*?\]\([^)]*\)\s*$\n*)*',
+            r'(?:\s*\[?!\[.*?\]\(https?://[^)]*\)[\s\S]*?\]\([^)]*\)\s*$\n*)+',
             '', md, flags=re.MULTILINE)
 
         # Inline "Read More" blocks (heading + link lines only, not greedy)
@@ -984,6 +1032,11 @@ class HTMLToMarkdown:
         def replace_link(match):
             text = match.group(1)
             url = match.group(2)
+            # A link title ("[text](url "Title")") is not part of the URL
+            title = ""
+            m = re.match(r'^(\S+)(\s+"[^"]*")$', url)
+            if m:
+                url, title = m.group(1), m.group(2)
 
             if url.startswith(("http://", "https://", "#", "mailto:", "tel:")):
                 return match.group(0)
@@ -1001,7 +1054,7 @@ class HTMLToMarkdown:
             if clean_url in ("index.md", "_index.md", current_filename):
                 return text
 
-            return f"[{text}]({url})"
+            return f"[{text}]({url}{title})"
 
         return re.sub(r'\[([^\]]*)\]\(([^)]+)\)', replace_link, md)
 
@@ -1157,6 +1210,7 @@ class HTMLToMarkdown:
                 stem = output_path.stem  # e.g. "news"
                 output_path = output_path.parent / stem / "_index.md"
 
+            html = self._prepare_html(html, metadata)
             md = self.extract_content(html, filepath)
             if not md:
                 print(f"  Skipped (no content/error page): {filepath.name}")
@@ -1179,11 +1233,14 @@ class HTMLToMarkdown:
                 title = ""
                 h1 = title_soup.find("h1")
                 if h1:
-                    title = h1.get_text(strip=True)
+                    title = h1.get_text(" ", strip=True)
                 elif title_soup.find("title"):
-                    title = title_soup.find("title").get_text(strip=True)
+                    title = title_soup.find("title").get_text(" ", strip=True)
                 if title:
-                    md = f"# {title}\n\n{md}"
+                    md = f"# {clean_title(title)}\n\n{md}"
+
+            # One H1, no skipped heading levels
+            md = normalize_headings(md)
 
             # Capture title from first # Heading for metadata
             title_match = re.match(r'^# (.+)$', md.lstrip(), re.MULTILINE)
