@@ -65,8 +65,8 @@ python main.py https://example.com
 # Test browser mode (requires Step 2)
 python main.py https://example.com -1
 
-# Run all 457 tests (pure logic, no network, ~0.5s)
-python -m pytest tests/ -v
+# Run the tests (pure logic, no network, a few seconds)
+python -m pytest tests/ -q
 ```
 
 ## Installing as a Package
@@ -83,7 +83,11 @@ This registers the `scrapepy` command via the `[project.scripts]` entry in `pypr
 scrapepy https://example.com -m
 ```
 
-Package metadata: version 0.1.0, requires-python >=3.11.
+Package metadata: version 0.2.0, requires-python >=3.11. For development, install the test dependencies too:
+
+```bash
+pip install -e ".[dev]"
+```
 
 ## Proxy Configuration
 
@@ -122,11 +126,11 @@ rm -rf ~/.scrapepy/instagram_profile/
 
 ## Output Directories
 
-ScrapePy creates these directories in the current working directory:
+ScrapePy creates these directories in the current working directory, or under the folder given with `--output-dir`:
 
 | Directory | Mode | Contents |
 |-----------|------|----------|
-| `ScrapedSites/<domain>/` | All web modes | HTML + assets (images/, css/, js/, fonts/, media/) |
+| `ScrapedSites/<domain>/` | All web modes | HTML + assets (images/, css/, js/, fonts/, media/), plus `run_summary.json` after a crawl |
 | `ScrapedSites/instagram/<username>/` | `--instagram` | Profile + post data + media |
 | `MarkdownSites/<domain>/` | Default (use `--no-markdown` to skip) | Markdown files + images/ + media/ (copied) |
 | `tests/fixtures/<domain>/` | `--audit` | Test fixtures (HTML snapshots + expected values) |

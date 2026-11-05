@@ -38,7 +38,11 @@
 1. CLI parses args -> ScrapeConfig (incl. cutoff_date from --recent/--since)
 2. scraper.py creates output dirs (css/, js/, images/, fonts/, media/), dispatches to crawl.py
 3. Phase 0: Site Reconnaissance (always runs)
-   a. Fetch /robots.txt, extract Sitemap: directives → robots_sitemaps list
+   a. Fetch /robots.txt → RobotsPolicy (Disallow rules, Crawl-delay) + Sitemap: directives.
+      Missing robots.txt allows everything; --ignore-robots keeps the sitemaps only.
+      Every later fetch (discovery, pages, prefetches) checks the policy and waits on a
+      per-host HostRateLimiter: max(--wait, Crawl-delay) for pages, min(--wait, 1s) or
+      Crawl-delay for discovery.
    b. Fetch /sitemap.xml + sub-sitemaps (cap 20) + robots.txt sitemaps
       Parse <loc> + <lastmod> dates into DiscoveryMap
    c. Fetch homepage HTML (reused for nav parsing, so no extra fetch)
@@ -115,13 +119,14 @@
    v. Queue extracted links (skip for min-articles filler articles AND focused_crawl mode)
       - Pre-filter: skip non-content paths, old article URLs, RSS/feed/atom URLs
    w. Kick off prefetches for upcoming section batch + regular queue URLs
-5. Generate section index.md files (for each section with articles):
+5. Generate section _index.md files (for each section with articles, skipped with --no-index-pages):
    a. Lookup section label from outline NavSection (fallback: URL path-derived)
    b. Collect sub-section info for sub-section links
    c. generate_section_index() creates markdown with frontmatter + article listings
-   d. Copy referenced images from global images/ to each section's images/ dir
+   d. Copy referenced images from global images/ to each section's images/ dir (always)
 6. Save cache, write broken_links.txt if any
-7. Print summary: pages saved, unchanged, assets, outline stats, date filter stats
+7. Print summary: pages saved, unchanged, assets, outline stats, date filter stats, robots.txt blocks
+8. Write run_summary.json (RunStats → build_summary) and return it; its exit_code becomes the process exit code
 ```
 
 ### Browser Modes (-1, --swagger, -d)
@@ -431,7 +436,7 @@ Pre-conversion skipping: XML feeds, manifests, WordPress boilerplate paths
 
 Post-conversion: clean empty rows/headings, promote bold to headings, ensure title, convert links (.html -> .md), copy images/ + media/ directories
 
-Module-level function: `generate_section_index(section_label, section_url, domain, articles, sub_sections)`: Generates section `index.md` with YAML frontmatter (page_type: SECTION), article listings with thumbnails, and sub-section links. `convert_file()` accepts optional `output_path` parameter for section-based output placement.
+Module-level function: `generate_section_index(section_label, section_url, domain, articles, sub_sections)`: Generates section `_index.md` with YAML frontmatter (page_type: section, scraped_at, content_hash), article listings with thumbnails, and sub-section links. `convert_file()` accepts optional `output_path` parameter for section-based output placement.
 
 ### `scrapepy/convert/openapi_to_markdown.py`
 
@@ -451,29 +456,34 @@ Two conversion functions:
 ## Tests
 
 ```bash
-python -m pytest tests/ -v    # ~0.5s, no network I/O, 457 tests
+python -m pytest tests/ -v    # a few seconds, no network I/O
 ```
 
 All tests are pure logic: no network calls, no file system side effects (except temp dirs).
 
-| File | Tests | Lines | Covers |
-|------|-------|-------|--------|
-| `test_urls.py` | 78 | 332 | `is_in_scope()`, `normalize_link()`, `extract_links_from_html()`, `has_article_slug()`, `is_likely_article_path()`, `discover_section_pages()`, `classify_asset_url()`, `NON_CONTENT_PATHS`, `SKIP_EXTENSIONS` |
-| `test_navigation.py` | 24 | 414 | Nav hierarchy detection, source tagging (header/footer/nav), link filtering, mega-menu/dropdown parsing, `_find_dropdown_container()`, `_extract_dropdown_links()` |
-| `test_outline.py` | 25 | 344 | URL-to-section assignment (incl. sub_sections), outline building (article counts, cutoff dates, orphan children, hierarchical sub-sections), `all_section_paths()`, JSON serialization |
-| `test_frontmatter.py` | 25 | 273 | Frontmatter generation, word count, metadata extraction, convert_file integration |
-| `test_section_index.py` | 12 | 257 | `generate_section_index()`: frontmatter fields, article listings, thumbnails, sub-section links, empty cases |
-| `test_discovery_parsers.py` | 27 | 239 | `_parse_sitemap()`, `_parse_rss()`, `_parse_atom()`, `_discover_feeds_from_html()`, `parse_robots_sitemaps()`: XML parsing, external URL filtering, malformed input |
-| `test_config.py` | 47 | 234 | `_parse_recent()`, `_parse_since()`, `ScrapeConfig` derived fields, properties, new defaults (markdown=True, incremental=True, include_assets=True, concurrent=10) |
-| `test_writer.py` | 34 | 207 | `_flatten_numeric_segments()`, `url_to_filepath()`, `extract_slug()`, `article_filepath_in_section()` |
-| `test_dates.py` | 34 | 200 | ISO/RFC2822 parsing, URL/HTML/header date extraction, priority ranking, `url_has_old_date()` |
-| `test_audit_fixtures.py` | dynamic | 199 | Fixture-driven from `--audit` runs: nav parsing, page classification, date extraction, robots.txt |
-| `test_cache.py` | 23 | 164 | `_get_header()`, page/asset cache operations, save/load roundtrip, corrupt/version handling |
-| `test_rewriter.py` | 18 | 158 | `rewrite_urls()`: href, src, srcset, CSS url(), absolute URLs, stay-in-path scope |
-| `test_classifier.py` | 27 | 134 | `is_section_url()`, `_compute_link_density()`, `classify_page()` (URL patterns, link density, date signals) |
-| `test_crawl_helpers.py` | 18 | 129 | Article slug detection, article path detection, section link splitting, `max_articles` config |
-| `test_errors.py` | 27 | 116 | `is_error_page_html()`, `is_error_page_content()`, `is_cloudflare_challenge()` |
-| `test_discovery.py` | 8 | 58 | robots.txt `Sitemap:` directive parsing |
+| File | Covers |
+|------|--------|
+| `test_urls.py` | `is_in_scope()`, `normalize_link()`, `extract_links_from_html()`, `has_article_slug()`, `is_likely_article_path()`, `discover_section_pages()`, `classify_asset_url()`, `NON_CONTENT_PATHS`, `SKIP_EXTENSIONS` |
+| `test_navigation.py` | Nav hierarchy detection, source tagging (header/footer/nav), link filtering, mega-menu/dropdown parsing, `_find_dropdown_container()`, `_extract_dropdown_links()` |
+| `test_outline.py` | URL-to-section assignment (incl. sub_sections), outline building (article counts, cutoff dates, orphan children, hierarchical sub-sections), `all_section_paths()`, JSON serialization |
+| `test_frontmatter.py` | Frontmatter generation, word count, metadata extraction, convert_file integration |
+| `test_section_index.py` | `generate_section_index()`: frontmatter fields, article listings, thumbnails, sub-section links, empty cases |
+| `test_discovery_parsers.py` | `_parse_sitemap()`, `_parse_rss()`, `_parse_atom()`, `_discover_feeds_from_html()`, `parse_robots_sitemaps()`: XML parsing, external URL filtering, malformed input |
+| `test_config.py` | `_parse_recent()`, `_parse_since()`, `ScrapeConfig` derived fields, properties, new defaults (markdown=True, incremental=True, include_assets=True, concurrent=4) |
+| `test_writer.py` | `_flatten_numeric_segments()`, `url_to_filepath()`, `extract_slug()`, `article_filepath_in_section()` |
+| `test_dates.py` | ISO/RFC2822 parsing, URL/HTML/header date extraction, priority ranking, `url_has_old_date()` |
+| `test_audit_fixtures.py` | Fixture-driven from `--audit` runs: nav parsing, page classification, date extraction, robots.txt |
+| `test_cache.py` | `_get_header()`, page/asset cache operations, save/load roundtrip, corrupt/version handling |
+| `test_rewriter.py` | `rewrite_urls()`: href, src, srcset, CSS url(), absolute URLs, stay-in-path scope |
+| `test_classifier.py` | `is_section_url()`, `_compute_link_density()`, `classify_page()` (URL patterns, link density, date signals) |
+| `test_crawl_helpers.py` | Article slug detection, article path detection, section link splitting, `max_articles` config |
+| `test_errors.py` | `is_error_page_html()`, `is_error_page_content()`, `is_cloudflare_challenge()` |
+| `test_discovery.py` | robots.txt `Sitemap:` directive parsing |
+| `test_robots.py` | `RobotsPolicy` (Disallow, user agent groups, Crawl-delay, missing robots.txt, `--ignore-robots`), `HostRateLimiter`, discovery skipping disallowed URLs |
+| `test_crawl_run.py` | The crawl loop against in-memory pages: robots.txt enforcement, pacing of prefetches, `run_summary.json`, unchanged and changed pages on a second run, `--no-index-pages` |
+| `test_run_summary.py` | Summary schema, counts, relative paths, no credentials in options, exit codes |
+| `test_output_dir.py` | `--output-dir`, `derive_output_dirs()`, writer and converter paths |
+| `test_cli.py` | Bad arguments exit 2, `--version`, `--user-agent`, `--ignore-robots` warning, `--no-index-pages` |
 
 ## Scrapling API Integration
 

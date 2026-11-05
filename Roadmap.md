@@ -45,7 +45,7 @@
 
 - [x] Cloudflare bypass: `StealthyFetcher` with `solve_cloudflare=True`, `is_cloudflare_challenge()` detection with 5s retry sleep
 - [x] Proxy support: `config.proxy` passed to `Fetcher.get()`, `StealthyFetcher.async_fetch()`, and `httpx.AsyncClient()`
-- [x] Concurrency control: `config.concurrent` (default 5) via `asyncio.Semaphore` for asset downloads and page prefetching
+- [x] Concurrency control: `config.concurrent` (default 4) via `asyncio.Semaphore` for asset downloads and page prefetching
 - [x] Headless mode: `--headless` flag for all browser modes
 
 ---
@@ -230,8 +230,7 @@ Multi-signal approach with confidence ranking (`DateSource` IntEnum):
 - [x] test_writer.py (120 lines, 21 tests): Numeric segment flattening, url_to_filepath integration
 - [x] test_frontmatter.py (273 lines, 25 tests): Frontmatter generation, word count, metadata extraction, convert_file integration
 
-Phase 11 total: 1,347 test lines, 121 tests, all pure logic (no network I/O), ~0.35s runtime
-After Phase 15: 404 tests across 14 test files, ~0.48s runtime
+All tests are pure logic with no network I/O. Run `python -m pytest tests/ -q` for the current count.
 
 ---
 
@@ -324,7 +323,7 @@ After Phase 15: 404 tests across 14 test files, ~0.48s runtime
 
 ## Phase 15: Test Coverage Expansion (Code Review): Complete
 
-> Grew from 121 tests to 404 tests (+283). All pure logic, no network I/O, ~0.48s runtime.
+> Added tests for every processing, output and config module. All pure logic, no network I/O.
 
 ### 15a. Critical Gap Tests
 
@@ -348,13 +347,23 @@ After Phase 15: 404 tests across 14 test files, ~0.48s runtime
 
 > All 5 documentation files updated to reflect current codebase after Phases 12–15.
 
-- [x] Update README.md: Updated total lines (9,841), source (6,982), tests (2,859), test count (404), file count (49), test description expanded to cover all 15 test files, project stats section refreshed
+- [x] Update README.md: Updated total lines (9,841), source (6,982), tests (2,859), file count (49), test description expanded to cover all 15 test files, project stats section refreshed
 - [x] Update Architecture.md: Updated ASCII art diagram with all current line counts, total (9,841), test table rewritten from 7 rows to 15 rows, urls.py section expanded with `has_article_slug()`/`is_likely_article_path()`/`discover_section_pages()`, to_markdown.py line count updated
-- [x] Update Setup.md: Updated test count (404), runtime (~0.5s)
+- [x] Update Setup.md: Updated test instructions
 - [x] Update Roadmap.md: Phase 15 marked complete with detailed descriptions; Phase 11 totals updated
 - [x] Update CLAUDE.md: Updated codebase size (9,841 across 49 files), project structure tree (all line counts for engine/, processing/, output/, convert/), tests section rewritten with all 15 test files, all 17 API reference section headers updated with current line counts
 
 ---
+
+## Phase 17: Responsible Use and Building Block (0.2.0): Complete
+
+- [x] robots.txt enforcement with `urllib.robotparser`: `Disallow` rules apply to crawl, docs, single page, Swagger and audit fetches; `Crawl-delay` is a minimum per-host delay; `--ignore-robots` turns both off with a warning. Instagram mode does not check robots.txt.
+- [x] Per-host request pacing (`HostRateLimiter`) for every page fetch, prefetches included
+- [x] `--user-agent`; default concurrency lowered from 10 to 4
+- [x] `--output-dir` with one derived Markdown path (`config.markdown_dir`)
+- [x] `run_summary.json` after every crawl, documented exit codes, `--version`, `python -m scrapepy`
+- [x] Frontmatter: `scraped_at`, `content_hash`, no null values, lowercase `_index.md` values, `--no-index-pages`
+- [x] Packaging metadata, dev extra, CHANGELOG, CI on Python 3.11 to 3.13
 
 ## Backlog: Future Enhancements
 
@@ -372,5 +381,4 @@ After Phase 15: 404 tests across 14 test files, ~0.48s runtime
 - [ ] Output formats: JSON output option alongside HTML/Markdown
 - [ ] Progress bar: Real-time crawl progress indicator
 - [ ] Retry logic: Configurable retry count for failed fetches
-- [ ] Robots.txt compliance: Optional respect for `Disallow:` directives
 - [ ] Logging module: Replace `print()` with `logging` for log levels, file output, and verbose stack traces

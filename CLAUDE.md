@@ -5,7 +5,7 @@ ScrapePy is a Python web scraper built on Scrapling (HTTP and stealth-browser fe
 ## Commands
 
 ```bash
-pip install -r requirements.txt     # Python 3.11+
+pip install -e ".[dev]"             # Python 3.11+, includes pytest
 scrapling install                   # browser, needed for browser modes only
 python main.py <url> [options]      # or the installed `scrapepy` entry point
 python main.py --audit <url> -v     # recon only, writes test fixtures
@@ -27,8 +27,10 @@ scrapepy/
   engine/               fetcher.py (HTTP/browser/asset fetching),
                         browser_actions.py and instagram_actions.py (page JS)
   processing/           urls, errors, assets, rewriter, dates, classifier,
-                        discovery (sitemaps/RSS), navigation, outline
-  output/               writer (file I/O, path mapping), cache, broken_links
+                        discovery (sitemaps/RSS), robots (rules + pacing),
+                        navigation, outline
+  output/               writer (file I/O, path mapping), cache, broken_links,
+                        run_summary (run_summary.json, exit codes)
   convert/              to_markdown, openapi_to_markdown, instagram_to_markdown
 tests/                  one test module per processing/output/convert area
 tests/fixtures/         per-site HTML snapshots plus test_config.json
@@ -40,7 +42,7 @@ tests/fixtures/         per-site HTML snapshots plus test_config.json
 - Configuration travels in `ScrapeConfig`; do not pass individual flags around.
 - `Fetcher` (HTTP with TLS fingerprinting) serves the default crawl and asset downloads. `StealthyFetcher` (browser) serves `-j`, `-1`, `--swagger`, `-d` and `--instagram`.
 - The crawl is a hand-written BFS loop, not Scrapling's Spider, so it can integrate URL rewriting, scope checks, section-ordered traversal and prefetching.
-- Phase 0 recon runs before the crawl: robots.txt, sitemaps, RSS/Atom, homepage navigation, then `site_outline.json`. The queue is seeded from the navigation structure.
+- Phase 0 recon runs before the crawl: robots.txt (rules, Crawl-delay, sitemaps), sitemaps, RSS/Atom, homepage navigation, then `site_outline.json`. The queue is seeded from the navigation structure.
 - Section pages split their links into article batches (DOM order) and navigation links. Articles are placed under the section that discovered them in the Markdown output, and each section gets an `_index.md`.
 - Mega-menu and dropdown navigation is parsed in `processing/navigation.py`; `NavSection.sub_sections` forms a tree that `SiteOutline.all_section_paths()` flattens.
 - Date filtering (`--recent`, `--since`) is conservative: unknown-date pages and section pages are always kept; only articles with a confirmed old date are skipped. Date source priority: meta tag, JSON-LD, URL pattern, `<time>` element, HTTP header.
@@ -54,7 +56,10 @@ tests/fixtures/         per-site HTML snapshots plus test_config.json
 - The `wait` argument to `StealthyFetcher.async_fetch` must be an `int`; cast it.
 - Normalise URL paths with `posixpath.normpath()` before fetching.
 - `url_to_filepath()` flattens numeric path segments into the filename (`/news/12345/1/slug` becomes `news/slug-12345-1.html`).
-- Markdown output always carries YAML frontmatter (title, url, date, date_source, page_type, word_count, description, domain).
+- Markdown output always carries YAML frontmatter from `FRONTMATTER_FIELDS` in `convert/to_markdown.py` (title, url, date, date_source, page_type, word_count, description, domain, scraped_at, content_hash). Only non-null values are written; keys and values like `page_type` are lowercase.
+- Output paths come from `config.output_dir` and `config.markdown_dir`, both built by `derive_output_dirs()`. Never derive one from the other by string replacement.
+- Every page fetch checks `RobotsPolicy.can_fetch()` and waits on a `HostRateLimiter` (`processing/robots.py`). New fetch paths must do the same.
+- Crawl mode returns the run summary; `run_summary.json` is documented in README.md, so update both together. Exit codes live in `output/run_summary.py`.
 - Instagram mode keeps its browser profile in `~/.scrapepy/instagram_profile/`.
 
 ## Testing

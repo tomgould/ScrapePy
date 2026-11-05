@@ -2,28 +2,52 @@
 
 Python web scraper using [Scrapling](https://github.com/D4Vinci/Scrapling) + [Patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright-python) for stealth browser automation and anti-detection.
 
-ScrapePy crawls websites, downloads assets, rewrites URLs for offline viewing, and optionally converts everything to Markdown. It handles Cloudflare challenges, JavaScript-rendered SPAs, Swagger/OpenAPI docs, documentation platforms, Instagram profiles, and news sites with date filtering out of the box.
+ScrapePy crawls websites, downloads assets, rewrites URLs for offline viewing, and converts everything to Markdown with YAML frontmatter. It handles Cloudflare challenges, JavaScript-rendered SPAs, Swagger/OpenAPI docs, documentation platforms, Instagram profiles, and news sites with date filtering out of the box.
+
+It also works as a building block: each crawl writes a machine-readable `run_summary.json` listing the new and changed Markdown files, every Markdown file carries a `content_hash`, and the exit code tells a script whether the run worked.
 
 ## Responsible use
 
-You are responsible for how you use ScrapePy. Follow the terms of service of the sites you access, respect their robots.txt and rate limits, and comply with the law that applies to you, including copyright and data protection rules. Only scrape content you have the right to access and keep.
+You are responsible for how you use ScrapePy. Follow the terms of service of the sites you access and comply with the law that applies to you, including copyright and data protection rules. Only scrape content you have the right to access and keep. The authors accept no liability for how the software is used.
 
-The stealth browser, proxy and Instagram features are here as a technical demonstration of what the underlying tools can do. The authors accept no liability for how the software is used.
+What ScrapePy does to keep a crawl polite:
+
+- robots.txt is read at the start of every run and its `Disallow` rules are applied to the URLs a mode picks to fetch. Blocked URLs are skipped, counted in the run summary and listed in `run_summary.json`. A missing or unreachable robots.txt means everything is allowed.
+- Rules are matched against your `--user-agent` when you set one. Without it, the catch-all `User-agent: *` group applies.
+- Page requests to a site start at least `--wait` seconds apart (3 seconds by default, 5 in browser modes). A robots.txt `Crawl-delay` raises that gap and is never lowered by `--wait`. Prefetching does not get around the gap: it overlaps waiting, not requests. Fractional `Crawl-delay` values are rounded up to whole seconds.
+- At most 4 requests run at once by default (`-c` changes this).
+- Reconnaissance requests (sitemaps, feeds, homepage) are spaced by one second or `--wait`, whichever is shorter, and never by less than `Crawl-delay`.
+
+Which modes check robots.txt:
+
+| Mode | robots.txt |
+|------|------------|
+| Default crawl, `-j` | Every page URL, including prefetched ones, and the sitemap, feed and homepage requests made during reconnaissance |
+| `-d` docs | The start URL and every sidebar link |
+| `-1` single page, `--swagger` | The start URL |
+| `--audit` | Reconnaissance requests and the sample pages |
+| `--instagram` | Not checked. Instagram's robots.txt does not allow general crawling, so read its terms before using this mode |
+
+Asset downloads (images, CSS, JS) linked from an allowed page are not checked against robots.txt and are not paced, though they share the `-c` concurrency limit.
+
+`--ignore-robots` turns off the rules and `Crawl-delay`. ScrapePy prints a warning when it is used. Only use it on sites you own or have permission to crawl this way.
+
+The stealth browser and proxy features exist because some sites block ordinary clients even for content they publish openly. They do not give you permission to access anything.
 
 ## Installation
 
 ```bash
-# Install Python dependencies
-pip install -r requirements.txt
-
-# or install the package (provides the `scrapepy` command)
+# Install the package (provides the `scrapepy` command)
 pip install .
 
-# Install the Patchright browser (Chromium)
+# or, for development, with the test dependencies
+pip install -e ".[dev]"
+
+# Install the Patchright browser (Chromium), needed for browser modes only
 scrapling install
 ```
 
-Requires Python 3.11+.
+Requires Python 3.11+. `pip install -r requirements.txt` still works if you only want to run `python main.py`.
 
 ## Testing
 
@@ -35,11 +59,14 @@ python -m pytest tests/ -v
 python -m pytest tests/test_navigation.py -v
 ```
 
-Tests cover date extraction, error detection, URL normalization, page classification, URL rewriting, config parsing, cache operations, sitemap/RSS/Atom parsing, navigation parsing (including mega-menu/dropdown), outline building (including hierarchical sub-sections), article detection, section splitting, numeric segment flattening, slug extraction, section-based filepath mapping, YAML frontmatter generation, section index generation, and fixture-driven validation -- all pure logic with no network I/O.
+Tests cover date extraction, error detection, URL normalization, page classification, URL rewriting, config and CLI parsing, exit codes, robots.txt rules and request pacing, cache operations, sitemap/RSS/Atom parsing, navigation parsing (including mega-menu/dropdown), outline building, article detection, section splitting, path mapping, YAML frontmatter, section index generation, the run summary, and fixture-driven validation. A few tests run the whole crawl loop against in-memory pages. None of them touch the network.
 
 ## Usage
 
 ```bash
+scrapepy <url> [options]
+# or
+python -m scrapepy <url> [options]
 python main.py <url> [options]
 ```
 
@@ -56,8 +83,12 @@ python main.py <url> [options]
 | `-d`, `--docs` | Documentation site mode |
 | `-a`, `--include-assets` / `--no-include-assets` | Include CSS/JS/font files (default: on, images always included) |
 | `-i`, `--incremental` / `--no-incremental` | Only re-download pages/assets modified since last crawl (default: on) |
-| `--wait SECONDS` | Custom wait time per page (default: 5s browser, 3s HTTP) |
-| `-c`, `--concurrent N` | Max concurrent requests for assets and page prefetching (default: 10) |
+| `--wait SECONDS` | Minimum gap between page requests to the site (default: 3s HTTP, 5s browser). robots.txt `Crawl-delay` raises it |
+| `-c`, `--concurrent N` | Max concurrent requests for assets and page prefetching (default: 4) |
+| `--user-agent STRING` | User-Agent header for all requests, also used to match robots.txt groups (default: a browser-like user agent) |
+| `--ignore-robots` | Do not apply robots.txt rules or `Crawl-delay`. Prints a warning; only use with permission |
+| `-o`, `--output-dir DIR` | Folder under which `ScrapedSites/` and `MarkdownSites/` are created (default: current directory) |
+| `--index-pages` / `--no-index-pages` | Write the generated `_index.md` section listing pages (default: on) |
 | `--auth USER:PASS` | HTTP Basic Auth credentials |
 | `--proxy URL` | Proxy URL for requests |
 | `--headless` | Run browser headless (default: visible) |
@@ -72,12 +103,19 @@ python main.py <url> [options]
 | `--ig-login` | Enable Instagram login (visible browser, saves cookies) |
 | `--ig-max-posts N` | Max posts to scrape per account (0 = all) |
 | `--update-meta` | Re-scrape posts to refresh metadata but skip re-downloading existing media |
+| `--version` | Print the version and exit |
 
 ### Examples
 
 ```bash
 # Basic site crawl (markdown, incremental, and assets are ON by default)
 python main.py https://www.example.com
+
+# Write output somewhere else and identify your crawler
+python main.py https://www.example.com -o /data/crawls --user-agent "MyCrawler/1.0 (+https://example.org/bot)"
+
+# Markdown for a search index: skip the generated section listing pages
+python main.py https://www.example.com --no-index-pages
 
 # Crawl without Markdown conversion
 python main.py https://www.example.com --no-markdown
@@ -142,7 +180,7 @@ python main.py --instagram --accounts accounts.txt --ig-max-posts 5 --update-met
 
 ## Output
 
-Scraped sites are saved to `ScrapedSites/` with this structure:
+Output goes under the current directory, or under `--output-dir` when given. Scraped sites are saved to `ScrapedSites/` with this structure:
 
 ```
 ScrapedSites/example_com/
@@ -150,6 +188,7 @@ ScrapedSites/example_com/
   about.html
   products/widgets.html
   site_outline.json        (navigation structure + sitemap stats)
+  run_summary.json         (what this crawl did, see below)
   .scrapepy_cache.json     (incremental cache)
   images/
   css/
@@ -170,21 +209,21 @@ MarkdownSites/example_com/
   media/              (copied from ScrapedSites)
 ```
 
-When date filtering produces section batches, articles are organized under section directories with generated index files:
+Pages classified as sections (the homepage usually is) are written as `_index.md` inside a folder named after the section. When date filtering produces section batches, articles are organized under section directories, and each section gets a generated `_index.md` listing its articles. `--no-index-pages` skips the generated listings, which helps when the Markdown feeds a search index:
 
 ```
 MarkdownSites/example_com/
-  index.md
+  _index.md
   sport/
-    index.md          (section index with article listings + thumbnails)
+    _index.md         (section index with article listings + thumbnails)
     images/           (images referenced by section articles)
     my-article.md
     football/
-      index.md        (sub-section index)
+      _index.md       (sub-section index)
       images/
       article-two.md
   news/
-    index.md
+    _index.md
     images/
     some-article.md
 ```
@@ -198,19 +237,80 @@ Every Markdown file includes YAML frontmatter with page metadata, useful for AI/
 ```yaml
 ---
 title: Example article title
-url: https://example.com/news/some-article
+url: "https://example.com/news/some-article"
 date: 2026-02-20
 date_source: META_TAG
 page_type: article
 word_count: 1247
 description: A short description of the article...
 domain: example.com
+scraped_at: "2026-11-05T12:00:00+00:00"
+content_hash: "sha256:3f5a..."
 ---
+
 # Example article title
 ...content...
 ```
 
-Fields are populated automatically: in crawl mode from live metadata (URL, date, page type), in batch mode by extracting from the HTML. Only non-null fields are included. Date sources are ranked by confidence: `META_TAG` > `JSON_LD` > `URL_PATTERN` > `TIME_ELEMENT` > `HTTP_HEADER`.
+Fields are populated automatically: in crawl mode from live metadata (URL, date, page type), in batch mode by extracting from the HTML. Only non-null fields are written, so a missing `date` means no date was found. Keys are always lowercase, and generated `_index.md` pages use the same keys (with `page_type: section`, plus `articles` and `sub_sections` counts). Date sources are ranked by confidence: `META_TAG` > `JSON_LD` > `URL_PATTERN` > `TIME_ELEMENT` > `HTTP_HEADER`.
+
+`scraped_at` is when the file was written, in UTC. `content_hash` is the sha256 of the Markdown body, meaning everything after the blank line that follows the closing `---`. It stays the same when the page content does, so an indexer can skip files whose hash it has already seen.
+
+### Run summary (`run_summary.json`)
+
+Every crawl writes `run_summary.json` into the site's `ScrapedSites/<site>/` folder and prints its path at the end. Paths in it are relative to the output directory (`--output-dir`, or the current directory).
+
+```json
+{
+  "schema_version": 1,
+  "start_url": "https://quotes.toscrape.com/",
+  "started_at": "2026-11-05T12:00:00+00:00",
+  "ended_at": "2026-11-05T12:01:10+00:00",
+  "output_dir": "/data/crawls",
+  "html_dir": "ScrapedSites/quotes_toscrape_com",
+  "markdown_dir": "MarkdownSites/quotes_toscrape_com",
+  "options": { "concurrent": 4, "wait_seconds": 3.0, "ignore_robots": false, "...": "..." },
+  "counts": {
+    "fetched": 12, "new": 10, "changed": 0, "unchanged": 0,
+    "failed": 2, "blocked_by_robots": 0, "skipped_old": 0
+  },
+  "new_markdown": ["MarkdownSites/quotes_toscrape_com/_index.md"],
+  "changed_markdown": [],
+  "unchanged_urls": [],
+  "failed": [{ "url": "https://quotes.toscrape.com/missing", "reason": "HTTP 404" }],
+  "blocked_by_robots": [],
+  "interrupted": false,
+  "exit_code": 0
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `schema_version` | Goes up when a field is renamed or removed. New fields can appear without a bump |
+| `start_url`, `started_at`, `ended_at` | The URL given and the run's start and end times (UTC, ISO 8601) |
+| `output_dir` | Absolute path of the output directory. `html_dir` and `markdown_dir` are relative to it; `markdown_dir` is `null` with `--no-markdown` |
+| `options` | The settings that shaped the run. Credentials are never written: `auth_used` and `proxy_used` only say whether they were set |
+| `counts.fetched` | Page requests made, including ones answered 304 Not Modified |
+| `counts.new`, `counts.changed` | Pages saved this run. A page is changed when an earlier run saved it (it is in the incremental cache or its HTML file already exists) |
+| `counts.unchanged` | Pages skipped because the server said 304 or the HTML matched the cache. Their URLs are in `unchanged_urls` |
+| `counts.failed` | Fetch errors, HTTP 4xx/5xx and error pages. `failed` lists each URL with a reason |
+| `counts.blocked_by_robots` | URLs skipped because robots.txt disallows them, listed in `blocked_by_robots` |
+| `counts.skipped_old` | Articles dropped by `--recent`/`--since` after fetching |
+| `new_markdown`, `changed_markdown` | Markdown files written for new and changed pages. A page too short to convert is counted but has no file here. Generated `_index.md` listing pages are not included |
+| `exit_code` | The exit code the run finished with |
+
+New, changed and unchanged are decided on the page HTML, so a page whose HTML changed but whose Markdown did not still counts as changed. Compare `content_hash` if you need the stricter test.
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success: at least one page was fetched without failing (unchanged pages count) |
+| 1 | Nothing was fetched (for example robots.txt blocked the start URL) or every fetch failed |
+| 2 | Bad arguments, such as an invalid `--since` date |
+| 130 | Interrupted with Ctrl+C |
+
+Browser modes (`-1`, `--swagger`, `-d`) exit 1 when they save no page. Audit and Instagram modes exit 0 unless the arguments are bad.
 
 ### Numeric Path Flattening
 
@@ -229,7 +329,7 @@ URLs with numeric path segments are flattened to avoid deeply nested single-file
 Recursively crawls all pages on the same domain using HTTP requests with TLS fingerprint spoofing. Downloads images, rewrites internal URLs to relative paths for offline viewing, and detects error pages (404, 403, etc.).
 
 Before crawling begins, a lightweight **Phase 0 reconnaissance** runs automatically:
-1. Fetches `robots.txt` for sitemap URLs
+1. Fetches `robots.txt` for its access rules, `Crawl-delay` and sitemap URLs
 2. Fetches sitemaps and RSS/Atom feeds to build a dated URL map
 3. Parses the homepage `<header>`/`<nav>`/`<footer>` to extract navigation structure (including mega-menus and dropdown panels)
 4. Saves a `site_outline.json` with the site's section hierarchy (including sub-sections from dropdowns) and sitemap stats
@@ -313,7 +413,7 @@ ScrapePy uses Scrapling's built-in stealth features:
 - **StealthyFetcher**: Patchright (undetected Playwright fork) with browser fingerprint spoofing
 - **Cloudflare bypass**: Automatic challenge solving via `solve_cloudflare=True`
 - **TLS fingerprinting**: HTTP requests mimic real browser TLS signatures via curl_cffi
-- **Stealth headers**: Realistic User-Agent and header ordering
+- **Stealth headers**: Realistic User-Agent and header ordering, unless you set `--user-agent`
 
 ## Dependencies
 
