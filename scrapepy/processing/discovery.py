@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 
 from ..config import ScrapeConfig
 from ..engine.fetcher import fetch_page_http
+from ..engine.threads import run_blocking
 from .dates import _parse_iso_date, _parse_rfc2822_date
 from .robots import ROBOTS_REDIRECT_FAILED, RobotsPolicy, policy_from_response, robots_url
 
@@ -37,8 +38,7 @@ async def _fetch_url_async(
     """
     if limiter is not None:
         await limiter.wait(url)
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _fetch_url, url, config)
+    return await run_blocking(_fetch_url, url, config)
 
 
 def _parse_sitemap(xml_text: str, base_url: str) -> tuple[DiscoveryMap, list[str]]:
@@ -205,6 +205,10 @@ _COMMON_FEED_PATHS = [
 
 # RFC 9309 asks crawlers to follow at least five redirects for robots.txt
 ROBOTS_MAX_REDIRECTS = 5
+# One attempt with a short timeout: a robots.txt that does not answer in
+# time counts as unreachable, which disallows the whole site.
+ROBOTS_TIMEOUT_SECONDS = 10
+_ALLOWED_SCHEMES = ("http", "https")
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
 
@@ -219,14 +223,19 @@ def fetch_robots_txt(config: ScrapeConfig) -> tuple[int, str | None]:
     """Fetch /robots.txt, following up to five redirects (to any host).
 
     Returns (HTTP status, body). Status 0 means unreachable, including a
-    redirect loop, a chain longer than five, or a redirect with no Location.
+    timeout (one attempt, ROBOTS_TIMEOUT_SECONDS). ROBOTS_REDIRECT_FAILED
+    covers a redirect loop, a chain longer than five, a redirect with no
+    Location, and a redirect to anything other than http or https.
     The file reached applies to this site, wherever it was served from.
     """
     url = robots_url(config.base_url)
     seen = {url}
     for _ in range(ROBOTS_MAX_REDIRECTS + 1):
         try:
-            response = fetch_page_http(url, config, follow_redirects=False)
+            response = fetch_page_http(
+                url, config, follow_redirects=False,
+                timeout=ROBOTS_TIMEOUT_SECONDS, retries=1,
+            )
         except Exception as e:
             if config.verbose:
                 print(f"    robots.txt fetch failed ({type(e).__name__}: {e})")
@@ -237,6 +246,10 @@ def fetch_robots_txt(config: ScrapeConfig) -> tuple[int, str | None]:
             if not location:
                 return ROBOTS_REDIRECT_FAILED, None
             url = urljoin(url, location)
+            if urlparse(url).scheme.lower() not in _ALLOWED_SCHEMES:
+                if config.verbose:
+                    print(f"    robots.txt redirect to a non-HTTP URL refused: {url}")
+                return ROBOTS_REDIRECT_FAILED, None
             if url in seen:
                 if config.verbose:
                     print(f"    robots.txt redirect loop at {url}")

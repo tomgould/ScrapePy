@@ -364,7 +364,7 @@ class FakeResponse:
 
 class TestLoadRobotsPolicy:
     def _patch(self, monkeypatch, response):
-        def fake(url, config, headers=None, follow_redirects=True):
+        def fake(url, config, headers=None, follow_redirects=True, **kwargs):
             if isinstance(response, Exception):
                 raise response
             return response
@@ -492,7 +492,7 @@ class TestBom:
     def test_bom_bytes_from_server(self, monkeypatch):
         body = "﻿User-agent: *\nDisallow: /private\n".encode("utf-8")
         monkeypatch.setattr(discovery, "fetch_page_http",
-                            lambda url, config, headers=None, follow_redirects=True: FakeResponse(200, body))
+                            lambda url, config, headers=None, follow_redirects=True, **kw: FakeResponse(200, body))
         policy, _ = discovery.load_robots_policy(ScrapeConfig(url=BASE))
         assert not policy.can_fetch("/private/x")
 
@@ -523,8 +523,9 @@ class RedirectingServer:
         self.routes = routes
         self.requested: list[str] = []
 
-    def __call__(self, url, config, headers=None, follow_redirects=True):
+    def __call__(self, url, config, headers=None, follow_redirects=True, timeout=None, retries=None):
         assert follow_redirects is False
+        assert retries == 1 and timeout is not None and timeout <= 15
         self.requested.append(url)
         status, value = self.routes.get(url, (404, ""))
         response = FakeResponse(status, value.encode() if status == 200 else b"")
@@ -598,3 +599,44 @@ class TestRobotsRedirects:
         }))
         policy, _ = discovery.load_robots_policy(ScrapeConfig(url=BASE, ignore_robots=True))
         assert policy.can_fetch("/x")
+
+
+class TestRedirectSchemes:
+    @pytest.mark.parametrize("target", [
+        "file:///etc/passwd", "ftp://example.com/robots.txt", "gopher://x/", "data:text/plain,hi",
+    ])
+    def test_non_http_redirect_disallows_without_fetching(self, monkeypatch, target):
+        server = RedirectingServer({BASE + "/robots.txt": (301, target)})
+        monkeypatch.setattr(discovery, "fetch_page_http", server)
+        policy, _ = discovery.load_robots_policy(ScrapeConfig(url=BASE))
+        assert server.requested == [BASE + "/robots.txt"]
+        assert policy.disallow_all
+        assert "non-HTTP" in policy.note
+
+    def test_http_to_https_is_followed(self, monkeypatch):
+        https = "https://example.com/robots.txt"
+        server = RedirectingServer({
+            "http://example.com/robots.txt": (301, https),
+            https: (200, "User-agent: *\nDisallow: /x\n"),
+        })
+        monkeypatch.setattr(discovery, "fetch_page_http", server)
+        policy, _ = discovery.load_robots_policy(ScrapeConfig(url="http://example.com"))
+        assert not policy.can_fetch("/x")
+
+
+class TestRobotsTimeout:
+    def test_timeout_is_unreachable(self, monkeypatch):
+        calls = []
+
+        def slow(url, config, headers=None, follow_redirects=True, timeout=None, retries=None):
+            calls.append((timeout, retries))
+            raise TimeoutError("timed out")
+
+        monkeypatch.setattr(discovery, "fetch_page_http", slow)
+        policy, _ = discovery.load_robots_policy(ScrapeConfig(url=BASE))
+        assert calls == [(discovery.ROBOTS_TIMEOUT_SECONDS, 1)]
+        assert policy.disallow_all
+        assert "unreachable" in policy.note
+
+    def test_timeout_is_short(self):
+        assert discovery.ROBOTS_TIMEOUT_SECONDS <= 10

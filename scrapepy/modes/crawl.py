@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 from .. import interrupts
 from ..config import ScrapeConfig
 from ..engine.fetcher import fetch_page_http, fetch_page_browser, create_asset_client
+from ..engine.threads import run_blocking
 from ..engine.browser_actions import (
     wait_for_js_content,
     extract_links_browser,
@@ -122,9 +123,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
     print("Running site reconnaissance...")
     # Fetched in a worker thread so Ctrl+C is not held up by a slow server
     try:
-        robots, robots_content = await asyncio.get_running_loop().run_in_executor(
-            None, load_robots_policy, config,
-        )
+        robots, robots_content = await run_blocking(load_robots_policy, config)
     except asyncio.CancelledError:
         _note_interrupt(stats)
         robots, robots_content = RobotsPolicy.blocked("interrupted before robots.txt was read",
@@ -995,17 +994,15 @@ async def _fetch_with_http_async(
 ) -> tuple[str, int, dict]:
     """Fetch via HTTP with semaphore for concurrency control.
 
-    Scrapling's Fetcher.get() is synchronous, so we run it in a thread pool
+    Scrapling's Fetcher.get() is synchronous, so we run it in a thread
     to allow concurrent fetching of multiple pages. The limiter spaces
     request starts per host, so prefetch bursts keep the politeness delay.
     """
     async with sem:
         if limiter is not None:
             await limiter.wait(url)
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None, _fetch_with_http, url, config, headers,
-        )
+        # A daemon thread, so an abandoned request cannot delay exit after Ctrl+C
+        return await run_blocking(_fetch_with_http, url, config, headers)
 
 
 async def _fetch_with_browser(url: str, config: ScrapeConfig) -> tuple[str, int, dict]:

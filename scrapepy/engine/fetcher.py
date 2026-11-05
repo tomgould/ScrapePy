@@ -32,15 +32,24 @@ def page_headers(config: ScrapeConfig, headers: dict | None = None) -> dict:
 def fetch_page_http(
     url: str, config: ScrapeConfig, headers: dict | None = None,
     follow_redirects: bool = True,
+    timeout: float = 30,
+    retries: int | None = None,
 ):
-    """Fetch a page using Scrapling's HTTP-only Fetcher (fast, no browser)."""
+    """Fetch a page using Scrapling's HTTP-only Fetcher (fast, no browser).
+
+    retries=None keeps Scrapling's default (3 attempts); 1 means a single attempt.
+    """
     merged = page_headers(config, headers)
+    kwargs = {}
+    if retries is not None:
+        kwargs["retries"] = retries
     return Fetcher.get(
         url,
         stealthy_headers=True,
         follow_redirects=follow_redirects,
-        timeout=30,
+        timeout=timeout,
         headers=merged,
+        **kwargs,
     )
 
 

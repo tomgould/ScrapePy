@@ -111,3 +111,75 @@ def test_signal_writes_interrupted_summary_and_cache(server, tmp_path, sig, code
     cache = json.loads((site_dir / ".scrapepy_cache.json").read_text())
     assert "/" in cache["pages"]
     assert not any(name.endswith(".tmp") for name in os.listdir(site_dir))
+
+
+@pytest.fixture
+def silent_server():
+    """Accepts connections and never answers, like a hung robots.txt."""
+    import socket
+    sock = socket.socket()
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(64)
+    held = []
+    stop = threading.Event()
+
+    def accept():
+        sock.settimeout(0.2)
+        while not stop.is_set():
+            try:
+                conn, _ = sock.accept()
+                held.append(conn)
+            except OSError:
+                continue
+
+    thread = threading.Thread(target=accept, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{sock.getsockname()[1]}"
+    stop.set()
+    thread.join(timeout=2)
+    for conn in held:
+        conn.close()
+    sock.close()
+
+
+@pytest.mark.parametrize("sig,code,name", [
+    (signal.SIGINT, 130, "SIGINT"),
+    (signal.SIGTERM, 143, "SIGTERM"),
+])
+def test_signal_while_robots_txt_hangs_exits_promptly(silent_server, tmp_path, sig, code, name):
+    out = tmp_path / "out"
+    out.mkdir()
+    proc = _crawl(silent_server + "/", out)
+    try:
+        for line in proc.stdout:
+            if "Running site reconnaissance" in line:
+                break
+        time.sleep(1.0)  # robots.txt request is now waiting on the silent server
+        sent = time.monotonic()
+        proc.send_signal(sig)
+        output, _ = proc.communicate(timeout=30)
+        elapsed = time.monotonic() - sent
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+    assert proc.returncode == code, output[-2000:]
+    assert elapsed < 5, elapsed
+    summary_path = next(out.glob("ScrapedSites/*/run_summary.json"))
+    summary = json.loads(summary_path.read_text())
+    assert summary["status"] == "interrupted"
+    assert summary["interrupted_by"] == name
+    assert summary["exit_code"] == code
+
+
+def test_robots_txt_timeout_disallows_everything(silent_server, tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    proc = _crawl(silent_server + "/", out)
+    output, _ = proc.communicate(timeout=60)
+    assert proc.returncode == 1, output[-2000:]
+    assert "robots.txt could not be read (unreachable)" in output
+    summary = json.loads(next(out.glob("ScrapedSites/*/run_summary.json")).read_text())
+    assert summary["status"] == "complete"
+    assert summary["counts"]["fetched"] == 0
