@@ -4,7 +4,7 @@ Python web scraper using [Scrapling](https://github.com/D4Vinci/Scrapling) + [Pa
 
 ScrapePy crawls websites, downloads assets, rewrites URLs for offline viewing, and converts everything to Markdown with YAML frontmatter. It handles Cloudflare challenges, JavaScript-rendered SPAs, Swagger/OpenAPI docs, documentation platforms, Instagram profiles, and news sites with date filtering out of the box.
 
-It also works as a building block: each crawl writes a machine-readable `run_summary.json` listing the new and changed Markdown files, every Markdown file carries a `content_hash`, and the exit code tells a script whether the run worked.
+It also works as a building block for search indexing: `--markdown-only` writes one structured Markdown file per page with YAML frontmatter that always loads with `yaml.safe_load`, each crawl writes a machine-readable `run_summary.json` listing the new and changed files, and the exit code tells a script whether the run worked. [docs/MARKDOWN-OUTPUT.md](docs/MARKDOWN-OUTPUT.md) is the full output contract for tools that read it.
 
 ## Responsible use
 
@@ -13,7 +13,7 @@ You are responsible for how you use ScrapePy. Follow the terms of service of the
 What ScrapePy does to keep a crawl polite:
 
 - robots.txt is read at the start of every run and its rules are applied to the URLs a mode picks to fetch. Blocked URLs are skipped, counted in the run summary and listed in `run_summary.json`.
-- Rules follow [RFC 9309](https://www.rfc-editor.org/rfc/rfc9309): the longest matching `Allow` or `Disallow` pattern wins whatever order the lines are in, and `Allow` wins a tie. `*` matches any run of characters and a trailing `$` anchors the end of the URL, so `Disallow: /*.pdf$` blocks PDFs and `Disallow: /*?sort=` blocks sorted listings. Links found while crawling never carry query strings (they are stripped before queueing), so rules about query strings only affect sitemap and feed URLs. Paths are case-sensitive and percent-encoding is normalised. An empty `Disallow:` allows everything, and a UTF-8 byte order mark at the start of the file is ignored. Path parameters (`;`) are matched as ordinary characters. Matching uses no regular expressions and its cost is bounded: `Allow` and `Disallow` patterns longer than 2,000 characters are ignored, and when the site has rules for you, a URL whose path and query come to more than 8,192 characters is not fetched and is counted as blocked by robots.txt.
+- Rules follow [RFC 9309](https://www.rfc-editor.org/rfc/rfc9309): the longest matching `Allow` or `Disallow` pattern wins whatever order the lines are in, and `Allow` wins a tie. `*` matches any run of characters and a trailing `$` anchors the end of the URL, so `Disallow: /*.pdf$` blocks PDFs and `Disallow: /*?sort=` blocks sorted listings. Links found while crawling never carry query strings (they are stripped before queueing), so rules about query strings only affect sitemap and feed URLs. Paths are case-sensitive and percent-encoding is normalised. An empty `Disallow:` allows everything, and a UTF-8 byte order mark at the start of the file is ignored. Path parameters (`;`) are matched as ordinary characters. Matching uses no regular expressions and its cost is bounded: `Allow` and `Disallow` patterns longer than 2,000 characters are ignored, and when the site has rules for you, a URL whose path and query come to more than 8,192 characters, measured after percent-encoding (so each non-ASCII byte counts as three), is not fetched and is counted as blocked by robots.txt.
 - The group is chosen by your `--user-agent` product token (`MyBot` in `MyBot/1.0`): a group whose `User-agent` line names the same token, compared case-insensitively and ignoring any version suffix, replaces the `User-agent: *` group. `User-agent: M` does not match `MyBot`. Groups naming the same token are merged. Without `--user-agent`, the `*` group applies. `Crawl-delay` is read from the chosen group only.
 - A robots.txt that returns 404 or another 4xx means there are no restrictions. One that returns a 5xx error, or a server that cannot be reached or does not answer within 10 seconds (one attempt, no retries), means the whole site is treated as disallowed: ScrapePy prints why and fetches nothing.
 - Up to five redirects are followed when fetching robots.txt, to any host, and the file they lead to applies to the site being crawled. Only `http` and `https` redirect targets are followed. More than five redirects, a redirect loop, a redirect without a `Location` header or a redirect to any other scheme (such as `file:` or `ftp:`) count as unreachable, so the site is treated as disallowed.
@@ -91,6 +91,7 @@ python main.py <url> [options]
 | `--user-agent STRING` | User-Agent header for all requests, also used to match robots.txt groups (default: a browser-like user agent) |
 | `--ignore-robots` | Do not apply robots.txt rules or `Crawl-delay`. Prints a warning; only use with permission |
 | `-o`, `--output-dir DIR` | Folder under which `ScrapedSites/` and `MarkdownSites/` are created (default: current directory) |
+| `--markdown-only` | Write only Markdown: no HTML mirror, no image or asset downloads, links and images stay absolute URLs. Default crawl and `-j` only |
 | `--index-pages` / `--no-index-pages` | Write the generated `_index.md` section listing pages (default: on) |
 | `--auth USER:PASS` | HTTP Basic Auth credentials |
 | `--proxy URL` | Proxy URL for requests |
@@ -117,8 +118,8 @@ python main.py https://www.example.com
 # Write output somewhere else and identify your crawler
 python main.py https://www.example.com -o /data/crawls --user-agent "MyCrawler/1.0 (+https://example.org/bot)"
 
-# Markdown for a search index: skip the generated section listing pages
-python main.py https://www.example.com --no-index-pages
+# Markdown for a search index: no HTML mirror or images, no generated listing pages
+python main.py https://www.example.com --markdown-only --no-index-pages -o /data/crawls
 
 # Crawl without Markdown conversion
 python main.py https://www.example.com --no-markdown
@@ -183,7 +184,7 @@ python main.py --instagram --accounts accounts.txt --ig-max-posts 5 --update-met
 
 ## Output
 
-Output goes under the current directory, or under `--output-dir` when given. Scraped sites are saved to `ScrapedSites/` with this structure:
+Output goes under the current directory, or under `--output-dir` when given. [docs/MARKDOWN-OUTPUT.md](docs/MARKDOWN-OUTPUT.md) describes the Markdown, its frontmatter and the summary file exactly. With `--markdown-only` the `ScrapedSites/<site>/` folder holds only the run state (`run_summary.json`, `.scrapepy_cache.json`, `site_outline.json` and, if needed, `broken_links.txt`) and nothing is downloaded but pages. Otherwise scraped sites are saved to `ScrapedSites/` with this structure:
 
 ```
 ScrapedSites/example_com/
@@ -240,22 +241,22 @@ Every Markdown file includes YAML frontmatter with page metadata, useful for AI/
 ```yaml
 ---
 title: Example article title
-url: "https://example.com/news/some-article"
-date: 2026-02-20
+url: https://example.com/news/some-article
+date: '2026-02-20'
 date_source: META_TAG
 page_type: article
 word_count: 1247
 description: A short description of the article...
 domain: example.com
-scraped_at: "2026-11-05T12:00:00+00:00"
-content_hash: "sha256:3f5a..."
+scraped_at: '2026-11-05T12:00:00+00:00'
+content_hash: sha256:3f5a...
 ---
 
 # Example article title
 ...content...
 ```
 
-Fields are populated automatically: in crawl mode from live metadata (URL, date, page type), in batch mode by extracting from the HTML. Only non-null fields are written, so a missing `date` means no date was found. Keys are always lowercase, and generated `_index.md` pages use the same keys (with `page_type: section`, plus `articles` and `sub_sections` counts). Date sources are ranked by confidence: `META_TAG` > `JSON_LD` > `URL_PATTERN` > `TIME_ELEMENT` > `HTTP_HEADER`.
+The frontmatter is written with `yaml.safe_dump`, so `yaml.safe_load` gives back exactly the strings and integers that were written, whatever the page text contains. `url` is the page's same-site `<link rel="canonical">` when it has one, and `fetched_url` then records the address actually fetched. Fields are populated automatically: in crawl mode from live metadata (URL, date, page type), in batch mode by extracting from the HTML. Only non-null fields are written, so a missing `date` means no date was found. Keys are always lowercase, and generated `_index.md` pages use the same keys (with `page_type: section`, plus `articles` and `sub_sections` counts). Date sources are ranked by confidence: `META_TAG` > `JSON_LD` > `URL_PATTERN` > `TIME_ELEMENT` > `HTTP_HEADER`.
 
 `scraped_at` is when the file was written, in UTC. `content_hash` is the sha256 of the Markdown body, meaning everything after the blank line that follows the closing `---`. It stays the same when the page content does, so an indexer can skip files whose hash it has already seen.
 
@@ -278,13 +279,14 @@ The file is replaced as soon as a crawl starts with a placeholder whose `status`
   "options": { "concurrent": 4, "wait_seconds": 3.0, "ignore_robots": false, "...": "..." },
   "counts": {
     "fetched": 12, "new": 10, "changed": 0, "unchanged": 0,
-    "failed": 2, "blocked_by_robots": 0, "skipped_old": 0
+    "failed": 2, "blocked_by_robots": 0, "duplicates": 0, "skipped_old": 0
   },
   "new_markdown": ["MarkdownSites/quotes_toscrape_com/_index.md"],
   "changed_markdown": [],
   "unchanged_urls": [],
   "failed": [{ "url": "https://quotes.toscrape.com/missing", "reason": "HTTP 404" }],
   "blocked_by_robots": [],
+  "duplicates": [],
   "interrupted": false,
   "interrupted_by": null,
   "exit_code": 0
@@ -304,6 +306,7 @@ The file is replaced as soon as a crawl starts with a placeholder whose `status`
 | `counts.unchanged` | Pages skipped because the server said 304 or the HTML matched the cache. Their URLs are in `unchanged_urls` |
 | `counts.failed` | Fetch errors, HTTP 4xx/5xx and error pages. `failed` lists each URL with a reason |
 | `counts.blocked_by_robots` | URLs skipped because robots.txt disallows them, listed in `blocked_by_robots` |
+| `counts.duplicates` | Pages whose Markdown was identical to a file already written in this run (such as `/` and `/index.html`). They are not written again; `duplicates` lists each `url` with the file it matched as `same_as` |
 | `counts.skipped_old` | Articles dropped by `--recent`/`--since` after fetching |
 | `new_markdown`, `changed_markdown` | Markdown files written for new and changed pages. A page too short to convert is counted but has no file here. Generated `_index.md` listing pages are not included |
 | `exit_code` | The exit code the run finished with |

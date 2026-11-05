@@ -2,6 +2,25 @@
 
 All notable changes to ScrapePy are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [semantic versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- `--markdown-only`: Markdown and run state only, with no HTML mirror and no image or asset downloads. Links and images stay absolute URLs, and every request is a page or reconnaissance request checked against robots.txt and paced.
+- `docs/MARKDOWN-OUTPUT.md`, the output contract for tools that read the Markdown.
+- `fetched_url` in frontmatter when `url` comes from the page's canonical link, and `duplicates` in `run_summary.json`.
+
+### Changed
+
+- Frontmatter is written with `yaml.safe_dump`, so values such as `yes`, `null`, `123` or text with colons, quotes and newlines load back unchanged. Strings are now quoted in YAML's usual way (single quotes where needed).
+- Markdown is better for indexing: one H1 and no skipped heading levels, the main content found on listing pages without a known content container, headings inside card links kept, truncated link text expanded from its title, buttons removed, code fenced with its language.
+- A page whose Markdown matches a file already written in the same run is not written twice.
+- Section URLs ending in `index.html` map to the section's own `_index.md`; listing pages no longer get a visible date from the server's Last-Modified header.
+
+### Fixed
+
+- A junk-removal rule deleted every linked H2 or H3 heading, and links with a title attribute got `.md` appended after the title.
+
 ## 0.2.0
 
 ### Added
