@@ -28,16 +28,10 @@ tests/fixtures/*/audit_report.json
 !tests/fixtures/webscraper_io/pages/
 !tests/fixtures/webscraper_io/meta/
 
-# Local tooling and scrape output
+# Local tooling
 .claude/
-.mullet/
 .pytest_cache/
 .env
 .env.*
 cookies*
 *.session
-
-# Internal notes and local data
-tasks/
-docs/plans/
-docs/data/websites.csv

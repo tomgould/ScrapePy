@@ -1,15 +1,39 @@
 [build-system]
-requires = ["setuptools>=68.0"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "scrapepy"
-version = "0.1.0"
-description = "Python web scraper using Scrapling + Patchright"
+dynamic = ["version"]
+description = "Crawl a website into an offline HTML copy and clean Markdown with YAML frontmatter"
+readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "tomgould" }]
+keywords = [
+    "web-scraping",
+    "crawler",
+    "markdown",
+    "html-to-markdown",
+    "offline",
+    "sitemap",
+    "robots-txt",
+    "scrapling",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+    "Topic :: Text Processing :: Markup :: Markdown",
+]
 dependencies = [
     "scrapling[fetchers]>=0.4.0",
     "beautifulsoup4>=4.12.0",
@@ -20,13 +44,25 @@ dependencies = [
     "httpx>=0.27.0",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.urls]
+Homepage = "https://github.com/tomgould/ScrapePy"
+Repository = "https://github.com/tomgould/ScrapePy"
+Issues = "https://github.com/tomgould/ScrapePy/issues"
+Changelog = "https://github.com/tomgould/ScrapePy/blob/master/CHANGELOG.md"
+
+[project.scripts]
+scrapepy = "scrapepy.cli:main"
+
 [tool.pytest.ini_options]
 filterwarnings = [
     "ignore:The 'strip_cdata' option:DeprecationWarning",
 ]
 
-[project.scripts]
-scrapepy = "scrapepy.cli:main"
+[tool.setuptools.dynamic]
+version = { attr = "scrapepy.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["scrapepy*"]
