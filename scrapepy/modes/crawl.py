@@ -852,6 +852,10 @@ def _print_robots_status(robots: RobotsPolicy, config: ScrapeConfig) -> None:
     """One line on how robots.txt shapes this run."""
     if not robots.enforced:
         return  # The CLI already printed the --ignore-robots warning
+    if robots.disallow_all:
+        print(f"  {robots.note}. Nothing will be crawled "
+              "(use --ignore-robots only if you have permission).")
+        return
     if not robots.has_rules:
         print("  robots.txt: none found, all URLs allowed")
         return

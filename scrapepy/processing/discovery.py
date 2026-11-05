@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 from ..config import ScrapeConfig
 from ..engine.fetcher import fetch_page_http
 from .dates import _parse_iso_date, _parse_rfc2822_date
-from .robots import RobotsPolicy, robots_url
+from .robots import RobotsPolicy, policy_from_response, robots_url
 
 # Type alias for the discovery map: url_path -> datetime
 DiscoveryMap = dict[str, datetime]
@@ -203,20 +203,32 @@ _COMMON_FEED_PATHS = [
 ]
 
 
-def fetch_robots_txt(config: ScrapeConfig) -> str | None:
-    """Fetch /robots.txt, returning content or None on error."""
-    return _fetch_url(robots_url(config.base_url), config)
+def fetch_robots_txt(config: ScrapeConfig) -> tuple[int, str | None]:
+    """Fetch /robots.txt. Returns (HTTP status, body); status 0 when unreachable."""
+    url = robots_url(config.base_url)
+    try:
+        response = fetch_page_http(url, config)
+    except Exception as e:
+        if config.verbose:
+            print(f"    robots.txt fetch failed ({type(e).__name__}: {e})")
+        return 0, None
+    status = response.status
+    if 200 <= status < 300:
+        return status, response.body.decode(response.encoding or "utf-8", errors="replace")
+    return status, None
 
 
 def load_robots_policy(config: ScrapeConfig) -> tuple[RobotsPolicy, str | None]:
     """Fetch robots.txt and build the policy for this run.
 
-    Returns (policy, raw robots.txt or None). With --ignore-robots the file is
-    still read for its Sitemap: lines but its rules are not applied.
+    Returns (policy, raw robots.txt or None). A 4xx means no restrictions;
+    a 5xx or an unreachable server means everything is disallowed (RFC 9309).
+    With --ignore-robots the file is still read for its Sitemap: lines but
+    its rules are not applied.
     """
-    content = fetch_robots_txt(config)
-    policy = RobotsPolicy.from_text(
-        content,
+    status, content = fetch_robots_txt(config)
+    policy = policy_from_response(
+        status, content,
         user_agent=config.user_agent,
         base_url=config.base_url,
         enforced=not config.ignore_robots,

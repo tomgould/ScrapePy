@@ -86,6 +86,9 @@ async def run_audit_mode(config: ScrapeConfig):
 
     # 1a. Fetch robots.txt
     robots, robots_content = load_robots_policy(config)
+    if robots.enforced and robots.disallow_all:
+        print(f"  {robots.note}. Sample pages will not be fetched "
+              "(use --ignore-robots only if you have permission).")
     robots_sitemaps: list[str] = []
     if robots_content:
         robots_sitemaps = parse_robots_sitemaps(robots_content)

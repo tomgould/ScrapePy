@@ -37,7 +37,10 @@ async def run_scraper(config: ScrapeConfig) -> int:
     from .processing.discovery import load_robots_policy
     robots, _ = load_robots_policy(config)
     if not robots.can_fetch(config.url):
-        print(f"Blocked by robots.txt: {config.url}")
+        if robots.note:
+            print(f"{robots.note}: {config.url}")
+        else:
+            print(f"Blocked by robots.txt: {config.url}")
         print("Nothing fetched. Use --ignore-robots only if you have permission.")
         return EXIT_NOTHING_FETCHED
 
