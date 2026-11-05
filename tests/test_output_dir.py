@@ -90,3 +90,14 @@ class TestConverterOutputDir:
     def test_standalone_default_mirrors_layout(self, tmp_path):
         conv = HTMLToMarkdown(tmp_path / "ScrapedSites" / "site")
         assert conv.output_dir == Path(tmp_path / "MarkdownSites" / "site")
+
+
+class TestSectionIndexNames:
+    def test_index_html_section_is_its_folder(self, tmp_path):
+        config = ScrapeConfig(url="https://example.com", output_root=str(tmp_path))
+        assert section_index_filepath("/news/index.html", config) == \
+            os.path.join(config.markdown_dir, "news", "_index.md")
+        assert section_index_filepath("/index.html", config) == \
+            os.path.join(config.markdown_dir, "_index.md")
+        assert section_index_filepath("/news/indexes", config) == \
+            os.path.join(config.markdown_dir, "news", "indexes", "_index.md")

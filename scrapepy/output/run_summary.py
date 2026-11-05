@@ -39,6 +39,7 @@ class RunStats:
     changed_markdown: list[str] = field(default_factory=list)
     failed: list[dict] = field(default_factory=list)      # {"url", "reason"}
     blocked_by_robots: list[str] = field(default_factory=list)
+    duplicates: list[dict] = field(default_factory=list)  # {"url", "same_as"}
     skipped_old: int = 0
     interrupted: bool = False
     interrupted_by: str | None = None    # "SIGINT" or "SIGTERM"
@@ -57,6 +58,10 @@ class RunStats:
     def record_failed(self, url: str, reason: str):
         self.failed.append({"url": url, "reason": reason})
 
+    def record_duplicate(self, url: str, same_as_path: str):
+        """A page whose Markdown matched a file already written in this run."""
+        self.duplicates.append({"url": url, "same_as": same_as_path})
+
     def record_blocked(self, url: str):
         if url not in self.blocked_by_robots:
             self.blocked_by_robots.append(url)
@@ -72,6 +77,7 @@ def options_used(config: ScrapeConfig) -> dict:
         "include_assets": config.include_assets,
         "incremental": config.incremental,
         "index_pages": config.index_pages,
+        "markdown_only": config.markdown_only,
         "wait_seconds": config.wait_time,
         "concurrent": config.concurrent,
         "user_agent": config.user_agent,
@@ -123,6 +129,7 @@ def build_summary(
             "unchanged": len(stats.unchanged),
             "failed": len(stats.failed),
             "blocked_by_robots": len(stats.blocked_by_robots),
+            "duplicates": len(stats.duplicates),
             "skipped_old": stats.skipped_old,
         },
         "new_markdown": [relative_to_root(p, root) for p in stats.new_markdown],
@@ -130,6 +137,10 @@ def build_summary(
         "unchanged_urls": list(stats.unchanged),
         "failed": list(stats.failed),
         "blocked_by_robots": list(stats.blocked_by_robots),
+        "duplicates": [
+            {"url": d["url"], "same_as": relative_to_root(d["same_as"], root)}
+            for d in stats.duplicates
+        ],
         "interrupted": stats.interrupted,
         "interrupted_by": stats.interrupted_by,
         "exit_code": None if in_progress else exit_code_for(stats),

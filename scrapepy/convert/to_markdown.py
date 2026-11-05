@@ -156,6 +156,13 @@ class HTMLToMarkdown:
         self.skipped = 0
         # Path of the file the most recent convert_file() call wrote, or None
         self.last_output_path: str | None = None
+        # Whether that file already existed before it was written
+        self.last_output_existed = False
+        # One page, one file: a page whose Markdown body matches one already
+        # written in this run (/ and /index.html, say) is not written again.
+        self.dedupe = True
+        self._written_hashes: dict[str, str] = {}
+        self.last_duplicate_of: str | None = None
 
     def _prepare_html(self, html: str, metadata: dict) -> str:
         """Unwrap block links, read the canonical URL, and in markdown-only
@@ -1147,8 +1154,13 @@ class HTMLToMarkdown:
 
         return metadata
 
-    def convert_file(self, filepath, metadata=None, output_path=None):
+    def convert_file(self, filepath, metadata=None, output_path=None, html=None):
+        """Convert one page. With html given, filepath is only used for naming
+        and is never read (markdown-only mode has no HTML on disk)."""
         self.last_output_path = None
+        self.last_output_existed = False
+        self.last_duplicate_of = None
+        filepath = Path(filepath)
         explicit_output = output_path is not None
         if output_path:
             output_path = Path(output_path)
@@ -1158,8 +1170,9 @@ class HTMLToMarkdown:
                 return False
 
         try:
-            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                html = f.read()
+            if html is None:
+                with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                    html = f.read()
 
             # Skip RSS/Atom XML feeds
             if html.lstrip().startswith("<?xml") or "<rss" in html[:500] or "<feed" in html[:500]:
@@ -1258,9 +1271,10 @@ class HTMLToMarkdown:
 
             metadata["word_count"] = word_count
 
-            # Insert visible date/time after the title heading
+            # Insert visible date/time after the title heading (not on listing
+            # pages, whose date is usually just the server's Last-Modified)
             date_str = metadata.get("date")
-            if date_str and date_str != "null":
+            if date_str and date_str != "null" and metadata.get("page_type") != "section":
                 visible_date = _format_visible_date(date_str)
                 heading_match = re.match(r'^(# .+\n)', md)
                 if heading_match:
@@ -1268,16 +1282,24 @@ class HTMLToMarkdown:
 
             metadata.setdefault("scraped_at", utc_now_iso())
             metadata["content_hash"] = content_hash(md)
+            first = self._written_hashes.get(metadata["content_hash"])
+            if self.dedupe and first and first != str(output_path):
+                print(f"  Skipped (same content as {Path(first).name}): {filepath.name}")
+                self.skipped += 1
+                self.last_duplicate_of = first
+                return False
             frontmatter = self._build_frontmatter(metadata)
             md = frontmatter + "\n" + md
 
             output_path.parent.mkdir(parents=True, exist_ok=True)
+            self.last_output_existed = output_path.exists()
             with open(output_path, "w", encoding="utf-8") as f:
                 f.write(md)
 
             print(f"  Converted: {filepath.name}")
             self.converted += 1
             self.last_output_path = str(output_path)
+            self._written_hashes.setdefault(metadata["content_hash"], str(output_path))
             return True
 
         except Exception as e:
@@ -1385,7 +1407,7 @@ def generate_section_index(
             # Optional thumbnail
             thumbnail = article.get("thumbnail")
             if thumbnail:
-                if not thumbnail.startswith("images/"):
+                if not thumbnail.startswith(("images/", "http://", "https://")):
                     thumbnail = f"images/{thumbnail}"
                 parts.append(f"![]({thumbnail})")
 

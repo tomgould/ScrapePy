@@ -199,3 +199,24 @@ class TestFixturePages:
         md, _ = convert(html, "https://books.toscrape.com/", absolute=True)
         links = re.findall(r"\]\(([^) ]+)", md)
         assert links and all(u.startswith("https://books.toscrape.com/") for u in links)
+
+
+class TestVisibleDate:
+    BODY = "<p>" + "word " * 60 + "</p>"
+
+    def _convert(self, tmp_path, page_type):
+        d = tmp_path / "in"
+        d.mkdir(exist_ok=True)
+        f = d / f"{page_type}.html"
+        f.write_text(f"<html><body><article><h1>T</h1>{self.BODY}</article></body></html>")
+        conv = HTMLToMarkdown(d, output_dir=tmp_path / "md")
+        conv.convert_file(f, metadata={"url": "https://example.com/x", "page_type": page_type,
+                                       "date": "2026-02-20T10:00:00+00:00"},
+                          output_path=tmp_path / "md" / f"{page_type}.md")
+        return open(conv.last_output_path, encoding="utf-8").read()
+
+    def test_article_gets_visible_date(self, tmp_path):
+        assert "**20 Feb 2026" in self._convert(tmp_path, "article")
+
+    def test_section_does_not(self, tmp_path):
+        assert "**20 Feb 2026" not in self._convert(tmp_path, "section")

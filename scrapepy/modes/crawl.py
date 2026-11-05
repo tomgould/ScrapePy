@@ -7,7 +7,7 @@ import re
 import posixpath
 from collections import deque
 from datetime import datetime
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from .. import interrupts
 from ..config import ScrapeConfig
@@ -71,6 +71,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
             output_dir=config.markdown_dir,
             base_url=config.base_url,
             domain=config.domain,
+            absolute_links=config.markdown_only,
         )
         md_converter.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -229,8 +230,11 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
     # Per-host pacing for every page fetch, prefetches included
 
     # Persistent HTTP client for asset downloads (connection reuse)
-    asset_client = create_asset_client(config)
-    await asset_client.__aenter__()
+    # (none in markdown-only mode, which downloads no assets)
+    asset_client = None
+    if not config.markdown_only:
+        asset_client = create_asset_client(config)
+        await asset_client.__aenter__()
 
     # Files written during this run: a second URL saving to the same file
     # (such as / and /index.html) is not counted again.
@@ -579,7 +583,9 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
             # Download assets (skip entirely when --no-markdown + --no-include-assets;
             # skip for min-articles filler; section pages download images only
             # for thumbnails in index.md)
-            if not config.markdown and not config.include_assets:
+            if config.markdown_only:
+                pass  # Markdown only: images stay as absolute links, nothing downloaded
+            elif not config.markdown and not config.include_assets:
                 pass  # No assets needed, raw HTML cache only
             elif config.has_date_filter and is_min_article:
                 pass  # Skip assets for min-articles filler
@@ -595,20 +601,25 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                     http_client=asset_client,
                 )
 
-            # Rewrite URLs for offline viewing
-            rewritten_html = rewrite_urls(html, url_path, config)
-
             # Save the page. It counts as changed when an earlier run saved it.
+            # In markdown-only mode the HTML path only names the page; nothing
+            # is written there and the converter is handed the HTML directly.
             filepath = url_to_filepath(url_path, config, hash_fragment)
             already_written = filepath in written_this_run
             existed_before = not already_written and (
                 (cache is not None and cache.has_page(url_path))
-                or os.path.exists(filepath)
+                or (not config.markdown_only and os.path.exists(filepath))
             )
             written_this_run.add(filepath)
-            write_file(filepath, rewritten_html)
+            html_for_md = None
+            if config.markdown_only:
+                html_for_md = html
+            else:
+                # Rewrite URLs for offline viewing
+                rewritten_html = rewrite_urls(html, url_path, config)
+                write_file(filepath, rewritten_html)
+                print(f"  Saved: {filepath.replace(config.output_dir + '/', '')}")
             md_written: str | None = None
-            print(f"  Saved: {filepath.replace(config.output_dir + '/', '')}")
 
             # Inline markdown conversion
             if md_converter:
@@ -653,7 +664,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                         )
                     md_converter.convert_file(
                         _Path(filepath), metadata=md_meta,
-                        output_path=md_output_path,
+                        output_path=md_output_path, html=html_for_md,
                     )
                     md_written = md_converter.last_output_path
                 elif is_section_page:
@@ -662,12 +673,17 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                     md_output_path = section_index_filepath(url_path, config)
                     md_converter.convert_file(
                         _Path(filepath), metadata=md_meta,
-                        output_path=md_output_path,
+                        output_path=md_output_path, html=html_for_md,
                     )
                     md_written = md_converter.last_output_path
                 else:
-                    md_converter.convert_file(_Path(filepath), metadata=md_meta)
+                    md_converter.convert_file(_Path(filepath), metadata=md_meta, html=html_for_md)
                     md_written = md_converter.last_output_path
+
+                if config.markdown_only and md_written and not already_written:
+                    existed_before = existed_before or md_converter.last_output_existed
+                if md_converter.last_duplicate_of:
+                    stats.record_duplicate(full_url, md_converter.last_duplicate_of)
 
                 # Track article metadata for section index generation
                 # (skip section pages, they are sub-sections, not articles)
@@ -682,10 +698,14 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                     article_desc = _extract_description_from_html(html)
                     article_relpath = article_relpath_in_section(url_path, current_batch_section)
                     thumb_url = section_thumbnails.get(current_batch_section, {}).get(url_path)
-                    thumb_filename = (
-                        thumb_url.split("?")[0].split("#")[0].rsplit("/", 1)[-1]
-                        if thumb_url else None
-                    )
+                    if config.markdown_only:
+                        # No local images: link the live image
+                        thumb_filename = urljoin(full_url, thumb_url) if thumb_url else None
+                    else:
+                        thumb_filename = (
+                            thumb_url.split("?")[0].split("#")[0].rsplit("/", 1)[-1]
+                            if thumb_url else None
+                        )
                     section_articles[current_batch_section].append({
                         "title": article_title,
                         "filename": article_relpath + ".md",
@@ -695,7 +715,8 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                         "thumbnail": thumb_filename,
                     })
 
-            if not already_written:
+            duplicate = md_converter.last_duplicate_of if md_converter else None
+            if not already_written and not duplicate:
                 stats.record_saved(full_url, existed_before, md_written)
 
             # Update cache
@@ -813,7 +834,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                 print(f"  Generated section index: {section_dir or 'root'}/_index.md ({len(articles)} articles)")
 
     # Copy referenced images to each section's images/ directory
-    if md_converter and section_articles:
+    if md_converter and section_articles and not config.markdown_only:
         source_img_dir = os.path.join(config.output_dir, "images")
         if os.path.isdir(source_img_dir):
             _copy_section_images(
@@ -826,7 +847,8 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
 
     # Close persistent HTTP client
     try:
-        await asset_client.aclose()
+        if asset_client is not None:
+            await asset_client.aclose()
     except asyncio.CancelledError:
         _note_interrupt(stats)
 
@@ -838,7 +860,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
         print(f"Pages unchanged (skipped): {unchanged_count}")
     print(f"Assets downloaded: {len(downloaded_assets)}")
     if md_converter:
-        asset_count = md_converter.copy_assets()
+        asset_count = 0 if config.markdown_only else md_converter.copy_assets()
         print(f"Markdown converted: {md_converter.converted}")
         if asset_count:
             print(f"Markdown assets copied: {asset_count}")

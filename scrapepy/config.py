@@ -96,6 +96,7 @@ class ScrapeConfig:
     ignore_robots: bool = False
     output_root: str = "."
     index_pages: bool = True
+    markdown_only: bool = False
 
     # Derived fields (set in __post_init__)
     cutoff_date: datetime | None = field(init=False, default=None)
@@ -108,6 +109,11 @@ class ScrapeConfig:
     output_dir_name: str = field(init=False, default="")
 
     def __post_init__(self):
+        if self.markdown_only:
+            # Markdown only: no HTML mirror, no asset downloads
+            self.markdown = True
+            self.include_assets = False
+
         parsed = urlparse(self.url)
 
         # Extract credentials from URL (user:pass@host) if --auth not set

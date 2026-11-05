@@ -9,7 +9,15 @@ from ..config import ScrapeConfig
 
 
 def create_output_dirs(config: ScrapeConfig):
-    """Create the base output directory structure."""
+    """Create the base output directory structure.
+
+    In markdown-only mode the site's ScrapedSites folder holds only run
+    state (cache, run_summary.json, site_outline.json), so no asset folders.
+    """
+    if config.markdown_only:
+        os.makedirs(config.output_dir, exist_ok=True)
+        os.makedirs(config.markdown_dir, exist_ok=True)
+        return
     for subdir in ("", "css", "js", "images", "fonts", "media"):
         os.makedirs(os.path.join(config.output_dir, subdir), exist_ok=True)
 
@@ -188,6 +196,11 @@ def section_index_filepath(url_path: str, config: ScrapeConfig) -> str:
         if section_dir.endswith(ext):
             section_dir = section_dir[: -len(ext)]
             break
+    # /news/index.html is the /news section: news/_index.md, not news/index/_index.md
+    if section_dir == "index":
+        section_dir = ""
+    elif section_dir.endswith("/index"):
+        section_dir = section_dir[: -len("/index")]
     md_output = config.markdown_dir
     if section_dir:
         return os.path.join(md_output, section_dir, "_index.md")

@@ -79,6 +79,10 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
     parser.add_argument("-o", "--output-dir", type=str, default=".",
                         help="Folder under which ScrapedSites/ and MarkdownSites/ are created "
                              "(default: current directory)")
+    parser.add_argument("--markdown-only", action="store_true",
+                        help="Write only Markdown: no HTML mirror and no image or asset "
+                             "downloads; links and images stay absolute URLs "
+                             "(default crawl and -j only)")
     parser.add_argument("--index-pages", action=argparse.BooleanOptionalAction, default=True,
                         help="Write generated _index.md listing pages for sections (default: on)")
     parser.add_argument("--auth", type=str, default=None,
@@ -142,6 +146,14 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
             _parse_since(args.since)
     except ValueError as e:
         parser.error(str(e))
+    if args.markdown_only:
+        if not args.markdown:
+            parser.error("--markdown-only cannot be combined with --no-markdown")
+        for flag, on in (("-1/--single-page", args.single_page), ("--swagger", args.swagger),
+                         ("-d/--docs", args.docs), ("--instagram", args.instagram),
+                         ("--audit", args.audit)):
+            if on:
+                parser.error(f"--markdown-only works with the default crawl and -j, not {flag}")
     if args.user_agent is not None and not args.user_agent.strip():
         parser.error("--user-agent must not be empty")
 
@@ -179,6 +191,7 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
         ignore_robots=args.ignore_robots,
         output_root=args.output_dir,
         index_pages=args.index_pages,
+        markdown_only=args.markdown_only,
     )
 
 
@@ -266,7 +279,9 @@ def _run(config: ScrapeConfig) -> int:
             print(f"Max articles per section: {config.max_articles}")
         if config.single_page or config.docs or config.swagger:
             print("  (date filter has no effect in this mode; all pages saved)")
-    if config.include_assets:
+    if config.markdown_only:
+        print("Markdown only: no HTML mirror, no asset downloads, absolute links")
+    elif config.include_assets:
         print("Include assets: CSS and JS files will be downloaded")
     else:
         print("Assets: images only (use -a to include CSS/JS)")
