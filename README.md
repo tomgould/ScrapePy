@@ -12,7 +12,7 @@ You are responsible for how you use ScrapePy. Follow the terms of service of the
 
 What ScrapePy does to keep a crawl polite:
 
-- robots.txt is read at the start of every run and its rules are applied to the URLs a mode picks to fetch. Blocked URLs are skipped, counted in the run summary and listed in `run_summary.json`.
+- robots.txt is read at the start of every run (except in Instagram mode, see below) and its rules are applied to the URLs a mode picks to fetch. Blocked URLs are skipped, counted in the run summary and listed in `run_summary.json`.
 - Rules follow [RFC 9309](https://www.rfc-editor.org/rfc/rfc9309): the longest matching `Allow` or `Disallow` pattern wins whatever order the lines are in, and `Allow` wins a tie. `*` matches any run of characters and a trailing `$` anchors the end of the URL, so `Disallow: /*.pdf$` blocks PDFs and `Disallow: /*?sort=` blocks sorted listings. Links found while crawling never carry query strings (they are stripped before queueing), so rules about query strings only affect sitemap and feed URLs. Paths are case-sensitive and percent-encoding is normalised. An empty `Disallow:` allows everything, and a UTF-8 byte order mark at the start of the file is ignored. Path parameters (`;`) are matched as ordinary characters. Matching uses no regular expressions and its cost is bounded: `Allow` and `Disallow` patterns longer than 2,000 characters are ignored, and when the site has rules for you, a URL whose path and query come to more than 8,192 characters, measured after percent-encoding (so each non-ASCII byte counts as three), is not fetched and is counted as blocked by robots.txt.
 - The group is chosen by your `--user-agent` product token (`MyBot` in `MyBot/1.0`): a group whose `User-agent` line names the same token, compared case-insensitively and ignoring any version suffix, replaces the `User-agent: *` group. `User-agent: M` does not match `MyBot`. Groups naming the same token are merged. Without `--user-agent`, the `*` group applies. `Crawl-delay` is read from the chosen group only.
 - A robots.txt that returns 404 or another 4xx means there are no restrictions. One that returns a 5xx error, or a server that cannot be reached or does not answer within 10 seconds (one attempt, no retries), means the whole site is treated as disallowed: ScrapePy prints why and fetches nothing.
@@ -51,19 +51,19 @@ pip install -e ".[dev]"
 scrapling install
 ```
 
-Requires Python 3.11+. `pip install -r requirements.txt` still works if you only want to run `python main.py`.
+Requires Python 3.11 or later; the tests run on 3.11, 3.12 and 3.13. `pip install -r requirements.txt` installs the dependencies without the package, which is enough to run `python main.py`.
 
 ## Testing
 
 ```bash
-# Run all tests (no network calls, a few seconds)
+# Run all tests (no internet access needed, under a minute)
 python -m pytest tests/ -v
 
 # Run a specific test file
 python -m pytest tests/test_navigation.py -v
 ```
 
-Tests cover date extraction, error detection, URL normalization, page classification, URL rewriting, config and CLI parsing, exit codes, robots.txt rules and request pacing, cache operations, sitemap/RSS/Atom parsing, navigation parsing (including mega-menu/dropdown), outline building, article detection, section splitting, path mapping, YAML frontmatter, section index generation, the run summary, and fixture-driven validation. A few tests run the whole crawl loop against in-memory pages. The recipe and feed tests and one that sends a real Ctrl+C crawl a test server on 127.0.0.1. None of them reach the internet.
+Tests cover date extraction, error detection, URL normalization, page classification, URL rewriting, config and CLI parsing, exit codes, robots.txt rules and request pacing, cache operations, sitemap/RSS/Atom parsing, navigation parsing (including mega-menu/dropdown), outline building, article detection, section splitting, path mapping, YAML frontmatter, section index generation, the run summary, and fixture-driven validation. Some tests run the whole crawl loop against in-memory pages, and the `*_localhost.py`, recipe and feed tests crawl a test server bound to 127.0.0.1 (one of them sends a real Ctrl+C). None of them reach the internet or start a browser.
 
 ## Usage
 
@@ -208,7 +208,7 @@ Markdown files are saved to `MarkdownSites/` (on by default; use `--no-markdown`
 
 ```
 MarkdownSites/example_com/
-  index.md
+  _index.md
   about.md
   products/widgets.md
   images/             (copied from ScrapedSites so image links work)
@@ -264,7 +264,7 @@ The frontmatter is written with `yaml.safe_dump`, so `yaml.safe_load` gives back
 
 ### Run summary (`run_summary.json`)
 
-Every crawl writes `run_summary.json` into the site's `ScrapedSites/<site>/` folder and prints its path at the end. Paths in it are relative to the output directory (`--output-dir`, or the current directory).
+The default crawl, `-j` and feed mode write `run_summary.json` into the site's `ScrapedSites/<site>/` folder and print its path at the end. `-1`, `--swagger`, `-d`, `--audit` and `--instagram` do not write one. Paths in it are relative to the output directory (`--output-dir`, or the current directory).
 
 The file is replaced as soon as a crawl starts with a placeholder whose `status` is `running`, so a summary left by an earlier run is never mistaken for the current one. If the process dies without finishing, the file still says `running`. Each write goes to a temporary file that is then renamed, so a reader never sees half a file. On Ctrl+C or SIGTERM (from cron, systemd or `kill`) the crawl stops, saves the incremental cache so the next run carries on from there, and writes the summary with `status` set to `interrupted`, `interrupted_by` set to `SIGINT` or `SIGTERM`, and exit code 130 or 143. Requests still in flight are abandoned rather than waited for, so the process exits within a moment even when the site has stopped answering. If a second Ctrl+C arrives while it is still saving, it stops at once and the summary may be left at `running`.
 
@@ -330,11 +330,11 @@ New, changed and unchanged are decided on the page HTML, so a page whose HTML ch
 | 130 | Interrupted with Ctrl+C (SIGINT) |
 | 143 | Stopped with SIGTERM |
 
-Browser modes (`-1`, `--swagger`, `-d`) exit 1 when they save no page. Audit and Instagram modes exit 0 unless the arguments are bad.
+Feed mode exits 1 when robots.txt blocks the feed or it cannot be fetched, when `--feed` is given and the response is not a feed, or when the feed has entries and none can be read or written (`feed.error` says why). Browser modes (`-1`, `--swagger`, `-d`) exit 1 when robots.txt blocks the start URL or they save no page. Audit and Instagram modes exit 0 unless the arguments are bad.
 
 ### Numeric Path Flattening
 
-URLs with numeric path segments are flattened to avoid deeply nested single-file directories:
+Article URLs with numeric path segments are flattened to avoid deeply nested single-file directories:
 
 ```
 /news/12345/1/slug  →  news/slug-12345-1.html
@@ -342,13 +342,15 @@ URLs with numeric path segments are flattened to avoid deeply nested single-file
 /a/1/2/3/4/slug     →  a/slug-1-2-3-4.html
 ```
 
+Section pages are not flattened in `MarkdownSites/`: every path segment becomes a folder (`/news/123/slug`, as a section, is `news/123/slug/_index.md`).
+
 ## Modes
 
 ### Default Crawl
 
 Recursively crawls all pages on the same domain using HTTP requests with TLS fingerprint spoofing. Downloads images, rewrites internal URLs to relative paths for offline viewing, and detects error pages (404, 403, etc.).
 
-Before crawling begins, a lightweight **Phase 0 reconnaissance** runs automatically:
+Before crawling begins, a lightweight reconnaissance step runs automatically:
 1. Fetches `robots.txt` for its access rules, `Crawl-delay` and sitemap URLs
 2. Fetches sitemaps and RSS/Atom feeds to build a dated URL map
 3. Parses the homepage `<header>`/`<nav>`/`<footer>` to extract navigation structure (including mega-menus and dropdown panels)
@@ -371,7 +373,7 @@ Loads Swagger UI in a stealth browser, expands all endpoint sections and model s
 
 ### Docs (`-d`)
 
-For documentation platforms (Readme.io, Stoplight, GitBook, etc.). Finds sidebar navigation links, visits each page, expands collapsed sections, and saves individual pages plus a combined document.
+For documentation platforms (Readme.io, Stoplight, GitBook, etc.). Finds sidebar navigation links, visits each page, expands collapsed sections, and saves individual pages plus a combined document (`combined.html`).
 
 ### Recipes
 
@@ -450,6 +452,19 @@ Pre-crawl discovery (sitemaps, RSS feeds) builds a date map to skip old URLs wit
 
 Section-ordered traversal processes article links in DOM order (newest first). When an old article is found in a section batch, remaining articles are discarded.
 
+## Known limits
+
+- A page too short to convert (under 50 words, recipe pages excepted) is counted as new or changed in `run_summary.json` but has no Markdown file.
+- After an interrupted run, pages that were not reached yet appear in no list in `run_summary.json`.
+- Crawled paths are requested without a trailing slash (`/docs/` is fetched as `/docs`), so a server that answers only the slash form must redirect.
+- With `--stay-in-path`, article files have the starting path removed from their path while section `_index.md` files keep it (crawling `/docs/` with `-s`, the article `/docs/how-to-bake-bread` is `how-to-bake-bread.md` and the section `/docs/kitchen` is `docs/kitchen/_index.md`).
+- A brand name in an H1 with no brand signal (no `og:site_name`, `application-name` or schema.org name, no link to the home page, a host name that differs) can become the page title.
+- In recipe pages, the same amount written two ways (`200g` and `200 g`, `½` and `1/2`) leaves a duplicate line in `## Page text`.
+- `-j` is not covered by the automated tests, which never start a browser, and neither is its combination with `--stay-in-path`.
+- `-j`, `-1`, `--swagger`, `-d` and `--instagram` need the browser installed (`scrapling install`).
+
+[docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md) lists more limits of the Markdown output.
+
 ## Anti-Detection
 
 ScrapePy uses Scrapling's built-in stealth features:
@@ -468,7 +483,7 @@ ScrapePy uses Scrapling's built-in stealth features:
 | [lxml](https://pypi.org/project/lxml/) | Fast HTML/XML parser |
 | [markdownify](https://pypi.org/project/markdownify/) | HTML-to-Markdown conversion |
 | [trafilatura](https://pypi.org/project/trafilatura/) | Content extraction fallback |
-| [pyyaml](https://pypi.org/project/PyYAML/) | OpenAPI YAML spec parsing |
+| [pyyaml](https://pypi.org/project/PyYAML/) | YAML frontmatter and OpenAPI YAML specs |
 | [httpx](https://pypi.org/project/httpx/) | Async HTTP for asset downloads |
 
 ## Licence
