@@ -42,7 +42,7 @@ tests/fixtures/         per-site HTML snapshots plus test_config.json
 
 - All modes are async and entered from `cli.py` through `interrupts.run_async()`, which wraps `asyncio.run()` and handles SIGTERM like Ctrl+C.
 - Configuration travels in `ScrapeConfig`; do not pass individual flags around.
-- `Fetcher` (HTTP with TLS fingerprinting) serves the default crawl, reconnaissance and feed mode; asset downloads use an `httpx` client. `StealthyFetcher` (browser) serves `-j`, `-1`, `--swagger`, `-d` and `--instagram`.
+- `Fetcher` (HTTP with TLS fingerprinting) serves the default crawl, reconnaissance and feed mode; asset downloads use an `httpx` client. `StealthyFetcher` (browser) serves `-j`, `-1`, `--swagger`, `-d` and `--instagram`. `--proxy` reaches the browser and the `httpx` client only; `fetch_page_http()` does not pass it. In `-j`, `_fetch_with_browser()` returns no page object, so `wait_for_js_content()` and `extract_links_browser()` are not called.
 - The crawl is a hand-written BFS loop, not Scrapling's Spider, so it can integrate URL rewriting, scope checks, section-ordered traversal and prefetching.
 - Reconnaissance runs before the crawl: robots.txt (rules, Crawl-delay, sitemaps), sitemaps, RSS/Atom, homepage navigation, then `site_outline.json`. The queue is seeded from the navigation structure.
 - Section pages split their links into article batches (DOM order) and navigation links. With `--recent` or `--since`, articles are placed under the section that discovered them in the Markdown output, and each section gets a generated `_index.md`.

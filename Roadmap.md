@@ -44,7 +44,7 @@
 ## Phase 7: Additional Core Features (Complete)
 
 - [x] Cloudflare bypass: `StealthyFetcher` with `solve_cloudflare=True`, `is_cloudflare_challenge()` detection with 5s retry sleep
-- [x] Proxy support: `config.proxy` passed to `Fetcher.get()`, `StealthyFetcher.async_fetch()`, and `httpx.AsyncClient()`
+- [x] Proxy support: `config.proxy` passed to `StealthyFetcher.async_fetch()` and `httpx.AsyncClient()` (not to `Fetcher.get()`)
 - [x] Concurrency control: `config.concurrent` (default 4) via `asyncio.Semaphore` for asset downloads and page prefetching
 - [x] Headless mode: `--headless` flag for all browser modes
 

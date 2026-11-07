@@ -176,6 +176,7 @@ When the start URL is an RSS 2.0 or Atom feed, ScrapePy reads it as content inst
 - With `--stay-in-path`, article files have the starting path removed from their path while section `_index.md` files keep it: crawling `/docs/`, the article `/docs/how-to-bake-bread` is `how-to-bake-bread.md` and the section `/docs/kitchen` is `docs/kitchen/_index.md`.
 - Crawled paths are requested without a trailing slash, so a server that answers only `/docs/` must redirect `/docs` to it.
 - In recipe pages, the same amount written two ways (`200g` and `200 g`, `½` and `1/2`) leaves a duplicate line in `## Page text` (see Recipe pages).
+- With `-j`, each page is captured after network idle plus one second, without scrolling, and its links come from the HTML by regular expression, so content that loads later or on scroll is missing from the Markdown.
 - `-j` output is not covered by the automated tests (they never start a browser), and neither is `-j` with `--stay-in-path`.
 
 ## Generated `_index.md` listing pages

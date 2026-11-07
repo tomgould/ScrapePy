@@ -81,7 +81,7 @@ python main.py <url> [options]
 | `-m`, `--markdown` / `--no-markdown` | Convert to Markdown after scraping (default: on) |
 | `-s`, `--stay-in-path` | Only crawl URLs under the starting path |
 | `-w`, `--path-wildcard` | Match URLs containing the path (use with `-s`) |
-| `-j`, `--js-render` | Wait for JavaScript to render content |
+| `-j`, `--js-render` | Fetch each page with the stealth browser: network idle plus 1 second, then links by regular expression as in the default crawl |
 | `-1`, `--single-page` | Single page SPA mode (no crawling) |
 | `--swagger`, `--openapi` | Swagger/OpenAPI documentation mode |
 | `-d`, `--docs` | Documentation site mode |
@@ -129,7 +129,7 @@ python main.py https://www.example.com --no-markdown
 # Stay within a specific path
 python main.py https://docs.example.com/api/v2/ -s
 
-# JavaScript-rendered site with extra wait time
+# JavaScript-rendered site, page requests at least 10 seconds apart
 python main.py https://spa-site.com -j --wait 10
 
 # Single page application
@@ -141,7 +141,7 @@ python main.py https://petstore.swagger.io --swagger
 # Documentation site (Readme.io, Stoplight, etc.)
 python main.py https://developers.example.com -d
 
-# Proxy support
+# Proxy for browser and asset requests (HTTP page requests do not use it)
 python main.py https://example.com --proxy http://proxy:8080
 
 # Skip incremental (always re-download everything)
@@ -365,7 +365,7 @@ For single-page applications. Launches a stealth browser, waits for JavaScript t
 
 ### JS Render (`-j`)
 
-Like the default crawl, but uses a stealth browser for each page to handle JavaScript-rendered content. Scrolls pages and waits for network idle before capturing.
+Like the default crawl, but each page is fetched with the stealth browser, which waits for the network to go quiet and then one more second before the HTML is captured. The page is not scrolled, links are extracted from the HTML with regular expressions as in the default crawl, and `--wait` is only the gap between page requests.
 
 ### Swagger (`--swagger`)
 
@@ -460,6 +460,8 @@ Section-ordered traversal processes article links in DOM order (newest first). W
 - With `--stay-in-path`, article files have the starting path removed from their path while section `_index.md` files keep it (crawling `/docs/` with `-s`, the article `/docs/how-to-bake-bread` is `how-to-bake-bread.md` and the section `/docs/kitchen` is `docs/kitchen/_index.md`).
 - A brand name in an H1 with no brand signal (no `og:site_name`, `application-name` or schema.org name, no link to the home page, a host name that differs) can become the page title.
 - In recipe pages, the same amount written two ways (`200g` and `200 g`, `½` and `1/2`) leaves a duplicate line in `## Page text`.
+- `-j` waits only for network idle plus one second per page, does not scroll, and extracts links with regular expressions, so content or links that appear later or only after scrolling are missed. `--wait` does not lengthen the render wait.
+- `--proxy` is used by browser modes and asset downloads only. The default crawl's page requests, reconnaissance (sitemaps, feeds, homepage), robots.txt and feed mode connect directly.
 - `-j` is not covered by the automated tests, which never start a browser, and neither is its combination with `--stay-in-path`.
 - `-j`, `-1`, `--swagger`, `-d` and `--instagram` need the browser installed (`scrapling install`).
 
