@@ -23,6 +23,7 @@ scrapepy/
   cli.py                argparse, builds ScrapeConfig
   config.py             ScrapeConfig dataclass and derived values
   scraper.py            dispatches to a mode, runs Markdown conversion
+  proxy.py              --proxy validation and credential masking
   modes/                crawl, single_page, swagger, docs, instagram, audit, feed
   engine/               fetcher.py (HTTP/browser/asset fetching),
                         browser_actions.py and instagram_actions.py (page JS)
@@ -42,7 +43,7 @@ tests/fixtures/         per-site HTML snapshots plus test_config.json
 
 - All modes are async and entered from `cli.py` through `interrupts.run_async()`, which wraps `asyncio.run()` and handles SIGTERM like Ctrl+C.
 - Configuration travels in `ScrapeConfig`; do not pass individual flags around.
-- `Fetcher` (HTTP with TLS fingerprinting) serves the default crawl, reconnaissance and feed mode; asset downloads use an `httpx` client. `StealthyFetcher` (browser) serves `-j`, `-1`, `--swagger`, `-d` and `--instagram`. `--proxy` reaches the browser and the `httpx` client only; `fetch_page_http()` does not pass it. In `-j`, `_fetch_with_browser()` returns no page object, so `wait_for_js_content()` and `extract_links_browser()` are not called.
+- `Fetcher` (HTTP with TLS fingerprinting) serves the default crawl, reconnaissance and feed mode; asset downloads use an `httpx` client. `StealthyFetcher` (browser) serves `-j`, `-1`, `--swagger`, `-d` and `--instagram`. `--proxy` reaches every fetch (`fetch_page_http()`, the browser and the `httpx` client); `scrapepy/proxy.py` validates it and masks its credentials, so any error text that may quote it goes through `redact()`. In `-j`, `_fetch_with_browser()` returns no page object, so `wait_for_js_content()` and `extract_links_browser()` are not called.
 - The crawl is a hand-written BFS loop, not Scrapling's Spider, so it can integrate URL rewriting, scope checks, section-ordered traversal and prefetching.
 - Reconnaissance runs before the crawl: robots.txt (rules, Crawl-delay, sitemaps), sitemaps, RSS/Atom, homepage navigation, then `site_outline.json`. The queue is seeded from the navigation structure.
 - Section pages split their links into article batches (DOM order) and navigation links. With `--recent` or `--since`, articles are placed under the section that discovered them in the Markdown output, and each section gets a generated `_index.md`.
@@ -70,7 +71,7 @@ tests/fixtures/         per-site HTML snapshots plus test_config.json
 
 ## Testing
 
-- Tests never use the internet or a browser. Tests that need a real crawl serve pages from a server bound to 127.0.0.1 (the `*_localhost.py` files and the recipe and feed tests; `tests/test_interrupt_localhost.py` and `tests/test_collisions_localhost.py` send a real Ctrl+C). Recipe and feed fixtures are invented, never copied from real sites.
+- Tests never use the internet, and start a browser only when `SCRAPEPY_BROWSER_TESTS=1` is set (`tests/test_proxy_localhost.py`). Tests that need a real crawl serve pages from a server bound to 127.0.0.1 (the `*_localhost.py` files and the recipe and feed tests; `tests/test_interrupt_localhost.py` and `tests/test_collisions_localhost.py` send a real Ctrl+C). Recipe and feed fixtures are invented, never copied from real sites.
 - `tests/test_audit_fixtures.py` discovers every `tests/fixtures/*/test_config.json` and checks navigation, page classification, dates and robots.txt parsing against the saved HTML. Missing fixture files cause a skip.
 - Committed fixtures come from sites made for scraping practice. To add one, run `python main.py --audit <url>`, review the generated `test_config.json`, and allow the `pages/` directory in `.gitignore`.
 - Add or update tests with every change to parsing, path mapping or conversion.

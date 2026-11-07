@@ -63,7 +63,7 @@ python -m pytest tests/ -v
 python -m pytest tests/test_navigation.py -v
 ```
 
-Tests cover date extraction, error detection, URL normalization, page classification, URL rewriting, config and CLI parsing, exit codes, robots.txt rules and request pacing, cache operations, sitemap/RSS/Atom parsing, navigation parsing (including mega-menu/dropdown), outline building, article detection, section splitting, path mapping, YAML frontmatter, section index generation, the run summary, and fixture-driven validation. Some tests run the whole crawl loop against in-memory pages, and the `*_localhost.py`, recipe and feed tests crawl a test server bound to 127.0.0.1 (two of them send a real Ctrl+C). None of them reach the internet or start a browser.
+Tests cover date extraction, error detection, URL normalization, page classification, URL rewriting, config and CLI parsing, exit codes, robots.txt rules and request pacing, cache operations, sitemap/RSS/Atom parsing, navigation parsing (including mega-menu/dropdown), outline building, article detection, section splitting, path mapping, YAML frontmatter, section index generation, the run summary, and fixture-driven validation. Some tests run the whole crawl loop against in-memory pages, and the `*_localhost.py`, recipe and feed tests crawl a test server bound to 127.0.0.1 (two of them send a real Ctrl+C). None of them reach the internet, and none starts a browser unless `SCRAPEPY_BROWSER_TESTS=1` is set.
 
 ## Usage
 
@@ -141,7 +141,7 @@ python main.py https://petstore.swagger.io --swagger
 # Documentation site (Readme.io, Stoplight, etc.)
 python main.py https://developers.example.com -d
 
-# Proxy for browser and asset requests (HTTP page requests do not use it)
+# Send every request through a proxy (a password in the URL is never printed)
 python main.py https://example.com --proxy http://proxy:8080
 
 # Skip incremental (always re-download everything)
@@ -461,8 +461,7 @@ Section-ordered traversal processes article links in DOM order (newest first). W
 - A brand name in an H1 with no brand signal (no `og:site_name`, `application-name` or schema.org name, no link to the home page, a host name that differs) can become the page title.
 - In recipe pages, the same amount written two ways (`200g` and `200 g`, `½` and `1/2`) leaves a duplicate line in `## Page text`.
 - `-j` returns the page once the browser has loaded it and Scrapling's Cloudflare check has finished (a few seconds), so JavaScript-rendered content that appears later can be missed. The page is not scrolled, links are found in the HTML by regular expression, and `--wait` does not lengthen the wait: it is only the gap between page requests.
-- `--proxy` is used by browser modes and asset downloads only. The default crawl's page requests, reconnaissance (sitemaps, feeds, homepage), robots.txt and feed mode connect directly.
-- `-j`'s argument parsing and settings are covered by the automated tests, but its crawl is not, because the tests never start a browser; the same goes for `-j` with `--stay-in-path`.
+- `-j`'s argument parsing and settings are covered by the automated tests. Its crawl is covered only by an opt-in test (`SCRAPEPY_BROWSER_TESTS=1`, which starts a browser) that checks it goes through `--proxy`; `-j` with `--stay-in-path` is not tested.
 - `-j`, `-1`, `--swagger`, `-d` and `--instagram` need the browser installed (`scrapling install`).
 
 [docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md) lists more limits of the Markdown output.

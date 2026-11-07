@@ -177,7 +177,7 @@ When the start URL is an RSS 2.0 or Atom feed, ScrapePy reads it as content inst
 - Crawled paths are requested without a trailing slash, so a server that answers only `/docs/` must redirect `/docs` to it.
 - In recipe pages, the same amount written two ways (`200g` and `200 g`, `½` and `1/2`) leaves a duplicate line in `## Page text` (see Recipe pages).
 - `-j` returns the page once the browser has loaded it and Scrapling's Cloudflare check has finished (a few seconds), so JavaScript-rendered content that appears later can be missed. The page is not scrolled, links are found in the HTML by regular expression, and `--wait` does not lengthen the wait: it is only the gap between page requests.
-- `-j`'s argument parsing and settings are covered by the automated tests, but its crawl is not, because the tests never start a browser; the same goes for `-j` with `--stay-in-path`.
+- `-j`'s argument parsing and settings are covered by the automated tests. Its crawl is covered only by an opt-in test (`SCRAPEPY_BROWSER_TESTS=1`, which starts a browser) that checks it goes through `--proxy`; `-j` with `--stay-in-path` is not tested.
 
 ## Generated `_index.md` listing pages
 
