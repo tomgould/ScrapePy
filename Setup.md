@@ -133,7 +133,7 @@ ScrapePy creates these directories in the current working directory, or under th
 | `MarkdownSites/<domain>/` | Default (use `--no-markdown` to skip) | Markdown files, plus images/ and media/ copied from `ScrapedSites` (not with `--markdown-only`) |
 | `tests/fixtures/<domain>/` | `--audit` | Test fixtures (HTML snapshots + expected values) |
 
-The `<domain>` directory name is derived from the URL: `www.` prefix stripped, dots replaced with underscores. With `--stay-in-path`, the path is appended (e.g., `docs_example_com_api_v2`). `--site-name NAME` replaces it, so targeted crawls of one site (`--include`, `--exclude`, `--max-depth`, `--max-pages`, `--urls-file`, `--only-recipes`, `--follow-next`) can share one folder. These options work with the default crawl and `-j` only; the other modes exit 2.
+The `<domain>` directory name is derived from the URL: `www.` prefix stripped, dots replaced with underscores. With `--stay-in-path`, the path is appended (e.g., `docs_example_com_api_v2`). `--site-name NAME` replaces it, so targeted crawls of one site (`--include`, `--exclude`, `--max-depth`, `--max-pages`, `--urls-file`, `--only-recipes`, `--follow-next`) can share one folder. These options work with the default crawl and `-j` only: `-1`, `--swagger`, `-d`, `--instagram`, `--audit` and `--feed` exit 2 when combined with them, and a start URL that looks like a feed runs feed mode, prints a notice, ignores the options and exits 0.
 
 ## Troubleshooting
 

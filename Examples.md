@@ -94,7 +94,7 @@ python main.py "https://recipes.example.com/?s=baby+led+weaning" \
   --site-name recipes_example_com --markdown-only
 ```
 
-A start URL with a query string is fetched exactly as given and its links are followed whenever a targeting option (`--include`, `--exclude`, `--max-depth`, `--max-pages`, `--urls-file`, `--only-recipes`, `--site-name` or `--follow-next`) is set; without one, the query is dropped and `/` is fetched as before. The search page itself is never written. `--site-name` puts the results in the same folder as the category crawl above, and the cache keeps each URL's file across the two runs.
+A start URL with a query string is fetched exactly as given and its links are followed whenever a targeting option (`--include`, `--exclude`, `--max-depth`, `--max-pages`, `--urls-file`, `--only-recipes`, `--site-name` or `--follow-next`) is set; without one, the query is dropped and `/` is fetched, as in any untargeted crawl. The search page itself is never written. `--site-name` puts the results in the same folder as the category crawl above, and the cache keeps each URL's file across the two runs.
 
 ### A list of pages
 
