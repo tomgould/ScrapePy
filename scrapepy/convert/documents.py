@@ -3,11 +3,18 @@
 Documents are untrusted input. Nothing in them is executed or followed:
 links inside a document are never fetched, XLSX formulas are read as the
 values Excel last cached, and macros are ignored. Zip-based formats (DOCX,
-XLSX) are checked before they are opened, so an archive that would unpack
-to more than Limits.max_unzipped_bytes is refused. Every page, row, column
-and character count is capped, control characters are removed from all
-extracted text, and any error a library raises becomes a "failed" result
-with a short reason instead of an exception.
+XLSX) are checked before they are opened: an archive that would unpack to
+more than Limits.max_unzipped_bytes, or with an XML part the library parses
+whole that is larger than Limits.max_xml_part_bytes, is refused. A PDF
+stream that pypdf stops at its decompression limit fails the document (no
+fallback to a parser without limits). Every page, row, column and character
+count is capped, control characters are removed from all extracted text,
+and any error a library raises becomes a "failed" result with a short
+reason instead of an exception.
+
+The crawl runs each conversion in a child process (document_child.py) with
+an address-space and CPU limit, killed when it runs too long, so a document
+that defeats these checks cannot exhaust the machine or outlive its time.
 
 The libraries are optional (pip install "scrapepy[documents]") and are
 imported only when a document of their type is converted: pypdf for PDF,
@@ -39,7 +46,9 @@ class Limits:
     max_chars: int = 2_000_000         # characters of Markdown body kept
     max_rows: int = 2000               # data rows per table (XLSX sheet, CSV, DOCX table)
     max_columns: int = 50              # columns per table
-    max_unzipped_bytes: int = 256 * MB  # DOCX and XLSX: total unpacked size
+    max_scan_rows: int = 100_000       # rows read per table, empty ones included
+    max_unzipped_bytes: int = 128 * MB  # DOCX and XLSX: total unpacked size
+    max_xml_part_bytes: int = 16 * MB   # one XML part parsed whole (all of DOCX; XLSX except sheets)
     max_zip_entries: int = 10000       # DOCX and XLSX: parts in the archive
 
 
@@ -110,7 +119,7 @@ _LIGATURES = str.maketrans({
     "ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi",
     "ﬄ": "ffl", "ﬅ": "st", "ﬆ": "st", "­": None,
 })
-_RE_HYPHEN_BREAK = re.compile(r"([a-z])-\n([a-z])")
+_RE_HYPHEN_BREAK = re.compile(r"([a-z])-\n([a-z])")   # the hyphen is kept: "well-known"
 _RE_BLANK_RUNS = re.compile(r"\n{3,}")
 _RE_MD_LINE_START = re.compile(r"^(\s*)([#>])", re.MULTILINE)
 
@@ -235,13 +244,20 @@ def _convert_pdf(data: bytes, limits: Limits) -> Converted:
         title, created, count, texts = _pdf_pypdf(data, limits)
     except DocumentError:
         raise
-    except Exception:
+    except Exception as e:
+        if _is_limit_error(e):
+            # pypdf stopped a stream that unpacks too far: pdfminer.six has
+            # no such limit, so it is never tried on this file
+            raise DocumentError(_PDF_BOMB) from None
         texts = _pdf_pdfminer(data, limits)
         if texts is None:
             raise
         count = len(texts)
     if not any(t.strip() for t in texts):
-        # pypdf found nothing: pdfminer reads some files pypdf cannot
+        # pypdf found nothing: pdfminer reads some files pypdf cannot, but
+        # it has no decompression limit, so the page contents are first
+        # unpacked through pypdf's (extract_text can skip a page unread)
+        _check_pdf_streams(data, limits)
         try:
             fallback = _pdf_pdfminer(data, limits)
         except Exception:
@@ -261,6 +277,35 @@ def _convert_pdf(data: bytes, limits: Limits) -> Converted:
         out.notes.append(f"Pages after the first {len(texts):,} are not converted.")
     out.text = "\n\n".join(parts)
     return out
+
+
+def _is_limit_error(error: Exception) -> bool:
+    try:
+        from pypdf.errors import LimitReachedError
+    except ImportError:
+        return False
+    return isinstance(error, LimitReachedError)
+
+
+_PDF_BOMB = "a compressed stream unpacks past the safety limit (possible PDF bomb)"
+
+
+def _check_pdf_streams(data: bytes, limits: Limits) -> None:
+    """Unpack each page's content stream through pypdf's limits; a stream
+    over them fails the document."""
+    from pypdf import PdfReader
+
+    try:
+        reader = PdfReader(io.BytesIO(data), strict=False)
+        if reader.is_encrypted:
+            reader.decrypt("")
+        for index in range(min(len(reader.pages), limits.max_pages)):
+            contents = reader.pages[index].get_contents()
+            if contents is not None:
+                contents.get_data()
+    except Exception as e:
+        if _is_limit_error(e):
+            raise DocumentError(_PDF_BOMB) from None
 
 
 def _pdf_pypdf(data: bytes, limits: Limits):
@@ -298,11 +343,12 @@ def _pdf_pdfminer(data: bytes, limits: Limits) -> list[str] | None:
 
 
 def _clean_pdf_text(text: str) -> str:
-    """Page text with ligatures spelled out, words broken by a hyphen at a
-    line end joined, trailing spaces and runs of blank lines removed, and
+    """Page text with ligatures spelled out, a word broken by a hyphen at a
+    line end joined with its hyphen kept (no dictionary can tell
+    "main-tenance" from "well-known", so nothing is lost), trailing spaces and runs of blank lines removed, and
     line starts escaped."""
     text = clean(text.translate(_LIGATURES))
-    text = _RE_HYPHEN_BREAK.sub(r"\1\2", text)
+    text = _RE_HYPHEN_BREAK.sub(r"\1-\2", text)
     text = "\n".join(line.rstrip() for line in text.split("\n"))
     text = _RE_BLANK_RUNS.sub("\n\n", text).strip()
     return _escape_line_starts(text)
@@ -334,6 +380,13 @@ def check_zip(data: bytes, kind: str, limits: Limits) -> None:
     if unpacked > limits.max_unzipped_bytes:
         raise DocumentError(
             f"unpacks to more than {limits.max_unzipped_bytes // MB} MB (possible zip bomb)")
+    for info in infos:
+        name = info.filename.lower()
+        streamed = kind == "xlsx" and name.startswith("xl/worksheets/")   # read row by row
+        if name.endswith((".xml", ".rels")) and not streamed \
+                and info.file_size > limits.max_xml_part_bytes:
+            raise DocumentError(f"a part unpacks to more than {limits.max_xml_part_bytes // MB} MB "
+                                "(possible zip bomb)")
 
 
 # ---------------------------------------------------------------------------
@@ -351,6 +404,23 @@ def _docx_blocks(body):
             for content in child.iterchildren():
                 if isinstance(content.tag, str) and content.tag.endswith("}sdtContent"):
                     yield from _docx_blocks(content)
+
+
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+def _docx_text(element) -> str:
+    """All visible text under element: runs, hyperlinks, tracked-change
+    insertions and nested tables included (deleted text is stored as
+    w:delText and left out), tabs and breaks as spaces, paragraphs
+    separated by a space."""
+    parts: list[str] = []
+    for node in element.iter(f"{_W}t", f"{_W}tab", f"{_W}br", f"{_W}cr", f"{_W}p"):
+        if node.tag == f"{_W}t":
+            parts.append(node.text or "")
+        else:
+            parts.append(" ")
+    return " ".join(clean("".join(parts)).split())
 
 
 def _convert_docx(data: bytes, limits: Limits) -> Converted:
@@ -372,7 +442,7 @@ def _convert_docx(data: bytes, limits: Limits) -> Converted:
             for row in table.rows:
                 if len(rows) > limits.max_rows:
                     break
-                rows.append([cell.text for cell in row.cells][:limits.max_columns])
+                rows.append([_docx_text(cell._tc) for cell in row.cells][:limits.max_columns])
             text = markdown_table(rows[:limits.max_rows + 1])
             if text:
                 if len(rows) > limits.max_rows:
@@ -380,7 +450,7 @@ def _convert_docx(data: bytes, limits: Limits) -> Converted:
                 blocks.append(("table", 0, text))
             continue
         para = Paragraph(element, document)
-        text = " ".join(clean(para.text).split())
+        text = _docx_text(element)
         if not text:
             continue
         try:
@@ -448,11 +518,16 @@ def _convert_docx(data: bytes, limits: Limits) -> Converted:
 def _table_rows(rows_iter, limits: Limits, notes: list[str], label: str = "") -> tuple[list[list[str]], bool]:
     """Non-empty rows, at most a header and limits.max_rows data rows, and
     whether rows were left out. Columns beyond limits.max_columns are cut,
-    with a note."""
+    and reading stops after limits.max_scan_rows rows (a sheet with a far
+    away cell yields a million empty rows), each with a note."""
     rows: list[list[str]] = []
     truncated = False
     wide = False
-    for raw in rows_iter:
+    for scanned, raw in enumerate(rows_iter):
+        if scanned >= limits.max_scan_rows:
+            where = f" of {label}" if label else ""
+            notes.append(f"Rows after row {limits.max_scan_rows:,}{where} are not read.")
+            break
         raw = list(raw or ())
         if len(raw) > limits.max_columns:
             wide = wide or any(v not in (None, "") for v in raw[limits.max_columns:])
@@ -550,3 +625,17 @@ def _convert_csv(data: bytes, limits: Limits) -> Converted:
     out.text = table
     out.notes.extend(notes)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Child process
+# ---------------------------------------------------------------------------
+
+def convert_path(path: str, kind: str, limits: dict | None = None) -> dict:
+    """convert_document on a saved file, with limits and result as plain
+    dicts (the child process sends them as JSON)."""
+    import dataclasses
+
+    with open(path, "rb") as f:
+        data = f.read()
+    return dataclasses.asdict(convert_document(data, kind, Limits(**limits) if limits else None))
