@@ -38,6 +38,8 @@ SITE = {
         "Keep basil alive indoors",
         '<a href="/guides/grow-tomatoes-on-a-balcony">Tomatoes</a> <a href="/">Home</a>'),
     "/moved/new-home-for-the-story": page("New home for the story"),
+    # Served only with the trailing slash: /docs answers 404
+    "/docs/": page("Documentation home"),
 }
 REDIRECTS = {"/old/story": "/moved/new-home-for-the-story"}
 
@@ -45,6 +47,7 @@ REDIRECTS = {"/old/story": "/moved/new-home-for-the-story"}
 class Handler(BaseHTTPRequestHandler):
     log: list = []
     edits: dict = {}
+    targets: list = []      # the addresses handed to the browser
 
     def do_GET(self):
         Handler.log.append(self.path)
@@ -90,15 +93,20 @@ class FakeResponse:
 def site(monkeypatch):
     Handler.log = []
     Handler.edits = {}
+    Handler.targets = []
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     actions = []
 
     async def fake_browser(url, config, page_action=None, wait_time=None, **kwargs):
         actions.append(page_action)
+        Handler.targets.append(url)
         try:
-            with urllib.request.urlopen(url.split("#")[0], timeout=10) as r:
-                return FakeResponse(r.geturl(), r.status, r.read().decode("utf-8"))
+            address, hash_mark, fragment = url.partition("#")
+            with urllib.request.urlopen(address, timeout=10) as r:
+                # A browser keeps the fragment in the address it ends on
+                return FakeResponse(r.geturl() + hash_mark + fragment, r.status,
+                                    r.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             return FakeResponse(url, e.code, "")
 
@@ -231,6 +239,54 @@ def test_site_name_works_with_single_page(site, tmp_path):
     assert (tmp_path / "MarkdownSites/garden/guides/keep-basil-alive-indoors.md").is_file()
 
 
+@pytest.mark.parametrize("headless", [True, False])
+@pytest.mark.parametrize("given,cache_key,file", [
+    ("/docs/", "/docs", "docs.md"),
+    ("/docs/?page=2", "/docs?page=2", "docs.md"),
+    ("", "/", "index.md"),
+    ("/#/route", "/#/route", "index.md"),
+])
+def test_page_is_fetched_exactly_as_given(site, tmp_path, headless, given, cache_key, file):
+    """The browser gets the address as typed (trailing slash, query, empty
+    path, fragment route); only the file name and cache key use the
+    normalised path."""
+    base, _ = site
+    url = base + given
+    args = ["-1", url, "-o", str(tmp_path), "--wait", "0"] + (["--headless"] if headless else [])
+    config = parse_args(args)
+    code = asyncio.run(run_scraper(config))
+    assert code == 0
+    assert Handler.targets == [url]
+    expected_url = url if given else base + "/"
+    found = markdown_urls(config)
+    assert list(found) == [expected_url]
+    # A page that found no links is an article; the home page is a section
+    assert found[expected_url] in (file, file.replace(".md", "/_index.md"), "_index.md")
+    cache = json.loads((Path(config.output_dir) / ".scrapepy_cache.json").read_text())
+    assert list(cache["pages"]) == [cache_key]
+
+
+def test_browser_wait_is_the_full_wait_only_with_a_page_action(monkeypatch):
+    """-1 (with its page action) waits --wait; -j waits one second."""
+    from scrapepy.config import ScrapeConfig
+    seen = []
+
+    async def fake(url, config, page_action=None, wait_time=None, **kwargs):
+        seen.append((url, wait_time))
+        return FakeResponse(url, 200, "<html></html>")
+
+    monkeypatch.setattr(crawl_mode, "fetch_page_browser", fake)
+    config = ScrapeConfig(url="https://example.com/app#/route", single_page=True)
+
+    async def action(page):
+        return page
+
+    asyncio.run(crawl_mode._fetch_with_browser(config.url, config, action))
+    asyncio.run(crawl_mode._fetch_with_browser(config.url, config))
+    assert seen == [("https://example.com/app#/route", None),
+                    ("https://example.com/app#/route", 1.0)]
+
+
 def test_date_filter_does_not_skip_the_page(site, tmp_path):
     base, _ = site
     config, code = run(base + "/guides/keep-basil-alive-indoors", tmp_path, "--since", "2099-01-01")
@@ -278,13 +334,18 @@ def test_real_browser_names_pages_by_their_url(tmp_path):
     base = f"http://127.0.0.1:{httpd.server_address[1]}"
     try:
         run(base + "/old/story", tmp_path)
+        run(base + "/docs/", tmp_path)
         config, code = run(base + "/guides/keep-basil-alive-indoors", tmp_path)
     finally:
         httpd.shutdown()
         httpd.server_close()
     assert code == 0
-    assert markdown_urls(config) == {
-        base + "/moved/new-home-for-the-story": "moved/new-home-for-the-story.md",
-        base + "/guides/keep-basil-alive-indoors": "guides/keep-basil-alive-indoors.md",
-    }
+    # Each page keeps its own file, named from its path (an article's .md,
+    # or _index.md in a folder for a page classified as a section)
+    found = markdown_urls(config)
+    stems = {"/moved/new-home-for-the-story": "moved/new-home-for-the-story",
+             "/docs/": "docs", "/guides/keep-basil-alive-indoors": "guides/keep-basil-alive-indoors"}
+    assert set(found) == {base + p for p in stems}
+    for p, stem in stems.items():
+        assert found[base + p] in (stem + ".md", stem + "/_index.md")
 
