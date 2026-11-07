@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
 from ..config import ScrapeConfig
+from ..proxy import redact
 from ..convert.html_prep import absolutize_links, fix_block_links, normalize_headings
 from ..convert.to_markdown import (
     HTMLToMarkdown,
@@ -52,7 +53,7 @@ def _fetch(url: str, config: ScrapeConfig) -> tuple[int, bytes, str | None, str 
             body = body.encode(response.encoding or "utf-8")
         return response.status, body or b"", response.encoding, None
     except Exception as e:
-        return 0, b"", None, f"{type(e).__name__}: {e}"
+        return 0, b"", None, redact(f"{type(e).__name__}: {e}", config.proxy)
 
 
 def entry_stem(link: str, config: ScrapeConfig) -> str:

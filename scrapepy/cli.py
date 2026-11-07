@@ -166,6 +166,12 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
                          ("--audit", args.audit), ("-j/--js-render", args.js_render)):
             if on:
                 parser.error(f"--feed cannot be combined with {flag}")
+    if args.proxy:
+        from .proxy import validate_proxy
+        try:
+            validate_proxy(args.proxy)
+        except ValueError as e:
+            parser.error(str(e))
     if args.user_agent is not None and not args.user_agent.strip():
         parser.error("--user-agent must not be empty")
 

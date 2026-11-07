@@ -8,6 +8,7 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 
 from ..config import ScrapeConfig
+from ..proxy import redact
 from ..engine.fetcher import fetch_page_http
 from ..engine.threads import run_blocking
 from .dates import _parse_iso_date, _parse_rfc2822_date
@@ -25,7 +26,7 @@ def _fetch_url(url: str, config: ScrapeConfig) -> str | None:
             return response.body.decode(response.encoding or "utf-8")
     except Exception as e:
         if config.verbose:
-            print(f"    Discovery fetch failed ({type(e).__name__}: {e}): {url}")
+            print(redact(f"    Discovery fetch failed ({type(e).__name__}: {e}): {url}", config.proxy))
     return None
 
 
@@ -238,7 +239,7 @@ def fetch_robots_txt(config: ScrapeConfig) -> tuple[int, str | None]:
             )
         except Exception as e:
             if config.verbose:
-                print(f"    robots.txt fetch failed ({type(e).__name__}: {e})")
+                print(redact(f"    robots.txt fetch failed ({type(e).__name__}: {e})", config.proxy))
             return 0, None
         status = response.status
         if status in _REDIRECT_STATUSES:

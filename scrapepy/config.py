@@ -156,6 +156,9 @@ class ScrapeConfig:
         self.output_dir_name = dir_name
         # Resolved once, here: every path the run builds, compares or stores
         # is then absolute, whatever form -o took ("data", "./data", "~/data")
+        if self.proxy:
+            from .proxy import validate_proxy
+            self.proxy = validate_proxy(self.proxy)
         self.output_root = os.path.abspath(os.path.expanduser(self.output_root or "."))
         self.output_dir, self.markdown_dir = derive_output_dirs(self.output_root, dir_name)
 

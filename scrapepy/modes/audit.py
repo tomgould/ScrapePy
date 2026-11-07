@@ -7,6 +7,7 @@ import re
 from datetime import datetime, timezone
 
 from ..config import ScrapeConfig
+from ..proxy import redact
 from ..engine.fetcher import fetch_page_http
 from ..processing.discovery import (
     DiscoveryMap,
@@ -58,7 +59,7 @@ def _fetch_sample_page(url: str, config: ScrapeConfig) -> tuple[str, int]:
             return html, status
         return "", status
     except Exception as e:
-        print(f"    Fetch failed ({type(e).__name__}: {e})")
+        print(redact(f"    Fetch failed ({type(e).__name__}: {e})", config.proxy))
         return "", 0
 
 

@@ -5,6 +5,7 @@ import os
 from urllib.parse import urlparse
 
 from ..config import ScrapeConfig
+from ..proxy import redact
 from ..engine.fetcher import fetch_page_browser
 from ..engine.browser_actions import expand_swagger_sections, find_spec_url, scroll_full_page
 from ..output.writer import write_file
@@ -46,7 +47,7 @@ async def run_swagger_mode(config: ScrapeConfig) -> int:
     try:
         response = await fetch_page_browser(config.url, config, page_action=page_action)
     except Exception as e:
-        print(f"\nError: Failed to load page ({type(e).__name__}: {e})")
+        print(redact(f"\nError: Failed to load page ({type(e).__name__}: {e})", config.proxy))
         print("Check that the URL is correct and the browser is installed (scrapling install).")
         return 0
 

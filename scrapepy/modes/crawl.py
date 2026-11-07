@@ -11,6 +11,7 @@ from urllib.parse import urljoin, urlparse
 
 from .. import interrupts
 from ..config import ScrapeConfig
+from ..proxy import redact
 from ..engine.fetcher import fetch_page_http, fetch_page_browser, create_asset_client
 from ..engine.threads import run_blocking
 from ..engine.browser_actions import (
@@ -482,7 +483,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                         raise  # Ctrl+C, not a cancelled prefetch
                     html, status, page_info = "", 0, {"error": "Prefetch cancelled"}
                 except Exception as e:
-                    html, status, page_info = "", 0, {"error": f"{type(e).__name__}: {e}"}
+                    html, status, page_info = "", 0, {"error": redact(f"{type(e).__name__}: {e}", config.proxy)}
             elif config.needs_browser:
                 await limiter.wait(full_url)
                 html, status, page_info = await _fetch_with_browser(full_url, config)
@@ -896,8 +897,9 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
             _note_interrupt(stats)
             break
         except Exception as e:
-            print(f"Error on {full_url}: {type(e).__name__}: {e}")
-            stats.record_failed(full_url, f"{type(e).__name__}: {e}")
+            error_text = redact(f"{type(e).__name__}: {e}", config.proxy)
+            print(f"Error on {full_url}: {error_text}")
+            stats.record_failed(full_url, error_text)
             if config.verbose:
                 import traceback
                 traceback.print_exc()
@@ -1142,7 +1144,7 @@ def _fetch_with_http(
         html = response.body.decode(response.encoding or "utf-8")
         return html, status, {"headers": dict(response.headers)}
     except Exception as e:
-        return "", 0, {"error": f"{type(e).__name__}: {e}"}
+        return "", 0, {"error": redact(f"{type(e).__name__}: {e}", config.proxy)}
 
 
 async def _fetch_with_http_async(
@@ -1174,7 +1176,7 @@ async def _fetch_with_browser(url: str, config: ScrapeConfig) -> tuple[str, int,
         html = response.body.decode(response.encoding or "utf-8")
         return html, status, {}
     except Exception as e:
-        return "", 0, {"error": f"{type(e).__name__}: {e}"}
+        return "", 0, {"error": redact(f"{type(e).__name__}: {e}", config.proxy)}
 
 
 def _check_rendered_error_page(html: str) -> bool:

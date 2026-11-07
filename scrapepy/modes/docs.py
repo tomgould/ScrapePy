@@ -7,6 +7,7 @@ import re
 from urllib.parse import urlparse
 
 from ..config import ScrapeConfig
+from ..proxy import redact
 from ..engine.fetcher import fetch_page_browser
 from ..engine.browser_actions import (
     find_nav_links,
@@ -40,7 +41,7 @@ async def run_docs_mode(config: ScrapeConfig, robots: RobotsPolicy | None = None
             config.url, config, page_action=initial_page_action
         )
     except Exception as e:
-        print(f"\nError: Failed to load page ({type(e).__name__}: {e})")
+        print(redact(f"\nError: Failed to load page ({type(e).__name__}: {e})", config.proxy))
         print("Check that the URL is correct and the browser is installed (scrapling install).")
         return 0
 
@@ -97,7 +98,7 @@ async def run_docs_mode(config: ScrapeConfig, robots: RobotsPolicy | None = None
             })
 
         except Exception as e:
-            print(f"    Warning: Could not load {link['href']}: {e}")
+            print(redact(f"    Warning: Could not load {link['href']}: {e}", config.proxy))
 
     print(f"\n  Captured {len(all_content)} pages")
 

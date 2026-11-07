@@ -5,6 +5,7 @@ import os
 import re
 
 from ..config import ScrapeConfig
+from ..proxy import redact
 from ..engine.fetcher import download_asset
 from ..processing.urls import classify_asset_url
 from ..output.writer import ensure_parent_dir
@@ -90,7 +91,7 @@ async def _download_one(
         else:
             print(f"  Failed: {filename} (no data)")
     except Exception as e:
-        print(f"  Failed: {filename} ({e})")
+        print(redact(f"  Failed: {filename} ({e})", config.proxy))
 
 
 def _extract_asset_urls(html: str, include_assets: bool) -> list[str]:

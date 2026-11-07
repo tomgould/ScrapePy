@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from ..config import ScrapeConfig
+from ..proxy import redact
 from ..engine.fetcher import fetch_page_browser, download_asset
 from ..engine.instagram_actions import (
     check_login_status,
@@ -177,7 +178,7 @@ async def _scrape_account(username: str, config: ScrapeConfig) -> int:
             user_data_dir=user_data_dir,
         )
     except Exception as e:
-        print(f"  Error fetching profile @{username}: {e}")
+        print(redact(f"  Error fetching profile @{username}: {e}", config.proxy))
         return 0
 
     if not profile_data:
@@ -298,7 +299,7 @@ async def _scrape_post(
             user_data_dir=user_data_dir,
         )
     except Exception as e:
-        print(f"    Error: {e}")
+        print(redact(f"    Error: {e}", config.proxy))
         return False
 
     if not post_data.get("shortcode"):
@@ -392,7 +393,7 @@ async def _scrape_post(
                 else:
                     print(f"    Failed to download: {filename} (status {status})")
             except Exception as e:
-                print(f"    Failed to download: {filename} ({e})")
+                print(redact(f"    Failed to download: {filename} ({e})", config.proxy))
 
     # Update post_data with local file references
     post_data["local_media"] = downloaded_files

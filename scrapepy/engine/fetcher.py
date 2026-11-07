@@ -6,6 +6,7 @@ from typing import Callable
 from scrapling import Fetcher, StealthyFetcher
 
 from ..config import ScrapeConfig
+from ..proxy import protect_logs, redact
 
 # User agent for asset downloads when --user-agent is not set. Page fetches
 # without --user-agent use the browser-like headers Scrapling generates.
@@ -43,6 +44,9 @@ def fetch_page_http(
     kwargs = {}
     if retries is not None:
         kwargs["retries"] = retries
+    if config.proxy:
+        protect_logs(config.proxy)
+        kwargs["proxy"] = config.proxy
     return Fetcher.get(
         url,
         stealthy_headers=True,
@@ -84,6 +88,7 @@ async def fetch_page_browser(
     if config.auth_header:
         kwargs["extra_headers"] = config.auth_header
     if config.proxy:
+        protect_logs(config.proxy)
         kwargs["proxy"] = config.proxy
     if config.user_agent:
         kwargs["useragent"] = config.user_agent
@@ -148,4 +153,4 @@ async def download_asset(
     except Exception as e:
         if config.verbose:
             print(f"    Asset download error ({type(e).__name__}): {url}")
-        return None, 0, {"error": f"{type(e).__name__}: {e}"}
+        return None, 0, {"error": redact(f"{type(e).__name__}: {e}", config.proxy)}
