@@ -216,7 +216,8 @@ def url_to_filepath(url_path: str, config: ScrapeConfig, hash_fragment: str = ""
     clean = url_path.split("?")[0].split("#")[0]
 
     # Strip starting path prefix when stay-in-path is active
-    if config.stay_in_path and config.starting_path:
+    # With --site-name several runs share one folder, so paths stay whole
+    if config.stay_in_path and config.starting_path and not config.site_name:
         if clean.startswith(config.starting_path):
             clean = clean[len(config.starting_path):]
 

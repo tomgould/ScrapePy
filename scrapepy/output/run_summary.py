@@ -46,6 +46,7 @@ class RunStats:
     interrupted: bool = False
     interrupted_by: str | None = None    # "SIGINT" or "SIGTERM"
     feed: dict | None = None             # feed mode only, written as "feed"
+    targeting: dict | None = None        # targeted crawls only, written as "targeting"
 
     def record_saved(self, url: str, existed_before: bool, markdown_path: str | None):
         """Record a page that was fetched and written because it is new or changed."""
@@ -104,6 +105,14 @@ def options_used(config: ScrapeConfig) -> dict:
     }
     if config.feed:
         options["feed"] = True
+    # Targeted-crawl options appear only when set
+    for key, value in (("include", list(config.include)), ("exclude", list(config.exclude)),
+                       ("max_depth", config.max_depth), ("max_pages", config.max_pages),
+                       ("urls_file", bool(config.urls_file)), ("start_urls", len(config.start_urls)),
+                       ("only_recipes", config.only_recipes), ("site_name", config.site_name),
+                       ("follow_next", config.follow_next)):
+        if value not in (None, False, 0, []):
+            options[key] = value
     return options
 
 
@@ -169,6 +178,9 @@ def build_summary(
         "interrupted_by": stats.interrupted_by,
         "exit_code": None if in_progress else exit_code_for(stats),
     }
+    if stats.targeting is not None:
+        summary["targeting"] = {k: (list(v) if isinstance(v, list) else v)
+                                for k, v in stats.targeting.items()}
     if stats.feed is not None:
         summary["feed"] = {k: (list(v) if isinstance(v, list) else v)
                            for k, v in stats.feed.items()}
