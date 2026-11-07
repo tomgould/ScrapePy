@@ -58,7 +58,7 @@ from ..processing.robots import HostRateLimiter, RobotsPolicy
 from ..processing.navigation import extract_navigation
 from ..processing.outline import build_site_outline, SiteOutline
 from ..convert.html_prep import safe_urljoin
-from ..output.naming import FileNames, assignments_from_disk
+from ..output.naming import FileNames, assignments_from_disk, fit_path
 from ..output.writer import url_to_filepath, write_file
 from ..output.broken_links import BrokenLinkTracker
 from ..output.cache import CrawlCache
@@ -330,8 +330,8 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
             if config.markdown_only:
                 existed_before = existed_before or md_converter.last_output_existed
         for kind in ("md", "html"):
-            if natural[kind] and a[kind] != natural[kind]:
-                stats.record_renamed(url, a[kind], natural[kind])
+            if natural[kind] and a[kind] != fit_path(natural[kind]):
+                stats.record_renamed(url, a[kind], fit_path(natural[kind]))
                 break
         if entry["error"]:
             # No Markdown was written: report the page as failed, and keep

@@ -22,10 +22,53 @@ def url_suffix(url: str, length: int = 8) -> str:
     return hashlib.sha256(url.encode("utf-8")).hexdigest()[:length]
 
 
+# Longest file or folder name most file systems allow, in bytes
+MAX_NAME_BYTES = 255
+
+
+def _cut_utf8(text: str, limit: int) -> str:
+    """text cut to at most limit UTF-8 bytes, never inside a character."""
+    return text.encode("utf-8")[:max(limit, 0)].decode("utf-8", "ignore")
+
+
+def _split_ext(name: str) -> tuple[str, str]:
+    stem, ext = os.path.splitext(name)
+    if len(ext.encode("utf-8")) > 16:     # not a real extension
+        return name, ""
+    return stem, ext
+
+
+def _fit_name(stem: str, ext: str, tag: str | None) -> str:
+    """stem + ("-" + tag) + ext, with the stem cut so the whole name fits in
+    MAX_NAME_BYTES."""
+    extra = (len(tag) + 1 if tag else 0) + len(ext.encode("utf-8"))
+    stem = _cut_utf8(stem, MAX_NAME_BYTES - extra)
+    return f"{stem}-{tag}{ext}" if tag else f"{stem}{ext}"
+
+
+def fit_path(path: str) -> str:
+    """path with every file or folder name that is longer than the file
+    system allows shortened: its stem is cut and a short hash of the full
+    name is added, so two long names stay apart and the result is the same
+    in every run. Names that fit are left alone."""
+    parts = path.split(os.sep)
+    out = []
+    for part in parts:
+        if len(part.encode("utf-8")) <= MAX_NAME_BYTES:
+            out.append(part)
+            continue
+        stem, ext = _split_ext(part)
+        tag = hashlib.sha256(part.encode("utf-8")).hexdigest()[:8]
+        out.append(_fit_name(stem, ext, tag))
+    return os.sep.join(out)
+
+
 def suffixed_path(path: str, url: str, length: int = 8) -> str:
-    """path with -<hash of url> inserted before the extension."""
-    root, ext = os.path.splitext(path)
-    return f"{root}-{url_suffix(url, length)}{ext}"
+    """path with -<hash of url> inserted before the extension, the stem cut
+    when needed so the name still fits in MAX_NAME_BYTES."""
+    folder, name = os.path.split(path)
+    stem, ext = _split_ext(name)
+    return fit_path(os.path.join(folder, _fit_name(stem, ext, url_suffix(url, length))))
 
 
 class FileNames:
@@ -45,6 +88,8 @@ class FileNames:
         """Assign files for the kinds in natural ({"md": path or None,
         "html": path or None}). A URL keeps any file it already has."""
         a = self.by_url.setdefault(url, {})
+        # A natural name too long for the file system is shortened first
+        natural = {k: (fit_path(v) if v else v) for k, v in natural.items()}
         missing = [k for k in KINDS if natural.get(k) and not a.get(k)]
         suffix = self.is_renamed(url) or any(
             self.taken.get(natural[k], url) != url for k in missing
