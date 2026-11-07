@@ -8,6 +8,8 @@ No timeline or priority is assigned.
 
 ### Crawling and output
 
+- `-j`: scroll each page, wait for its content to render (with `--wait` controlling that wait) and extract links in the browser, using the existing `wait_for_js_content()` and `extract_links_browser()`
+- `--proxy` for HTTP page requests (the default crawl, reconnaissance, robots.txt and feed mode), which connect directly
 - Configurable retry count for failed fetches (HTTP page fetches use Scrapling's default of three attempts)
 - User-defined CSS selectors for content extraction
 - A JSON output option alongside HTML and Markdown
