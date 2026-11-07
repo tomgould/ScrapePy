@@ -1,6 +1,7 @@
 """Multi-page recursive crawl mode (default) with BFS loop."""
 
 import asyncio
+import json
 import itertools
 import os
 import re
@@ -58,6 +59,7 @@ from ..processing.discovery import run_discovery, DiscoveryMap, load_robots_poli
 from ..processing.robots import HostRateLimiter, RobotsPolicy
 from ..processing.targeting import (
     SAMPLE_SIZE, Targeting, is_active as targeting_active, start_paths_seed_only,
+    rel_next_paths as targeting_rel_next,
 )
 from ..convert.recipe import find_recipes
 from ..processing.navigation import extract_navigation
@@ -88,6 +90,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
     stopped_by_limit = False
     # Replace any summary from an earlier run straight away, so a reader never
     # mistakes it for this run's. It is rewritten when the crawl ends.
+    _warn_shared_site_name(config)
     _write_summary_quietly(config, build_summary(config, stats, in_progress=True))
     visited: set[str] = set()
     to_visit: deque[str] = deque()
@@ -257,9 +260,8 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                 to_visit.append(path)
                 targeting.add_start(path)
     elif outline and outline.nav_sections and not hash_based_site:
-        # Always include the homepage
-        parsed = urlparse(config.url)
-        to_visit.append(parsed.path or "/")
+        # Always include the start URL (fetched as given when it has a query)
+        _queue_start(config.url, to_visit, query_starts)
         # Seed from navigation structure (recursively includes sub-sections)
         def _collect_section_paths(sections):
             for section in sections:
@@ -280,12 +282,17 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
     elif hash_based_site:
         to_visit.append(config.url)
     else:
-        parsed = urlparse(config.url)
-        to_visit.append(parsed.path or "/")
+        _queue_start(config.url, to_visit, query_starts)
     if targeting is not None and not seed_only:
         # --exclude or --follow-next alone: the start URL is still always fetched
-        start_path = posixpath.normpath(urlparse(config.url).path or "/")
-        targeting.add_start(start_path if start_path.startswith("/") else "/" + start_path)
+        if config.url in query_starts:
+            targeting.add_start(config.url)
+        else:
+            start_path = posixpath.normpath(urlparse(config.url).path or "/")
+            targeting.add_start(start_path if start_path.startswith("/") else "/" + start_path)
+    if config.follow_next and not config.max_pages and config.max_depth is None:
+        print("  Note: --follow-next without --max-pages or --max-depth follows pagination "
+              "for as long as the site offers another page")
 
     # Concurrency semaphore for page fetching (reuses -c flag)
     page_sem = asyncio.Semaphore(config.concurrent)
@@ -399,6 +406,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                 cache.update_page(
                     entry["url_path"], entry["headers"], entry["html"], links=entry["links"],
                     published_date=entry["pub_date"], page_type=entry["page_type"],
+                    next_links=_rel_next(entry["html"], entry["url_path"], config),
                 )
         meet(url, entry["hash"] if md_written else None)
 
@@ -561,7 +569,9 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                     _meet_unchanged(full_url, names, stats, meet)
                     cached_links = cache.get_page_links(url_path)
                     if cached_links and targeting is not None:
-                        targeting.note_links(cached_links, "", visit_key, url_path)
+                        # rel="next" comes from the cache, as the page is not re-read
+                        targeting.note_links(cached_links, None, visit_key, url_path,
+                                             next_paths=cache.get_page_next(url_path))
                     if cached_links:
                         _queue_links(
                             cached_links, url_path, config, visited, visited_hashes,
@@ -623,7 +633,8 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
             # only: its query cannot reach a file name or the cache
             if discovery_only:
                 links = _extract_links_from_html(html)
-                targeting.note_links(links, html, visit_key, url_path)
+                if targeting is not None:
+                    targeting.note_links(links, html, visit_key, url_path)
                 _queue_links(
                     links, url_path, config, visited, visited_hashes,
                     to_visit, hash_based_site,
@@ -1121,7 +1132,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
     if (targeting is not None or config.only_recipes or config.max_pages
             or config.site_name):
         stats.targeting = {
-            **(targeting.summary() if targeting is not None
+            **(targeting.summary(fetched=visited) if targeting is not None
                else {"skipped_by_include": 0, "skipped_by_exclude": 0, "skipped_by_depth": 0}),
             "skipped_not_recipe": len(not_recipe),
             "not_recipe_sample": not_recipe[:SAMPLE_SIZE],
@@ -1201,6 +1212,39 @@ def _exhaust_section_batch(
             task.cancel()
     remaining.clear()
     return count
+
+
+def _warn_shared_site_name(config: ScrapeConfig) -> None:
+    """--site-name folders are meant for one site: warn when the folder's last
+    run crawled another host, since its files and cache would then be
+    rewritten on every switch."""
+    if not config.site_name:
+        return
+    try:
+        with open(os.path.join(config.output_dir, "run_summary.json"), encoding="utf-8") as f:
+            previous = json.load(f).get("start_url") or ""
+    except (OSError, ValueError, AttributeError):
+        return
+    old_host = urlparse(previous).netloc.lower()
+    if old_host and old_host != config.domain.lower():
+        print(f"  Warning: --site-name {config.site_name} last held a crawl of another host; "
+              "use one --site-name per site, or each run rewrites the other's files")
+
+
+def _queue_start(url: str, to_visit, query_starts: set[str]) -> None:
+    """Queue the start URL. One with a query (a site search) is queued as
+    given and fetched for its links only; otherwise its path is queued."""
+    parsed = urlparse(url)
+    if parsed.query:
+        query_starts.add(url)
+        to_visit.append(url)
+    else:
+        to_visit.append(parsed.path or "/")
+
+
+def _rel_next(html: str, url_path: str, config: ScrapeConfig) -> list[str]:
+    """The page's rel="next" paths, kept in the cache with its links."""
+    return targeting_rel_next(html, url_path, lambda link, path: _normalize_link_to_path(link, path, config))
 
 
 def _parse_visit_item(url_or_path: str, config: ScrapeConfig) -> tuple[str, str, str]:

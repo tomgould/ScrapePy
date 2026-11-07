@@ -84,6 +84,7 @@ class CrawlCache:
         links: list[str] | None = None,
         published_date: str | None = None,
         page_type: str | None = None,
+        next_links: list[str] | None = None,
     ):
         """Store cache entry for a page using response headers + content hash."""
         entry = {
@@ -97,11 +98,18 @@ class CrawlCache:
             entry["published_date"] = published_date
         if page_type:
             entry["page_type"] = page_type
+        if next_links:
+            entry["next"] = list(next_links)
         self._data["pages"][url_path] = entry
 
     def has_page(self, url_path: str) -> bool:
         """True when an earlier run cached this page."""
         return url_path in self._data["pages"]
+
+    def get_page_next(self, url_path: str) -> list[str]:
+        """The page's cached rel="next" paths, or an empty list."""
+        entry = self._data["pages"].get(url_path) or {}
+        return list(entry.get("next", []))
 
     def get_page_links(self, url_path: str) -> list[str]:
         """Return cached links for a page, or empty list."""
