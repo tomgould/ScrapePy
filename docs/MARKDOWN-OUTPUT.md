@@ -1,6 +1,6 @@
 # Markdown output contract
 
-This page describes what a ScrapePy crawl writes, for tools that read it: search indexers, RAG pipelines, archivers. It covers the default crawl and `-j`, with or without `--markdown-only`, single page mode (`-1`, see Single page mode below) and feed mode (see Feeds below). Fields and files not listed here may appear in later versions; anything listed here keeps its meaning until the schema version changes.
+This page describes what a ScrapePy crawl writes, for tools that read it: search indexers, RAG pipelines, archivers. It covers the default crawl and `-j`, with or without `--markdown-only` and `--documents` (see Documents below), single page mode (`-1`, see Single page mode below) and feed mode (see Feeds below). Fields and files not listed here may appear in later versions; anything listed here keeps its meaning until the schema version changes.
 
 ## Folders
 
@@ -14,6 +14,7 @@ OUT/
     .scrapepy_cache.json         incremental cache (internal format), unless --no-incremental
     site_outline.json            navigation and sitemap summary, when any was found
     broken_links.txt             only when some URLs failed
+  files/example_com/             with --documents only: the downloaded documents
 ```
 
 The site folder name is the host with `www.` removed and dots replaced by underscores. With `--stay-in-path` the starting path is appended (`docs_example_com_api_v2`). `--site-name NAME` replaces the whole name, so several runs on one site share one folder; with it, file paths keep the starting path even with `--stay-in-path`, so they are the same whichever run writes them.
@@ -56,19 +57,22 @@ Every file starts with YAML frontmatter between `---` lines, then a blank line, 
 | `url` | string | always | The absolute address requested for the page (after a redirect it is still the address requested, not the target). Use it as the document ID and the citation link; see Known limits for when two addresses share one file |
 | `canonical_url` | string | when the page declares a different canonical on the same site | The page's `<link rel="canonical">`, made absolute. Written only when it differs from `url` and has the same scheme, host (ignoring `www.`) and port |
 | `date` | string | when a publication date was found | ISO 8601, for example `2026-02-20` or `2026-02-20T10:30:00+00:00` |
-| `date_source` | string | with `date` | Where the date came from, most to least reliable: `META_TAG`, `JSON_LD`, `URL_PATTERN`, `TIME_ELEMENT`, `HTTP_HEADER` (the server's Last-Modified). Feed entries use `FEED` |
-| `page_type` | string | always | `article`, `section` or `unknown`; `recipe` for a page with schema.org Recipe data; `feed_entry` for a feed entry |
+| `date_source` | string | with `date` | Where the date came from, most to least reliable: `META_TAG`, `JSON_LD`, `URL_PATTERN`, `TIME_ELEMENT`, `HTTP_HEADER` (the server's Last-Modified). Feed entries use `FEED`; documents use `DOCUMENT_METADATA` (the creation date stored in the file, else its modification date) or `HTTP_HEADER` |
+| `page_type` | string | always | `article`, `section` or `unknown`; `recipe` for a page with schema.org Recipe data; `feed_entry` for a feed entry; `document` for a converted document |
 | `author` | string | feed entries, when the entry or feed names one | The entry's author name |
 | `recipe_category` | string | recipe pages, when stated | The first recipe's `recipeCategory`, several joined with `, ` |
 | `recipe_cuisine` | string | recipe pages, when stated | The first recipe's `recipeCuisine`, several joined with `, ` |
 | `servings` | string | recipe pages, when stated | The first recipe's `recipeYield` as text, always a string (`'4'`, `12 muffins`). When the yield is a list, its first value |
 | `total_time` | string | recipe pages, when stated | The first recipe's `totalTime` in words (`1 hour 30 minutes`); the raw value is in the body |
 | `keywords` | list of strings | recipe pages, when stated | The first recipe's `keywords`, split on commas, duplicates removed |
-| `word_count` | integer | on pages | Words in the body, ignoring Markdown syntax |
+| `word_count` | integer | on pages and documents | Words in the body, ignoring Markdown syntax |
 | `description` | string | when the page has one | Its meta description or `og:description` |
 | `domain` | string | always | Host of the crawled site, with port if any |
 | `articles` | integer | generated `_index.md` only | Number of articles listed |
 | `sub_sections` | integer | generated `_index.md` only, when there are some | Number of sub-sections listed |
+| `file_type` | string | documents only | `pdf`, `docx`, `xlsx` or `csv` |
+| `pages` | integer | PDF and XLSX documents | The PDF's page count (all pages, even past the page cap), or the workbook's sheet count |
+| `linked_from` | string | documents found on a page | The absolute URL of the first page in the run that linked the document; left out for a document given as a start URL |
 | `scraped_at` | string | always | When the file was written, UTC, ISO 8601 to the second |
 | `content_hash` | string | always | `sha256:` plus the hex sha256 of the body (everything after the blank line that follows the closing `---`) |
 
@@ -159,6 +163,22 @@ The rest of the page (introduction, tips, notes), with its headings one level do
 - No duplication, without losing facts: before the page text is converted, a list item or paragraph is removed only when its text equals an ingredient or a step. The comparison is exact, case included, except that runs of whitespace (including non-breaking, thin and zero-width spaces) count as one space, one leading bullet (a bullet sign or a hyphen followed by a space, but not an asterisk or star) is ignored, and so is a full stop or colon ending the item. For steps only, numbering is ignored too: `Step N`, or `N. ` or `N) ` when N is that step's position. So `~200 g sugar`, `1 t sugar`, `*2 eggs`, `* 2 eggs` or `2) eggs` on the page stay when the data says `200 g sugar`, `1 T sugar`, `2 eggs` or `eggs`, and different ways of writing the same amount (`½` and `1/2`, `200g` and `200 g`, an en dash and a hyphen, `2,5` and `2.5`) are left as duplicate lines. Each ingredient or step removes at most one element, the first that matches, and nothing inside a comment section (an element whose id or class mentions comment, respond or reply) is removed. Text that adds anything, such as `(optional)`, `Never ...` or `(160C fan)`, stays, so a fact can appear twice but is never lost. Microdata recipe properties and the JSON-LD are removed too, and so are label headings (`Ingredients`, `Method`, `Instructions`, `Nutrition` and similar) left with nothing under them. Introductions, tips and notes stay. When nothing is left, `## Page text` is not written. Times, servings and nutrition text from a recipe card can still appear in the page text.
 - An ItemList of recipes (a listing page) is not a recipe page and is converted as usual. A JSON-LD block that cannot be read, even after allowing comments, trailing commas and raw line breaks in strings, is skipped and the page is converted as usual. Recipe pages are written even when they have fewer than 50 words. RDFa is not read. A JSON-LD Recipe that describes something other than the page (a related recipe, say) cannot be told apart and is shown as the page's recipe.
 
+## Documents
+
+With `--documents` (a comma list of `pdf`, `docx`, `xlsx`, `csv`), links on the crawl's own site (same scheme, host and port) to those types are downloaded and converted. They pass the same scope, `--include`/`--exclude` (on the path), `--max-depth`, `--max-pages` and robots.txt rules as pages, and a document URL in `--urls-file` is fetched as a document. `.doc` and `.xls` links are recorded as skipped, unfetched, when `docx` or `xlsx` is listed. Without `--documents` none of this happens and nothing below appears.
+
+- Files: the original is saved byte for byte at its URL path under `files/<site>/` (outside `MarkdownSites`, so it is never indexed twice), and the Markdown is written under `MarkdownSites/<site>/` as the URL path plus `.md`: `/reports/2025/annual.pdf` gives `files/<site>/reports/2025/annual.pdf` and `MarkdownSites/<site>/reports/2025/annual.pdf.md`. Percent-escapes stay as written, characters file systems refuse (`<>:"|?*\` and control characters) become `_`, and the file name rule above applies: a document never takes another URL's file (page or document) and gets the hash-suffixed name instead, listed under `renamed`. The site folder name is the same as for `ScrapedSites` and `MarkdownSites`. A write through a symbolic link, or outside these folders, is refused and recorded as failed.
+- Frontmatter: `title` (the title stored in the document, else for DOCX its first Title or heading paragraph, else the decoded file name such as `annual.pdf`), `url`, `canonical_url` (from a `Link: <...>; rel="canonical"` response header, under the same rule as pages), `date` and `date_source` (see Frontmatter), `page_type: document`, `word_count`, `domain`, `file_type`, `pages` (PDF and XLSX), `linked_from`, `scraped_at` and `content_hash`.
+- Body: `# Title`, then:
+  - PDF: the text of each page under `## Page N` (pages with no text are left out), with ligatures spelled out, words hyphenated across a line end joined, and line breaks kept. No OCR: a PDF with no text layer gets no Markdown file (its original is saved) and is listed as skipped with `no text layer`.
+  - DOCX: headings as `##` and deeper (Heading 1 is `##`), paragraphs, bulleted and numbered lists, and tables.
+  - XLSX: one `## <sheet name>` and table per sheet that has data, the first non-empty row as the header. Formulas show the value last saved in the file; nothing is calculated and macros are ignored.
+  - CSV: one table, the first row as the header. The delimiter (comma, semicolon, tab or `|`) is detected; text is read as UTF-8, UTF-16 with a byte order mark, or else Windows-1252.
+  - Tables are GitHub-style, with `|` in a cell escaped and line breaks in a cell turned into spaces. Empty rows are dropped.
+  - Caps, each ending the text with an italic note when reached: 2,000 data rows and 50 columns per table (`_Rows after the first 2,000 are not shown._`), 2,000 PDF pages, and 2,000,000 characters per document. Control characters are removed, and a line of document text that starts with `#` or `>` is escaped so it never becomes a heading or a quote.
+- Failures: an encrypted file (unless it opens with an empty password), a corrupt file, a file whose content does not match its type (an HTML login page served at a `.pdf` address, say), a file larger than `--max-document-mb` (25 MB by default), a DOCX or XLSX file that would unpack to more than 256 MB, a conversion running longer than 120 seconds, an HTTP error, or a redirect to another site or to a path robots.txt disallows. Each is listed with its reason; none stops the crawl.
+- Incremental runs: the cache keeps each document's ETag, Last-Modified and sha256. A document answered 304, or downloaded with the same sha256, is listed in `unchanged_urls` and its files are left alone. A changed document is converted again and listed in `changed_markdown`.
+
 ## Feeds
 
 When the start URL is an RSS 2.0 or Atom feed, ScrapePy reads it as content instead of crawling. A URL is treated as a feed when its path ends in `/feed`, `/rss`, `/atom`, `/feeds`, `rss.xml`, `atom.xml`, `feed.xml`, `index.xml`, `.rss` or `.atom`, or its query says `feed=rss2`, `format=atom` and similar; `--feed` forces it for any URL. A detected URL whose response is not a feed is crawled as a site; with `--feed` it is recorded as a failure instead.
@@ -183,6 +203,7 @@ When the start URL is an RSS 2.0 or Atom feed, ScrapePy reads it as content inst
 - Crawled paths are requested without a trailing slash, so a server that answers only `/docs/` must redirect `/docs` to it.
 - In recipe pages, the same amount written two ways (`200g` and `200 g`, `½` and `1/2`) leaves a duplicate line in `## Page text` (see Recipe pages).
 - `-j` returns the page once the browser has loaded it and Scrapling's Cloudflare check has finished (a few seconds), so JavaScript-rendered content that appears later can be missed. The page is not scrolled, links are found in the HTML by regular expression, and `--wait` does not lengthen the wait: it is only the gap between page requests.
+- With `--documents`, documents on another host than the crawl's (a CDN, a file-sharing host) are not fetched. A document is written under the address requested, like a page that redirects.
 - `-j`'s argument parsing and settings are covered by the automated tests. Its crawl is covered only by an opt-in test (`SCRAPEPY_BROWSER_TESTS=1`, which starts a browser) that checks it goes through `--proxy`; `-j` with `--stay-in-path` is not tested.
 
 ## Generated `_index.md` listing pages
@@ -213,9 +234,22 @@ Written to `ScrapedSites/<site>/run_summary.json` at the start of a crawl or a `
 | `interrupted`, `interrupted_by` | boolean, string or null | Whether the run stopped early, and the signal (`SIGINT` or `SIGTERM`) |
 | `exit_code` | integer or null | The process exit code; null while running |
 | `feed` | object | Feed mode only (below) |
+| `documents` | object | With `--documents` only (below) |
 | `targeting` | object | Only when `--include`, `--exclude`, `--max-depth`, `--max-pages`, `--urls-file`, `--only-recipes`, `--site-name` or `--follow-next` is given (below) |
 
-`options` lists those options only when they are set. `targeting` holds:
+`options` lists those options only when they are set; with `--documents` it also holds `documents` (the list of types) and `max_document_mb`. Document requests are counted in `counts.fetched`, documents converted in `new_markdown` or `changed_markdown` (and `counts.new` or `counts.changed`), unchanged documents in `unchanged_urls`, and failed documents in `failed`, as for pages. `documents` holds:
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `types` | list of strings | The types given to `--documents` |
+| `files_dir` | string | Where the originals are saved, relative to `output_dir` (`files/<site>`) |
+| `found` | integer | Distinct document URLs the crawl reached after its scope and targeting rules, including those robots.txt blocked |
+| `fetched` | integer | Document requests that completed (a redirect followed counts once) |
+| `converted`, `unchanged` | integer | Documents whose Markdown was written, and documents found unchanged |
+| `skipped` | list of `{url, reason}` | Documents not converted that are not failures: `old binary format (.doc), not converted` (or `.xls`), `blocked by robots.txt`, `no text layer` (a PDF), `no text` (a DOCX) or `no data` (an XLSX or CSV with no cells) |
+| `failed` | list of `{url, reason}` | Documents that could not be fetched, saved or converted (see Documents), also listed in the top-level `failed` |
+
+`targeting` holds:
 
 | Key | Type | Meaning |
 |-----|------|---------|

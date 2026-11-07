@@ -15,7 +15,8 @@ import os
 
 import yaml
 
-KINDS = ("md", "html")
+# "file" is a document's downloaded original (--documents)
+KINDS = ("md", "html", "file")
 
 
 def url_suffix(url: str, length: int = 8) -> str:
@@ -72,9 +73,10 @@ def suffixed_path(path: str, url: str, length: int = 8) -> str:
 
 
 class FileNames:
-    """URL -> assigned files. Each assignment is a dict with "md" and "html"
-    (assigned paths), "natural_md" and "natural_html" (the paths the page
-    would have had), and "hash" (the body hash of the Markdown written)."""
+    """URL -> assigned files. Each assignment is a dict with "md", "html"
+    and, for a document, "file" (assigned paths), "natural_md",
+    "natural_html" and "natural_file" (the paths it would have had), and
+    "hash" (the body hash of the Markdown written for a page)."""
 
     def __init__(self, stored: dict[str, dict] | None = None):
         self.by_url: dict[str, dict] = {u: dict(a) for u, a in (stored or {}).items()}

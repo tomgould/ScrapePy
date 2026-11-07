@@ -3,7 +3,7 @@
 import os
 
 from .config import ScrapeConfig
-from .output.run_summary import EXIT_NOTHING_FETCHED, EXIT_OK
+from .output.run_summary import EXIT_BAD_ARGS, EXIT_NOTHING_FETCHED, EXIT_OK
 from .output.writer import create_output_dirs
 from .processing.robots import RobotsPolicy
 
@@ -41,6 +41,12 @@ async def run_scraper(config: ScrapeConfig) -> int:
             if summary is not None:
                 return summary["exit_code"]
             print("Not an RSS or Atom feed; crawling it as a site.\n")
+        if config.documents:
+            from .processing.documents import missing_libraries
+            problem = missing_libraries(config.documents)
+            if problem:
+                print(problem)
+                return EXIT_BAD_ARGS
         create_output_dirs(config)
         from .modes.crawl import run_crawl_mode
         summary = await run_crawl_mode(config)

@@ -64,6 +64,20 @@ def derive_output_dirs(output_root: str, site_dir_name: str) -> tuple[str, str]:
     )
 
 
+FILES_ROOT_NAME = "files"
+
+
+def derive_files_dir(output_root: str, site_dir_name: str) -> str:
+    """The folder for a site's downloaded documents (--documents), beside
+    ScrapedSites and MarkdownSites so a Markdown indexer never reads them."""
+    return os.path.join(output_root or ".", FILES_ROOT_NAME, site_dir_name)
+
+
+DOCUMENT_TYPES = ("pdf", "docx", "xlsx", "csv")
+DEFAULT_MAX_DOCUMENT_MB = 25
+MAX_DOCUMENT_MB_LIMIT = 200
+
+
 _RE_SITE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
 
 
@@ -120,6 +134,10 @@ class ScrapeConfig:
     only_recipes: bool = False
     site_name: str | None = None
     follow_next: bool = False
+    # Documents (off by default): linked files of these types are downloaded
+    # and converted to Markdown
+    documents: list[str] = field(default_factory=list)
+    max_document_mb: int = DEFAULT_MAX_DOCUMENT_MB
 
     # Derived fields (set in __post_init__)
     cutoff_date: datetime | None = field(init=False, default=None)
@@ -129,6 +147,7 @@ class ScrapeConfig:
     starting_hash: str = field(init=False, default="")
     output_dir: str = field(init=False, default="")
     markdown_dir: str = field(init=False, default="")
+    files_dir: str = field(init=False, default="")
     output_dir_name: str = field(init=False, default="")
 
     def __post_init__(self):
@@ -189,6 +208,7 @@ class ScrapeConfig:
             self.proxy = validate_proxy(self.proxy)
         self.output_root = os.path.abspath(os.path.expanduser(self.output_root or "."))
         self.output_dir, self.markdown_dir = derive_output_dirs(self.output_root, dir_name)
+        self.files_dir = derive_files_dir(self.output_root, dir_name)
 
     @property
     def wait_time(self) -> float:

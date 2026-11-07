@@ -285,6 +285,7 @@ FRONTMATTER_FIELDS = (
     "author", "recipe_category", "recipe_cuisine", "servings", "total_time", "keywords",
     "word_count", "description", "domain",
     "articles", "sub_sections",
+    "file_type", "pages", "linked_from",
     "scraped_at", "content_hash",
 )
 

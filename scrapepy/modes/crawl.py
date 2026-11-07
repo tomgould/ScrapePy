@@ -71,6 +71,7 @@ from ..output.writer import url_to_filepath, write_file
 from ..output.broken_links import BrokenLinkTracker
 from ..output.cache import CrawlCache
 from ..output.run_summary import RunStats, build_summary, write_summary
+from ..processing.documents import DocumentCollector, document_type
 
 # Discovery (sitemaps, feeds) spaces its requests at least this far apart,
 # or by robots.txt Crawl-delay when that is longer.
@@ -278,7 +279,7 @@ async def run_crawl_mode(
         # (a site search) is fetched as given, for its links only.
         for start in (config.start_urls or [config.url]):
             parsed = urlparse(start)
-            if parsed.query:
+            if parsed.query and not document_type(parsed.path, config):
                 query_starts.add(start)
                 to_visit.append(start)
                 targeting.add_start(start)
@@ -357,6 +358,14 @@ async def run_crawl_mode(
         if _a.get("hash") and _a.get("md"):
             earlier_hashes.setdefault(_a["hash"], (_a["md"], _url))
     deferred: dict[str, list[dict]] = {}           # owner URL -> pages with its earlier body
+
+    # --documents: linked documents go through the queue like pages and are
+    # then fetched, saved and converted by the collector (None otherwise)
+    documents = None
+    if config.documents:
+        documents = DocumentCollector(config, robots=robots, limiter=limiter, cache=cache,
+                                      names=names, stats=stats)
+        await documents.open()
 
     def meet(url: str, body_hash: str | None) -> None:
         """url was written or found unchanged: its file is final for this run,
@@ -503,6 +512,7 @@ async def run_crawl_mode(
             continue
         if hash_fragment and hash_fragment in visited_hashes:
             continue
+        doc_kind = documents.kind(url_path) if documents else None
 
         if targeting is not None and not discovery_only:
             if targeting.is_start(visit_key):
@@ -523,6 +533,8 @@ async def run_crawl_mode(
             if full_url not in stats.blocked_by_robots and config.verbose:
                 print(f"  Skipped (robots.txt): {full_url}")
             stats.record_blocked(full_url)
+            if doc_kind:
+                documents.record_blocked(full_url)
             continue
 
         # Pre-crawl date filter: skip URLs known to be old before fetching.
@@ -530,7 +542,7 @@ async def run_crawl_mode(
         # so they can create article batches).
         # Exception: section batch articles respect --min-articles per section.
         is_seed = url_path in ("/", "/index.html", "/index.htm")
-        if config.has_date_filter and not hash_fragment and not is_seed:
+        if config.has_date_filter and not hash_fragment and not is_seed and not doc_kind:
             # Only pre-filter URLs that look like articles (slug-like paths).
             # Section/navigation paths must always be fetched so they can
             # discover and queue their article links.
@@ -574,6 +586,10 @@ async def run_crawl_mode(
             visited_hashes.add(hash_fragment)
 
         try:
+            if doc_kind:
+                await documents.handle(url_path, full_url, doc_kind)
+                continue
+
             print(f"Fetching page: {fetch_url or full_url}")
 
             # Check prefetch buffer first (concurrent fetching)
@@ -620,7 +636,7 @@ async def run_crawl_mode(
                             cached_links, url_path, config, visited, visited_hashes,
                             to_visit, hash_based_site,
                             discovery_map=discovery_map,
-                            cutoff=config.cutoff_date,
+                            cutoff=config.cutoff_date, documents=documents,
                         )
                     continue
 
@@ -694,7 +710,7 @@ async def run_crawl_mode(
                 _queue_links(
                     links, url_path, config, visited, visited_hashes,
                     to_visit, hash_based_site,
-                    discovery_map=discovery_map, cutoff=config.cutoff_date,
+                    discovery_map=discovery_map, cutoff=config.cutoff_date, documents=documents,
                 )
                 continue
 
@@ -713,7 +729,7 @@ async def run_crawl_mode(
                     links, url_path, config, visited, visited_hashes,
                     to_visit, hash_based_site,
                     discovery_map=discovery_map,
-                    cutoff=config.cutoff_date,
+                    cutoff=config.cutoff_date, documents=documents,
                 )
                 continue
 
@@ -866,7 +882,7 @@ async def run_crawl_mode(
                     _queue_links(
                         links, url_path, config, visited, visited_hashes,
                         to_visit, hash_based_site,
-                        discovery_map=discovery_map, cutoff=config.cutoff_date,
+                        discovery_map=discovery_map, cutoff=config.cutoff_date, documents=documents,
                     )
                 continue
 
@@ -1011,7 +1027,7 @@ async def run_crawl_mode(
                     links, url_path, config, visited, visited_hashes,
                     to_visit, hash_based_site,
                     discovery_map=discovery_map,
-                    cutoff=config.cutoff_date,
+                    cutoff=config.cutoff_date, documents=documents,
                 )
 
             # Kick off prefetches for upcoming URLs (none with --max-pages,
@@ -1034,7 +1050,7 @@ async def run_crawl_mode(
                 # Regular queue: prefetch upcoming items for parallelism
                 if config.has_date_filter and to_visit:
                     for p in itertools.islice(to_visit, config.concurrent):
-                        if p.startswith(("http://", "https://", "#")):
+                        if p.startswith(("http://", "https://", "#")) or document_type(p, config):
                             continue
                         if (p not in prefetch_tasks and p not in visited
                                 and robots.can_fetch(p)):
@@ -1138,16 +1154,19 @@ async def run_crawl_mode(
         _save_assignments(cache, names)
         cache.save()
 
-    # Close persistent HTTP client
+    # Close persistent HTTP clients
     try:
         if asset_client is not None:
             await asset_client.aclose()
+        if documents is not None:
+            await documents.close()
     except asyncio.CancelledError:
         _note_interrupt(stats)
 
     # Summary
     print("\n--- Scraping Interrupted ---" if stats.interrupted else "\n--- Scraping Complete ---")
-    saved_count = len(visited) - broken_links.count - unchanged_count - articles_skipped_old
+    saved_count = (len(visited) - broken_links.count - unchanged_count - articles_skipped_old
+                   - (documents.handled if documents else 0))
     print(f"Pages saved: {saved_count}")
     if unchanged_count > 0:
         print(f"Pages unchanged (skipped): {unchanged_count}")
@@ -1174,6 +1193,12 @@ async def run_crawl_mode(
         if config.min_articles and section_article_counts:
             min_kept = sum(min(v, config.min_articles) for v in section_article_counts.values())
             print(f"Min-articles kept (old): {min_kept} across {len(section_article_counts)} sections")
+
+    if documents:
+        stats.documents = documents.summary()
+        print(f"Documents: {documents.converted} converted, {documents.unchanged} unchanged, "
+              f"{len(documents.skipped)} skipped, {len(documents.failed)} failed "
+              f"(originals in {config.files_dir})")
 
     if broken_links.count > 0:
         print(f"Skipped (error pages): {broken_links.count}")
@@ -1512,7 +1537,7 @@ def _normalize_link_to_path(
     clean = link.split("?")[0].split("#")[0]
     if not clean:
         return None
-    if SKIP_EXTENSIONS.search(clean):
+    if SKIP_EXTENSIONS.search(clean) and not document_type(clean, config):
         return None
 
     if clean.startswith(config.base_url):
@@ -1592,7 +1617,7 @@ def _split_section_links(
         if not is_in_scope(path, config):
             continue
 
-        if has_article_slug(path):
+        if has_article_slug(path) and not document_type(path, config):
             article_paths.append(path)
         else:
             other_links.append(link)
@@ -1610,8 +1635,11 @@ def _queue_links(
     hash_based_site: bool,
     discovery_map: DiscoveryMap | None = None,
     cutoff: datetime | None = None,
+    documents: DocumentCollector | None = None,
 ):
-    """Process extracted links and add valid ones to the crawl queue."""
+    """Process extracted links and add valid ones to the crawl queue. With
+    --documents, links to listed document types are queued too, and the
+    collector notes the page that linked each one."""
     for link in links:
         if not link:
             continue
@@ -1641,8 +1669,9 @@ def _queue_links(
         if not (hash_based_site and "#" in clean):
             clean = clean.split("#")[0]
 
-        # Skip non-HTML files
-        if SKIP_EXTENSIONS.search(clean):
+        # Skip non-HTML files (documents of a listed type are queued)
+        is_document = documents is not None and documents.kind(clean) is not None
+        if SKIP_EXTENSIONS.search(clean) and not is_document:
             continue
 
         # Convert to path
@@ -1677,6 +1706,8 @@ def _queue_links(
                     continue
                 if url_has_old_date(clean, cutoff):
                     continue
+            if is_document:
+                documents.note_link(clean, config.base_url + current_path)
             to_visit.append(clean)
 
 

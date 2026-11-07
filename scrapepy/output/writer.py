@@ -8,6 +8,35 @@ from pathlib import Path
 from ..config import ScrapeConfig
 
 
+class UnsafePathError(ValueError):
+    """A write that would leave its folder or go through a symbolic link."""
+
+
+def write_within(path: str, data: bytes | str, root: str) -> None:
+    """Write data (bytes, or text as UTF-8) to path, which must be inside
+    root. A symbolic link at path or at any folder between root and path is
+    refused, so a write can never land outside root."""
+    root = os.path.abspath(root)
+    path = os.path.abspath(path)
+    if path == root or os.path.commonpath([root, path]) != root:
+        raise UnsafePathError("refused: path outside the output folder")
+    current = root
+    for part in os.path.relpath(path, root).split(os.sep):
+        current = os.path.join(current, part)
+        if os.path.islink(current):
+            raise UnsafePathError(
+                f"refused: symbolic link in the output path ({os.path.relpath(current, root)})")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags, 0o644)
+    if isinstance(data, bytes):
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+    else:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(data)
+
+
 def create_output_dirs(config: ScrapeConfig):
     """Create the base output directory structure.
 
