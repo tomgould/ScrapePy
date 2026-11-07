@@ -186,6 +186,12 @@ async def run_feed_mode(config: ScrapeConfig, explicit: bool = True) -> dict | N
                     print(f"  Failed: {UNREADABLE_ENTRIES}")
                 else:
                     _write_entries(config, feed, stats, info)
+                    if feed.entries and not (info["entries_written"] or info["entries_unchanged"]):
+                        reasons = sorted({s["reason"] for s in info["entries_skipped"]})
+                        info["error"] = ("no entry could be written ("
+                                         + (", ".join(reasons) or "unknown") + ")")
+                        stats.record_failed(url, info["error"])
+                        print(f"  Failed: {info['error']}")
     except asyncio.CancelledError:
         _note_interrupt(stats)
 

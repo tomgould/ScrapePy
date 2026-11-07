@@ -152,7 +152,7 @@ When the start URL is an RSS 2.0 or Atom feed, ScrapePy reads it as content inst
 
 - robots.txt is checked for the feed URL, and the feed is fetched once, after the usual pacing gap. Entry links are not followed and nothing else is downloaded.
 - Each entry, in feed order, up to `--max-articles` entries (50 when not given), becomes one Markdown file named from its link like a crawled page. A query string in the link is kept in the name (`/?p=101` is `index-p-101.md`), an entry on another host goes under a folder named after that host (`feeds_example/...`), and when two entries would get the same name, both get a suffix from a short hash of their link (`post-1a2b3c4d.md`), so names do not change when the feed's order does.
-- Frontmatter: `title`, `url` (the entry link, made absolute against `xml:base` or the feed URL), `date` (RSS `pubDate` or `dc:date`, Atom `published` else `updated`, as ISO 8601 no more precise than published: a date stays `2026-10-03`, a time keeps its offset, and a time without one stays without one) with `date_source: FEED`, `page_type: feed_entry`, `author` when present, `word_count`, `domain` (the feed's host), `scraped_at` and `content_hash`. A date that cannot be read is left out.
+- Frontmatter: `title`, `url` (the entry link, made absolute against `xml:base` or the feed URL), `date` (RSS `pubDate` or `dc:date`, Atom `published` else `updated`, as ISO 8601 no more precise than published: a date stays a date, whether written `2026-10-03`, `20261003` or `Sat, 03 Oct 2026`, a time keeps its offset, and a time without one stays without one) with `date_source: FEED`, `page_type: feed_entry`, `author` when present, `word_count`, `domain` (the feed's host), `scraped_at` and `content_hash`. A date that cannot be read is left out.
 - A DOCTYPE in the feed, with any entity declarations, is removed before parsing: entities are never expanded, no DTD or other URL is fetched and no local file is read. Entities the feed then uses are shown as written (`&a;`). A feed that has entries none of which can be read is recorded as failed, with `feed.error` set, and the run exits 1.
 - Body: `# Title`, the date line, then the entry's HTML converted to Markdown: RSS `content:encoded`, else `description`; Atom `content` (`html`, `xhtml` or `text`), else `summary`. Links and images are absolute.
 - An entry with no link (no `link`, no permalink `guid`, no `http` Atom `id`) and a second entry with the same link are not written; both are listed in `run_summary.json`. An entry whose file already holds the same body is left alone and counted as unchanged.
@@ -201,7 +201,7 @@ In feed mode `counts.fetched` is 1 (the feed), `new_markdown` and `changed_markd
 | `entries_written`, `entries_unchanged` | integer | Entry files written, and entries whose file already held the same body |
 | `entries_over_cap` | integer | Entries after the first `--max-articles` (default 50), not written |
 | `entries_skipped` | list of `{title, url?, reason}` | Entries not written: `no link` or `duplicate link` |
-| `error` | string | Only when the feed has entries but none could be read |
+| `error` | string | Only when the feed has entries but none could be read, or none could be written (`no entry could be written (no link)`); the run then exits 1 |
 | `teaser_entries`, `teaser_urls` | integer, list of strings | Entries whose body looks like an excerpt only: no body, fewer than 100 words, or ending in an ellipsis or "Read more". Crawl these links yourself if you need the full text |
 
 ## Exit codes

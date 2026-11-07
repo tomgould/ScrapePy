@@ -186,9 +186,18 @@ def _date(text: str) -> str:
     text = (text or "").strip()
     if not text:
         return ""
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+    # Date only: 2026-11-03, 20261103, "Tue, 03 Nov 2026", "3 Nov 2026"
+    if re.fullmatch(r"\d{4}-?\d{2}-?\d{2}", text):
+        digits = text.replace("-", "")
         try:
-            return date.fromisoformat(text).isoformat()
+            return date(int(digits[:4]), int(digits[4:6]), int(digits[6:])).isoformat()
+        except ValueError:
+            return ""
+    m = re.fullmatch(r"(?:[A-Za-z]{3,9},?\s+)?(\d{1,2})\s+([A-Za-z]{3})[a-z]*\.?\s+(\d{4})", text)
+    if m:
+        try:
+            return datetime.strptime(f"{m.group(1)} {m.group(2).title()} {m.group(3)}",
+                                     "%d %b %Y").date().isoformat()
         except ValueError:
             return ""
     try:
