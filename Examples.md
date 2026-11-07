@@ -8,7 +8,7 @@
 python main.py https://www.example.com
 ```
 
-Crawls all pages on `example.com`, downloads images and all assets (CSS, JS, fonts), rewrites URLs for offline viewing, and converts to Markdown. Phase 0 reconnaissance runs automatically: fetches robots.txt, sitemaps, RSS feeds, parses homepage navigation (including mega-menus and dropdown panels), builds `site_outline.json`, and seeds the queue from navigation structure. Incremental caching is on by default. Output:
+Crawls all pages on `example.com`, downloads images and all assets (CSS, JS, fonts), rewrites URLs for offline viewing, and converts to Markdown. Reconnaissance runs first: fetches robots.txt, sitemaps, RSS feeds, parses homepage navigation (including mega-menus and dropdown panels), builds `site_outline.json`, and seeds the queue from navigation structure. Incremental caching is on by default. Output:
 
 ```
 ScrapedSites/example_com/
@@ -16,6 +16,7 @@ ScrapedSites/example_com/
   about.html
   contact.html
   site_outline.json       (navigation structure + sitemap stats)
+  run_summary.json        (what this run did)
   .scrapepy_cache.json    (incremental cache)
   images/
     logo.png
@@ -32,14 +33,30 @@ Markdown files are generated alongside (default on):
 
 ```
 MarkdownSites/example_com/
-  index.md
+  _index.md        (the homepage, usually classified as a section)
   about.md
   contact.md
   images/          (copied from ScrapedSites)
   media/           (copied from ScrapedSites)
 ```
 
-Crawl mode converts pages inline as they're saved (not in a separate pass). The HTML-to-Markdown converter uses a multi-strategy extraction chain: API docs, Swagger UI, RoboHelp, standard CMS (10 CSS selectors), trafilatura fallback, generic fallback.
+Crawl mode converts pages as they are saved (not in a separate pass). The converter tries its extractors in order: API docs, Swagger UI, RoboHelp, standard CMS containers, trafilatura, then a generic fallback.
+
+### Markdown only, for a search index
+
+```bash
+python main.py https://www.example.com --markdown-only --no-index-pages -o /data/crawls
+```
+
+Writes only the Markdown and the run state: no HTML copy, no images or assets, and links stay absolute URLs. The output contract is in [docs/MARKDOWN-OUTPUT.md](docs/MARKDOWN-OUTPUT.md).
+
+### A feed
+
+```bash
+python main.py https://blog.example.com/feed/ --max-articles 20
+```
+
+Reads an RSS or Atom feed with one request and writes one Markdown file per entry (see Feeds in [README.md](README.md)). Recipe pages need no flag: see Recipes in [README.md](README.md).
 
 ### Crawl without Markdown
 
@@ -90,15 +107,15 @@ Crawls any URL that _contains_ `/api/v2/` anywhere in the path (not just URLs th
 python main.py https://spa-site.com -j
 ```
 
-Uses a stealth browser (Patchright) for each page. Waits for network idle, scrolls to trigger lazy loading, then captures the rendered HTML. Links are extracted via browser `page.evaluate()` which can find data attributes, onclick handlers, and hash patterns that regex misses.
+Fetches each page with a stealth browser (Patchright), waits for the network to go quiet plus one second, and captures the rendered HTML. Links are then extracted from that HTML the same way as in the default crawl.
 
-### Custom wait time
+### Slower request pacing
 
 ```bash
 python main.py https://slow-spa.com -j --wait 10
 ```
 
-Waits 10 seconds per page instead of the default 5 seconds. Useful for sites with heavy client-side rendering. The wait parameter is passed to `StealthyFetcher.async_fetch(wait=int(value))`.
+Starts page requests at least 10 seconds apart instead of the default 5 in browser modes. In `-j` the per-page render wait stays at one second.
 
 ## Single Page Applications
 
@@ -236,7 +253,7 @@ Scoped incremental crawl that only re-downloads changed pages within `/api/v2/`.
 
 ## Site Reconnaissance and Outline
 
-Every crawl automatically runs a Phase 0 reconnaissance that parses the homepage navigation, fetches sitemaps, and builds a `site_outline.json`.
+Every crawl starts with reconnaissance that parses the homepage navigation, fetches sitemaps, and builds a `site_outline.json`.
 
 ### View the site outline
 
@@ -439,7 +456,7 @@ When date filtering is active and section pages are encountered, the crawl uses 
 python main.py https://news-site.com/ --recent 1w -v
 ```
 
-The default concurrency is 10 connections.
+The default concurrency is 4 connections.
 
 ## Audit Mode
 
@@ -509,7 +526,7 @@ The HTML fixtures (`pages/`, `meta/`) are gitignored since they contain real sit
 python main.py https://www.instagram.com/natgeo/ --instagram --ig-max-posts 3
 ```
 
-Launches a stealth browser, scrolls the profile grid (1.5s intervals, 3 stability checks), extracts post links, then visits each post page to collect structured data and download media. Rate limited: 2-5s deterministic jitter per post (MD5 hash of shortcode), 0.5s between media files.
+Launches a stealth browser, scrolls the profile grid (1.5s intervals, 3 stability checks), extracts post links, then visits each post page to collect structured data and download media. Rate limited: a pause of 2 to 5 seconds per post, derived from a hash of the post URL, and 0.5s between media files.
 
 ```
 ScrapedSites/instagram/natgeo/
@@ -611,7 +628,7 @@ Scrolls the full profile grid (may take a while for accounts with thousands of p
 python main.py https://example.com --proxy http://user:pass@proxy:8080
 ```
 
-Routes all requests through the specified proxy. Works with both HTTP fetcher (`Fetcher.get()`), browser modes (`StealthyFetcher.async_fetch()`), and asset downloads (`httpx.AsyncClient`).
+Routes browser-mode requests (`StealthyFetcher.async_fetch()`) and asset downloads (`httpx.AsyncClient`) through the proxy. HTTP page requests (`Fetcher.get()`: the default crawl, reconnaissance, robots.txt and feed mode) do not use it.
 
 ### Headless browser
 
@@ -627,7 +644,7 @@ Runs the browser without a visible window. Default is visible (useful for debugg
 python main.py https://example.com -c 20
 ```
 
-Downloads up to 20 assets simultaneously (default is 10). The `-c` flag controls both asset download concurrency and page prefetching concurrency. Assets are on by default.
+Downloads up to 20 assets simultaneously (default is 4). The `-c` flag controls both asset download concurrency and page prefetching concurrency. Assets are on by default.
 
 ## Combined Flags
 
@@ -645,7 +662,7 @@ Scoped to `/api/`, docs mode. Assets, Markdown, and incremental are all on by de
 python main.py https://app.example.com -j --wait 8
 ```
 
-JS rendering, 8-second wait per page. Assets, Markdown, and incremental are all on by default.
+JS rendering with page requests at least 8 seconds apart. Assets, Markdown, and incremental are all on by default.
 
 ### News site monitoring
 
@@ -657,7 +674,7 @@ Daily crawl, last 24 hours only, max 10 articles per section, verbose logging. I
 
 ## Output Structure
 
-All examples produce output in `ScrapedSites/`:
+The web crawl examples produce output in `ScrapedSites/` (with `--markdown-only` it holds only the run state):
 
 ```
 ScrapedSites/<domain>/
@@ -666,6 +683,7 @@ ScrapedSites/<domain>/
   ├── sub/path/page.html      # Nested paths preserved
   ├── slug-12345-1.html       # Numeric segments flattened into filename
   ├── site_outline.json       # Navigation structure + sitemap stats
+  ├── run_summary.json        # What the run did
   ├── .scrapepy_cache.json    # Incremental cache (on by default)
   ├── images/                 # Always downloaded
   │   ├── logo.png
@@ -681,7 +699,7 @@ Markdown output goes to `MarkdownSites/` (on by default, use `--no-markdown` to 
 
 ```
 MarkdownSites/<domain>/
-  ├── index.md
+  ├── _index.md
   ├── page-name.md
   ├── sub/path/page.md
   ├── images/              (copied from ScrapedSites)
@@ -692,17 +710,17 @@ When date filtering produces section batches, articles are organized under their
 
 ```
 MarkdownSites/<domain>/
-  ├── index.md
+  ├── _index.md
   ├── sport/
-  │   ├── index.md          (section index with article listings + thumbnails)
+  │   ├── _index.md         (section index with article listings + thumbnails)
   │   ├── images/           (images referenced by section articles)
   │   ├── my-article.md
   │   └── football/
-  │       ├── index.md      (sub-section index)
+  │       ├── _index.md     (sub-section index)
   │       ├── images/
   │       └── article-two.md
   └── news/
-      ├── index.md
+      ├── _index.md
       ├── images/
       └── some-article.md
 ```
@@ -725,7 +743,7 @@ config = ScrapeConfig(
     headless=True,
 )
 
-asyncio.run(run_scraper(config))
+exit_code = asyncio.run(run_scraper(config))
 ```
 
 ### Using individual components
@@ -777,7 +795,7 @@ from scrapepy.processing.dates import get_best_date, extract_date_from_url
 
 # Quick check URL for date
 result = extract_date_from_url("/2026/02/25/article-slug")
-print(result.date, result.source)  # 2026-02-25 URL_PATTERN
+print(result.date, result.source.name)  # 2026-02-25 00:00:00+00:00 URL_PATTERN
 
 # Full multi-signal date extraction
 result = get_best_date("/path", html_content, response_headers)
