@@ -51,7 +51,7 @@ convert/      to_markdown, html_prep, recipe, openapi_to_markdown,
 
 Ctrl+C or SIGTERM cancels the main task; the loop catches the cancellation, saves the cache and writes the summary with status `interrupted` (exit 130 or 143).
 
-`-j` uses the same loop with `StealthyFetcher` for each page (network idle, a wait of one second, no scrolling) and the same regular-expression link extraction.
+`-j` uses the same loop with `StealthyFetcher` for each page and the same regular-expression link extraction. The browser returns the HTML once the page has loaded and Scrapling's Cloudflare check has finished; `_fetch_with_browser()` passes no page object back, so `wait_for_js_content()` and `extract_links_browser()` are not called and the page is not scrolled.
 
 ## Feed mode (`modes/feed.py`)
 
@@ -59,7 +59,7 @@ robots.txt is checked for the feed URL, the feed is fetched once after the pacin
 
 ## Browser modes (`-1`, `--swagger`, `-d`)
 
-Each mode passes a `page_action` callback to `StealthyFetcher.async_fetch()` (`network_idle=True`, `solve_cloudflare=True`, `timeout=120000`, `wait=int(...)`). `-1` scrolls the page and saves `index.html`. `--swagger` expands the operation blocks, looks for the spec URL and saves it as `openapi-spec.json` or `.yaml`. `-d` follows the sidebar links, checks each against robots.txt, and saves each page plus `combined.html`. Markdown conversion then runs over the saved HTML (`HTMLToMarkdown.convert_all()`), or `convert_openapi_file()` when a spec was saved.
+Each mode passes a `page_action` callback to `StealthyFetcher.async_fetch()` (`network_idle=True`, `solve_cloudflare=True`, `timeout=120000`, and `wait=int(--wait)`, which Scrapling reads as milliseconds); the `-1`, `--swagger` and `-d` callbacks then sleep `--wait` seconds themselves. `-1` scrolls the page and saves `index.html`. `--swagger` expands the operation blocks, looks for the spec URL and saves it as `openapi-spec.json` or `.yaml`. `-d` follows the sidebar links, checks each against robots.txt, and saves each page plus `combined.html`. Markdown conversion then runs over the saved HTML (`HTMLToMarkdown.convert_all()`), or `convert_openapi_file()` when a spec was saved.
 
 ## Instagram mode (`modes/instagram.py`)
 

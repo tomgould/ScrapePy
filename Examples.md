@@ -107,7 +107,7 @@ Crawls any URL that _contains_ `/api/v2/` anywhere in the path (not just URLs th
 python main.py https://spa-site.com -j
 ```
 
-Fetches each page with a stealth browser (Patchright), waits for the network to go quiet plus one second, and captures the rendered HTML. Links are then extracted from that HTML the same way as in the default crawl.
+Fetches each page with a stealth browser (Patchright), which returns the HTML once the page has loaded and Scrapling's Cloudflare check has finished (a few seconds), without scrolling. Links are then extracted from that HTML the same way as in the default crawl.
 
 ### Slower request pacing
 
@@ -115,7 +115,7 @@ Fetches each page with a stealth browser (Patchright), waits for the network to 
 python main.py https://slow-spa.com -j --wait 10
 ```
 
-Starts page requests at least 10 seconds apart instead of the default 5 in browser modes. In `-j` the per-page render wait stays at one second.
+Starts page requests at least 10 seconds apart instead of the default 5 in browser modes. It does not give each page longer to render.
 
 ## Single Page Applications
 
