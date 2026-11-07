@@ -96,7 +96,7 @@ python main.py <url> [options]
 | `--index-pages` / `--no-index-pages` | Write the generated `_index.md` section listing pages (default: on) |
 | `--feed` | Read the URL as an RSS or Atom feed: one Markdown file per entry from one request. Automatic for URLs such as `/feed` or `/rss.xml`. `--max-articles` caps the entries (default 50) |
 | `--auth USER:PASS` | HTTP Basic Auth credentials |
-| `--proxy URL` | Proxy URL for requests |
+| `--proxy URL` | Proxy for every request: pages, reconnaissance, robots.txt, feeds, browser modes and asset downloads. Schemes `http`, `https`, `socks4`, `socks4a`, `socks5`, `socks5h`; a password in it is never printed or written |
 | `--headless` | Run browser headless (default: visible) |
 | `-v`, `--verbose` | Verbose logging |
 | `--recent DURATION` | Only keep articles from last N period: `2w`, `1d`, `6h` |
