@@ -21,6 +21,7 @@ All notable changes to ScrapePy are listed here. The format follows [Keep a Chan
 
 ### Fixed
 
+- A page with a sidebar or widget container nested inside another one failed to convert (`AttributeError: 'NoneType' object has no attribute 'get'`): containers inside one already removed are now skipped, and the same guard covers H1 and image clean-up.
 - `--proxy` is used by every request: page fetches, reconnaissance, robots.txt, sitemap and feed requests and feed mode, not only the browser and asset downloads. It is validated (`http`, `https` and `socks` schemes) and its credentials are masked in console output, logs, errors and `run_summary.json`.
 - Accordion labels that contain a furniture word ("Next steps after your application", "Our cookie recipes", "2024") lost their text; furniture is now matched on the whole label, and number-only selects are kept unless named as a quantity.
 - A heading above the page's H1, such as a site tagline, became the title. The first H1 is now the title and headings above it are kept as paragraphs.

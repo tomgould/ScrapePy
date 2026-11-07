@@ -465,6 +465,8 @@ def _remove_site_h1s(soup, page_url: str | None = None) -> set[str]:
     brands = _brand_names(soup, page_url)
     names = set()
     for h1 in soup.find_all("h1"):
+        if h1.decomposed:
+            continue  # inside an H1 removed earlier in this loop
         if _is_chrome_h1(h1) or _is_site_name_h1(h1, title, brands):
             names.add(_norm(h1.get_text(" ", strip=True)))
             h1.decompose()
@@ -837,6 +839,8 @@ class HTMLToMarkdown:
                 p.decompose()
 
         for img in body.find_all("img"):
+            if img.decomposed:
+                continue  # inside an empty paragraph removed above
             src = img.get("src", "")
             if "icon" in src.lower():
                 img.decompose()
@@ -865,6 +869,10 @@ class HTMLToMarkdown:
 
         # Sidebars and widget areas
         for tag in soup.find_all(["aside", "section"]):
+            # find_all() listed nested containers too: one inside a container
+            # removed earlier in this loop has no attributes left to read
+            if tag.decomposed:
+                continue
             classes = " ".join(tag.get("class", []))
             tag_id = tag.get("id", "")
             if any(kw in classes.lower() or kw in tag_id.lower()
