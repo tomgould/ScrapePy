@@ -272,7 +272,7 @@ The frontmatter is written with `yaml.safe_dump`, so `yaml.safe_load` gives back
 
 ### Run summary (`run_summary.json`)
 
-The default crawl, `-j`, `-1` and feed mode write `run_summary.json` into the site's `ScrapedSites/<site>/` folder and print its path at the end. `--swagger`, `-d`, `--audit` and `--instagram` do not write one. Paths in it are relative to the output directory (`--output-dir`, or the current directory).
+The default crawl, `-j`, `-1` and feed mode write `run_summary.json` into the site's `ScrapedSites/<site>/` folder and print its path at the end (`-1` writes none when robots.txt blocks its URL, which is checked before the run starts). `--swagger`, `-d`, `--audit` and `--instagram` do not write one. Paths in it are relative to the output directory (`--output-dir`, or the current directory).
 
 The file is replaced as soon as a crawl starts with a placeholder whose `status` is `running`, so a summary left by an earlier run is never mistaken for the current one. If the process dies without finishing, the file still says `running`. Each write goes to a temporary file that is then renamed, so a reader never sees half a file. On Ctrl+C or SIGTERM (from cron, systemd or `kill`) the crawl stops, saves the incremental cache so the next run carries on from there, and writes the summary with `status` set to `interrupted`, `interrupted_by` set to `SIGINT` or `SIGTERM`, and exit code 130 or 143. Requests still in flight are abandoned rather than waited for, so the process exits within a moment even when the site has stopped answering. If a second Ctrl+C arrives while it is still saving, it stops at once and the summary may be left at `running`.
 
@@ -338,7 +338,7 @@ New, changed and unchanged are decided on the page HTML, so a page whose HTML ch
 | 130 | Interrupted with Ctrl+C (SIGINT) |
 | 143 | Stopped with SIGTERM |
 
-Feed mode exits 1 when robots.txt blocks the feed or it cannot be fetched, when `--feed` is given and the response is not a feed, or when the feed has entries and none can be read or written (`feed.error` says why). Browser modes (`-1`, `--swagger`, `-d`) exit 1 when robots.txt blocks the start URL or they save no page. Audit and Instagram modes exit 0 unless the arguments are bad.
+Feed mode exits 1 when robots.txt blocks the feed or it cannot be fetched, when `--feed` is given and the response is not a feed, or when the feed has entries and none can be read or written (`feed.error` says why). `-1` exits 0 when its page is fetched and not recorded as failed: saved, unchanged since the last run, a duplicate of a file already in the folder, or too short to convert. It exits 1 when robots.txt blocks the URL (no `run_summary.json` is written then), the browser fails, the server answers 400 or above, the page is an error page or its conversion fails. `--swagger` and `-d` exit 1 when robots.txt blocks the start URL or they save no page. Audit and Instagram modes exit 0 unless the arguments are bad.
 
 ### Numeric Path Flattening
 
@@ -371,9 +371,9 @@ This ensures the scraper understands the site's organizational structure before 
 
 For single-page applications and for one page at a time. Launches a stealth browser, waits `--wait` seconds for JavaScript to render, scrolls the entire page to trigger lazy loading, then saves the rendered page exactly as a crawl saves a page: the HTML copy and assets, the Markdown file, the incremental cache and `run_summary.json`. No links are followed.
 
-The page is recorded under the address the browser ended on: after a redirect to another page on the same host, that address is the frontmatter `url` and names the file (a redirect to another host keeps the requested address). The query string stays in `url`, and the file is named from the path, so `/search?q=apples` is `search.md` and a second query on the same path gets the hash-suffixed name described in [docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md). Each page keeps its own file, so several `-1` runs on one host fill one site folder, and running the same page again updates its file or reports it unchanged. `canonical_url` is whatever the page declares.
+The browser requests the URL exactly as given, trailing slash, query and fragment included. The page is recorded under the address the browser ended on: after a redirect to another page on the same host, that address is the frontmatter `url` and names the file (a redirect to another host keeps the requested address). The query string stays in `url`, and the file is named from the path, so `/search?q=apples` is `search.md` and a second query on the same path gets the hash-suffixed name described in [docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md). Each page keeps its own file, so several `-1` runs on one host fill one site folder, and running the same page again updates its file or reports it unchanged. `canonical_url` is whatever the page declares.
 
-A `MarkdownSites/<site>/index/_index.md` whose `url` is the site's root but whose text is another page, next to a `ScrapedSites/<site>/index.html`, is `-1` output from an earlier release. ScrapePy leaves those files alone and never writes another page into them, but the Markdown file claims the root address, so delete both by hand.
+`-1` writes only the site's root page to the root's own file. A site folder holding a `MarkdownSites/<site>/index/_index.md` whose `url` is the root but whose text is another page, with a `ScrapedSites/<site>/index.html` beside it, keeps those files: ScrapePy never writes another page into them, but the Markdown file claims the root address, so delete both by hand.
 
 ### JS Render (`-j`)
 

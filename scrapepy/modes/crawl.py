@@ -479,7 +479,9 @@ async def run_crawl_mode(
         visit_key = f"{url_path}{hash_fragment}" if hash_fragment else url_path
         # The incremental cache key: the path, or for a single page its whole address
         cache_key = url_path
+        fetch_url = None        # the address to request, when not full_url
         if config.single_page:
+            fetch_url = config.url      # exactly as given: trailing slash, query, fragment
             full_url, url_path, hash_fragment, cache_key = (
                 _single_page_target(config.url, config)
                 or (full_url, url_path, hash_fragment, cache_key))
@@ -563,7 +565,7 @@ async def run_crawl_mode(
             visited_hashes.add(hash_fragment)
 
         try:
-            print(f"Fetching page: {full_url}")
+            print(f"Fetching page: {fetch_url or full_url}")
 
             # Check prefetch buffer first (concurrent fetching)
             from_prefetch = url_path in prefetch_tasks
@@ -577,8 +579,9 @@ async def run_crawl_mode(
                 except Exception as e:
                     html, status, page_info = "", 0, {"error": redact(f"{type(e).__name__}: {e}", config.proxy)}
             elif config.needs_browser:
-                await limiter.wait(full_url)
-                html, status, page_info = await _fetch_with_browser(full_url, config, page_action)
+                await limiter.wait(fetch_url or full_url)
+                html, status, page_info = await _fetch_with_browser(
+                    fetch_url or full_url, config, page_action)
             else:
                 # Build conditional headers for incremental mode
                 cond_headers = None
@@ -1388,9 +1391,10 @@ async def _fetch_with_browser(
 def _single_page_target(url: str, config: ScrapeConfig) -> tuple[str, str, str, str] | None:
     """(full_url, url_path, hash_fragment, cache_key) for a single page
     address, or None for an address on another host or not http(s). The
-    full URL keeps the query and fragment, so it names the page in the
-    frontmatter and in the file assignments; the path names the file, and
-    the cache key is the path plus any query and fragment."""
+    full URL keeps the path as given (trailing slash included), the query
+    and the fragment, so it names the page in the frontmatter and in the
+    file assignments. The normalised path names the file, and the cache key
+    is that path plus any query and fragment."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         return None
@@ -1401,7 +1405,7 @@ def _single_page_target(url: str, config: ScrapeConfig) -> tuple[str, str, str, 
         return None
     path = posixpath.normpath(parsed.path or "/")
     path = path if path.startswith("/") else "/" + path
-    full_url = f"{parsed.scheme}://{config.domain}{path}"
+    full_url = f"{parsed.scheme}://{config.domain}{parsed.path or '/'}"
     cache_key = path
     if parsed.query:
         full_url += f"?{parsed.query}"
