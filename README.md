@@ -4,7 +4,7 @@ Python web scraper using [Scrapling](https://github.com/D4Vinci/Scrapling) + [Pa
 
 ScrapePy crawls websites, downloads assets, rewrites URLs for offline viewing, and converts everything to Markdown with YAML frontmatter. It handles Cloudflare challenges, JavaScript-rendered SPAs, Swagger/OpenAPI docs, documentation platforms, Instagram profiles, and news sites with date filtering out of the box.
 
-It also works as a building block for search indexing: `--markdown-only` writes one structured Markdown file per page with YAML frontmatter that always loads with `yaml.safe_load`, each crawl writes a machine-readable `run_summary.json` listing the new and changed files, and the exit code tells a script whether the run worked. [docs/MARKDOWN-OUTPUT.md](docs/MARKDOWN-OUTPUT.md) is the full output contract for tools that read it.
+It also works as a building block for search indexing: `--markdown-only` writes one structured Markdown file per page with YAML frontmatter that always loads with `yaml.safe_load`, each crawl writes a machine-readable `run_summary.json` listing the new and changed files, and the exit code tells a script whether the run worked. [docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md) is the full output contract for tools that read it.
 
 ## Responsible use
 
@@ -184,7 +184,7 @@ python main.py --instagram --accounts accounts.txt --ig-max-posts 5 --update-met
 
 ## Output
 
-Output goes under the current directory, or under `--output-dir` when given. [docs/MARKDOWN-OUTPUT.md](docs/MARKDOWN-OUTPUT.md) describes the Markdown, its frontmatter and the summary file exactly. With `--markdown-only` the `ScrapedSites/<site>/` folder holds only the run state (`run_summary.json`, `.scrapepy_cache.json`, `site_outline.json` and, if needed, `broken_links.txt`) and nothing is downloaded but pages. Otherwise scraped sites are saved to `ScrapedSites/` with this structure:
+Output goes under the current directory, or under `--output-dir` when given. [docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md) describes the Markdown, its frontmatter and the summary file exactly. With `--markdown-only` the `ScrapedSites/<site>/` folder holds only the run state (`run_summary.json`, `.scrapepy_cache.json`, `site_outline.json` and, if needed, `broken_links.txt`) and nothing is downloaded but pages. Otherwise scraped sites are saved to `ScrapedSites/` with this structure:
 
 ```
 ScrapedSites/example_com/
