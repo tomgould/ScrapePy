@@ -16,7 +16,7 @@ OUT/
     broken_links.txt             only when some URLs failed
 ```
 
-The site folder name is the host with `www.` removed and dots replaced by underscores. With `--stay-in-path` the starting path is appended (`docs_example_com_api_v2`).
+The site folder name is the host with `www.` removed and dots replaced by underscores. With `--stay-in-path` the starting path is appended (`docs_example_com_api_v2`). `--site-name NAME` replaces the whole name, so several runs on one site share one folder; with it, file paths keep the starting path even with `--stay-in-path`, so they are the same whichever run writes them.
 
 With `--markdown-only` the Markdown folder contains only `.md` files and the `ScrapedSites` folder contains only state files: `run_summary.json` always, `.scrapepy_cache.json` unless `--no-incremental` is given, `site_outline.json` only when the home page has navigation links or a sitemap lists URLs, and `broken_links.txt` only when some URLs failed. Nothing else is downloaded: images stay as links to the live site.
 
@@ -173,7 +173,7 @@ When the start URL is an RSS 2.0 or Atom feed, ScrapePy reads it as content inst
 - An unlinked brand H1 with no brand signal (see Body) becomes the title. Key documents on `url` and use the headings as the page's section tree rather than rely on `title` alone.
 - A page too short to convert (under 50 words, recipe pages excepted) is counted as new or changed in `run_summary.json` but has no file and is not in `new_markdown` or `changed_markdown`.
 - After an interrupted run, pages that were not reached yet appear in no list.
-- With `--stay-in-path` and no `--recent` or `--since`, article files have the starting path removed from their path while section `_index.md` files keep it: crawling `/docs/` with `-s`, the article `/docs/how-to-bake-sourdough-bread` is `how-to-bake-sourdough-bread.md`, while `/docs/how-to-bake-bread` and `/docs/kitchen`, which are classified as sections, are `docs/how-to-bake-bread/_index.md` and `docs/kitchen/_index.md`. With `--recent` or `--since`, articles found on a section are written under that section's folder and keep the starting path (`docs/how-to-bake-sourdough-bread.md`).
+- With `--stay-in-path`, no `--site-name` and no `--recent` or `--since`, article files have the starting path removed from their path while section `_index.md` files keep it: crawling `/docs/` with `-s`, the article `/docs/how-to-bake-sourdough-bread` is `how-to-bake-sourdough-bread.md`, while `/docs/how-to-bake-bread` and `/docs/kitchen`, which are classified as sections, are `docs/how-to-bake-bread/_index.md` and `docs/kitchen/_index.md`. With `--recent` or `--since`, articles found on a section are written under that section's folder and keep the starting path (`docs/how-to-bake-sourdough-bread.md`).
 - Crawled paths are requested without a trailing slash, so a server that answers only `/docs/` must redirect `/docs` to it.
 - In recipe pages, the same amount written two ways (`200g` and `200 g`, `½` and `1/2`) leaves a duplicate line in `## Page text` (see Recipe pages).
 - `-j` returns the page once the browser has loaded it and Scrapling's Cloudflare check has finished (a few seconds), so JavaScript-rendered content that appears later can be missed. The page is not scrolled, links are found in the HTML by regular expression, and `--wait` does not lengthen the wait: it is only the gap between page requests.
@@ -207,6 +207,17 @@ Written to `ScrapedSites/<site>/run_summary.json` at the start of a crawl (with 
 | `interrupted`, `interrupted_by` | boolean, string or null | Whether the run stopped early, and the signal (`SIGINT` or `SIGTERM`) |
 | `exit_code` | integer or null | The process exit code; null while running |
 | `feed` | object | Feed mode only (below) |
+| `targeting` | object | Only when `--include`, `--exclude`, `--max-depth`, `--max-pages`, `--urls-file`, `--only-recipes`, `--site-name` or `--follow-next` is given (below) |
+
+`options` lists those options only when they are set. `targeting` holds:
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `skipped_by_include`, `skipped_by_exclude`, `skipped_by_depth` | integer | Distinct discovered paths not fetched because they matched no `--include` (and were outside the `-s` scope), matched an `--exclude`, or were deeper than `--max-depth` |
+| `skipped_not_recipe` | integer | With `--only-recipes`, pages fetched but not written because they have no schema.org Recipe data |
+| `not_recipe_sample` | list of strings | Up to 20 of those page URLs |
+| `stopped_by_limit` | boolean | Whether `--max-pages` ended the run with pages still queued |
+
 
 In feed mode `counts.fetched` is 1 (the feed), `new_markdown` and `changed_markdown` list the entry files, `unchanged_urls` the entries whose file did not change, `renamed` the entries with a suffixed file name, and `feed` holds:
 

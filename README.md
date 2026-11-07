@@ -93,6 +93,14 @@ python main.py <url> [options]
 | `--ignore-robots` | Do not apply robots.txt rules or `Crawl-delay`. Prints a warning; only use with permission |
 | `-o`, `--output-dir DIR` | Folder under which `ScrapedSites/` and `MarkdownSites/` are created (default: current directory) |
 | `--markdown-only` | Write only Markdown: no HTML mirror, no image or asset downloads, links and images stay absolute URLs. Default crawl and `-j` only |
+| `--include REGEX` | Follow a discovered link only when its path matches (repeatable). With `-s`, links inside the starting path are followed too. Start URLs are always fetched |
+| `--exclude REGEX` | Never follow a link whose path matches (repeatable) |
+| `--max-depth N` | Follow links at most N steps from the start URLs (start = 0; default: no limit) |
+| `--max-pages N` | Stop after N page requests (default: 0 = no limit); `run_summary.json` records `stopped_by_limit` |
+| `--urls-file FILE` | Start URLs, one per line (`#` comments, http and https, one site), all at depth 0 in one run; the positional URL is optional |
+| `--only-recipes` | Write only pages with schema.org Recipe data; other pages are fetched to find links but not written |
+| `--site-name NAME` | Output folder name for the site (instead of the host and `-s` path), so several runs share one folder |
+| `--follow-next` | Follow pagination (`rel="next"` and `/page/N` links) without counting it as depth or testing it against `--include` |
 | `--index-pages` / `--no-index-pages` | Write the generated `_index.md` section listing pages (default: on) |
 | `--feed` | Read the URL as an RSS or Atom feed: one Markdown file per entry from one request. Automatic for URLs such as `/feed` or `/rss.xml`. `--max-articles` caps the entries (default 50) |
 | `--auth USER:PASS` | HTTP Basic Auth credentials |
@@ -387,6 +395,27 @@ python main.py https://recipes.example.com/recipes/oat-bites --markdown-only -s
 python main.py https://recipes.example.com/recipes/ --markdown-only --no-index-pages -s
 ```
 
+### Targeted crawls
+
+Without targeting options a crawl follows every in-scope link from the start page and the site's navigation. With `--include`, `--max-depth` or `--urls-file`, only the start URLs seed the queue, and without `--recent` or `--since` no sitemap, feed or homepage requests are made: robots.txt and the pages are the only requests. A discovered link is followed when it is on the same site, inside the `-s` scope (when `-s` is given) or matching an `--include`, matching no `--exclude`, and within `--max-depth`.
+
+```bash
+# Recipes from one category listing and its later pages, into one folder per site
+python main.py https://recipes.example.com/category/baby-led-weaning/ \
+  --include '^/recipes/' --only-recipes --max-depth 1 --follow-next \
+  --max-pages 200 --site-name recipes_example_com --markdown-only
+
+# The results of a site search (WordPress style), into the same folder
+python main.py "https://recipes.example.com/?s=baby+led+weaning" \
+  --include '^/recipes/' --only-recipes --max-depth 1 \
+  --site-name recipes_example_com --markdown-only
+
+# A list of pages to fetch, nothing else
+python main.py --urls-file recipe-urls.txt --max-depth 0 --site-name recipes_example_com
+```
+
+A start URL with a query string, such as a site search, is fetched exactly as given and the links on it are followed; the page itself is not written, because its query cannot be part of a file name. Query strings on discovered links are dropped, as in every crawl, so pagination such as `?page=2` is not followed; `/page/2/` style pagination is. `run_summary.json` gets a `targeting` object with the skipped counts (see [docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md)).
+
 ### Feeds (`--feed`)
 
 An RSS 2.0 or Atom feed is fetched once, after checking robots.txt, and each entry becomes its own Markdown file (`page_type: feed_entry`) with the body from the feed. Entry links are not followed. `run_summary.json` gets a `feed` object; `teaser_urls` lists entries whose feed body is only a short excerpt, so you can crawl those pages yourself.
@@ -457,12 +486,15 @@ Section-ordered traversal processes article links in DOM order (newest first). W
 - A page too short to convert (under 50 words, recipe pages excepted) is counted as new or changed in `run_summary.json` but has no Markdown file.
 - After an interrupted run, pages that were not reached yet appear in no list in `run_summary.json`.
 - Crawled paths are requested without a trailing slash (`/docs/` is fetched as `/docs`), so a server that answers only the slash form must redirect.
-- With `--stay-in-path` and no `--recent` or `--since`, article files have the starting path removed from their path while section `_index.md` files keep it: crawling `/docs/` with `-s`, the article `/docs/how-to-bake-sourdough-bread` is `how-to-bake-sourdough-bread.md`, while `/docs/how-to-bake-bread` and `/docs/kitchen`, which are classified as sections, are `docs/how-to-bake-bread/_index.md` and `docs/kitchen/_index.md`. With `--recent` or `--since`, articles found on a section are written under that section's folder and keep the starting path (`docs/how-to-bake-sourdough-bread.md`).
+- With `--stay-in-path`, no `--site-name` and no `--recent` or `--since`, article files have the starting path removed from their path while section `_index.md` files keep it: crawling `/docs/` with `-s`, the article `/docs/how-to-bake-sourdough-bread` is `how-to-bake-sourdough-bread.md`, while `/docs/how-to-bake-bread` and `/docs/kitchen`, which are classified as sections, are `docs/how-to-bake-bread/_index.md` and `docs/kitchen/_index.md`. With `--recent` or `--since`, articles found on a section are written under that section's folder and keep the starting path (`docs/how-to-bake-sourdough-bread.md`).
 - A brand name in an H1 with no brand signal (no `og:site_name`, `application-name` or schema.org name, no link to the home page, a host name that differs) can become the page title.
 - In recipe pages, the same amount written two ways (`200g` and `200 g`, `½` and `1/2`) leaves a duplicate line in `## Page text`.
 - `-j` returns the page once the browser has loaded it and Scrapling's Cloudflare check has finished (a few seconds), so JavaScript-rendered content that appears later can be missed. The page is not scrolled, links are found in the HTML by regular expression, and `--wait` does not lengthen the wait: it is only the gap between page requests.
 - `-j`'s argument parsing and settings are covered by the automated tests. Its crawl is covered only by an opt-in test (`SCRAPEPY_BROWSER_TESTS=1`, which starts a browser) that checks it goes through `--proxy`; `-j` with `--stay-in-path` is not tested.
 - `-j`, `-1`, `--swagger`, `-d` and `--instagram` need the browser installed (`scrapling install`).
+- Pages whose path, relative to the crawl's start, contains `/category/`, `/tag/` or `/author/` are not written, so a category listing used as a start URL with `--site-name` is read for its links only.
+- With `--urls-file` and `-s`, the scope is the first start URL's path.
+- `--follow-next` follows only path-based pagination (`/page/2/`) and `rel="next"` links whose path differs; pagination that changes only the query string (`?page=2`) leads back to the same page and stops.
 
 [docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md) lists more limits of the Markdown output.
 
