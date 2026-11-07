@@ -32,7 +32,7 @@ convert/      to_markdown, html_prep, recipe, openapi_to_markdown,
               instagram_to_markdown
 ```
 
-`scraper.py` checks the flags in this order: `--audit`, `--instagram`, then for everything that is not `-1`, `--swagger` or `-d` it runs feed mode when `--feed` is given or the URL looks like a feed (and `--no-markdown` and `-j` are not set), falling back to the crawl when the response is not a feed. The browser modes check the start URL against robots.txt first.
+`scraper.py` checks the flags in this order: `--audit`, `--instagram`, then for everything that is not `-1`, `--swagger` or `-d` it runs feed mode when `--feed` is given or the URL looks like a feed (and `--no-markdown` and `-j` are not set). When the URL only looked like a feed and the response is not one, the crawl runs instead; with `--feed`, a response that is not a feed is recorded as failed and the run exits 1. The browser modes check the start URL against robots.txt first.
 
 ## Default crawl and `-j` (`modes/crawl.py`)
 
@@ -60,11 +60,11 @@ robots.txt is checked for the feed URL, the feed is fetched once after the pacin
 
 ## Browser modes (`-1`, `--swagger`, `-d`)
 
-Each mode passes a `page_action` callback to `StealthyFetcher.async_fetch()` (`network_idle=True`, `solve_cloudflare=True`, `timeout=120000`, and `wait=int(--wait)`, which Scrapling reads as milliseconds); the `-1`, `--swagger` and `-d` callbacks then sleep `--wait` seconds themselves. `-1` scrolls the page and saves `index.html`. `--swagger` expands the operation blocks, looks for the spec URL and saves it as `openapi-spec.json` or `.yaml`. `-d` follows the sidebar links, checks each against robots.txt, and saves each page plus `combined.html`. Markdown conversion then runs over the saved HTML (`HTMLToMarkdown.convert_all()`), or `convert_openapi_file()` when a spec was saved.
+Each mode passes a `page_action` callback to `StealthyFetcher.async_fetch()` (`network_idle=True`, `solve_cloudflare=True`, `timeout=120000`, and `wait=int(--wait)`, which Scrapling reads as milliseconds); the `-1` and `--swagger` callbacks and `-d`'s first page then sleep `--wait` seconds themselves. `-1` scrolls the page and saves `index.html`. `--swagger` expands the operation blocks, looks for the spec URL and saves it as `openapi-spec.json` or `.yaml`. `-d` follows every sidebar link (no `-s` scope check), checks each against robots.txt, spaces the requests by `--wait` (or `Crawl-delay`), gives each sidebar page a fixed 1.5 second pause plus `wait=1` (one millisecond) before expanding and scrolling it, and saves each page plus `combined.html`; it downloads no assets and keeps no cache. Markdown conversion then runs over the saved HTML (`HTMLToMarkdown.convert_all()`), or `convert_openapi_file()` when a spec was saved.
 
 ## Instagram mode (`modes/instagram.py`)
 
-A browser with a persistent profile (`~/.scrapepy/instagram_profile/`) loads each profile, optionally waits up to three minutes for a manual login (`--ig-login`), scrolls the post grid, then visits each post with a pause of 2 to 5 seconds derived from a hash of the post URL, downloading its media and writing `post.json`, `post.html` and, with Markdown on, `post.md`. Accounts are 5 seconds apart. robots.txt is not checked.
+A browser loads each profile (with `--ig-login`, using the persistent profile `~/.scrapepy/instagram_profile/` and waiting up to three minutes for a manual login), scrolls the post grid, then visits each post, pausing 2 to 5 seconds (derived from a hash of the post URL) before every post after the first, downloading its media and writing `post.json`, `post.html` and, with Markdown on, `post.md`. Accounts are 5 seconds apart. robots.txt is not checked.
 
 ## Audit mode (`modes/audit.py`)
 

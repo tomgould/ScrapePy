@@ -127,7 +127,8 @@ ScrapePy creates these directories in the current working directory, or under th
 
 | Directory | Mode | Contents |
 |-----------|------|----------|
-| `ScrapedSites/<domain>/` | Default crawl, `-j`, `-1`, `--swagger`, `-d` | HTML and assets (images/, css/, js/, fonts/, media/); `run_summary.json` and the cache after a crawl. With `--markdown-only`, and in feed mode, only the run state |
+| `ScrapedSites/<domain>/` | Default crawl, `-j` | HTML and assets (images/, css/, js/, fonts/, media/), `run_summary.json` and the cache. With `--markdown-only`, and in feed mode, only the run state |
+| `ScrapedSites/<domain>/` | `-1`, `--swagger`, `-d` | The saved HTML (`index.html`, plus `openapi-spec.json` or `.yaml` for `--swagger` and each page and `combined.html` for `-d`); no assets are downloaded |
 | `ScrapedSites/instagram/<username>/` | `--instagram` | Profile, post data and media |
 | `MarkdownSites/<domain>/` | Default (use `--no-markdown` to skip) | Markdown files, plus images/ and media/ copied from `ScrapedSites` (not with `--markdown-only`) |
 | `tests/fixtures/<domain>/` | `--audit` | Test fixtures (HTML snapshots + expected values) |
@@ -144,7 +145,7 @@ pip install "scrapling[fetchers]"
 
 ### Browser not installed
 
-A browser mode that cannot start the browser prints `Error: Failed to load page (...)` with a reminder to run `scrapling install`. Run it to download Chromium.
+`-1`, `--swagger` and `-d` print `Error: Failed to load page (...)` with a reminder to run `scrapling install` when the browser cannot start; `-j` prints `Fetch failed (...)` for each page. Run `scrapling install` to download Chromium.
 
 ### Cloudflare blocking
 
@@ -164,7 +165,7 @@ Increase the wait time:
 python main.py https://slow-site.com -j --wait 15
 ```
 
-The browser navigation timeout is 120 seconds. In `-1`, `--swagger` and `-d`, the mode also pauses `--wait` seconds after the page loads. In `-j`, `--wait` is only the gap between page requests: the browser returns the HTML once the page has loaded and Scrapling's Cloudflare check has finished (a few seconds), without scrolling, so a longer `--wait` does not give slow JavaScript more time.
+The browser navigation timeout is 120 seconds. In `-1`, `--swagger` and on `-d`'s first page, the mode also pauses `--wait` seconds after the page loads; each further `-d` sidebar page gets a fixed 1.5 second pause, and `--wait` only spaces those requests. In `-j`, `--wait` is only the gap between page requests: the browser returns the HTML once the page has loaded and Scrapling's Cloudflare check has finished (a few seconds), without scrolling, so a longer `--wait` does not give slow JavaScript more time.
 
 ### Permission errors on output
 

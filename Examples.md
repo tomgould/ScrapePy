@@ -654,7 +654,7 @@ Downloads up to 20 assets simultaneously (default is 4). The `-c` flag controls 
 python main.py https://docs.example.com/api/ -s -d
 ```
 
-Scoped to `/api/`, docs mode. Assets, Markdown, and incremental are all on by default.
+Docs mode from `/api/`. Docs mode follows every sidebar link whatever its path (`-s` only changes the output folder name to `docs_example_com_api`), downloads no assets and keeps no incremental cache; Markdown conversion is on by default.
 
 ### JS site with everything
 
