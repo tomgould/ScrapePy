@@ -71,9 +71,13 @@ def site(monkeypatch):
     return install
 
 
-def run(tmp_path, **kw):
+def run(tmp_path, relative_to=None, **kw):
+    """Run a crawl into tmp_path. With relative_to (a folder that is the
+    current directory), -o is given as a path relative to it, as a user
+    typing "-o data" would."""
     kw.setdefault("wait", 0)
-    config = ScrapeConfig(url=BASE + "/", output_root=str(tmp_path), **kw)
+    root = os.path.relpath(tmp_path, relative_to) if relative_to else str(tmp_path)
+    config = ScrapeConfig(url=BASE + "/", output_root=root, **kw)
     create_output_dirs(config)
     return config, asyncio.run(crawl.run_crawl_mode(config))
 
@@ -436,3 +440,20 @@ class TestSlowRobotsDoesNotBlockInterrupt:
         assert elapsed < 0.5
         assert summary["status"] == "interrupted"
         assert fake.requested == []
+
+
+class TestRelativeOutputDir:
+    """The other tests pass an absolute tmp_path as -o, which hid a failure
+    of every page when -o was relative."""
+
+    def test_relative_output_dir_writes_markdown(self, site, tmp_path, monkeypatch):
+        site({"/": page("Home", ["/about"]), "/about": page("About")})
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()
+        monkeypatch.chdir(cwd)
+        config, summary = run(tmp_path / "out", relative_to=cwd, markdown_only=True)
+        assert summary["counts"]["failed"] == 0
+        assert summary["exit_code"] == EXIT_OK
+        assert sorted(summary["new_markdown"]) == [
+            "MarkdownSites/example_com/_index.md", "MarkdownSites/example_com/about.md"]
+        assert summary["output_dir"] == str(tmp_path / "out")
