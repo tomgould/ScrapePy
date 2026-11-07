@@ -31,6 +31,8 @@ from .html_prep import (
     same_site,
 )
 import markdownify
+
+from ..output.naming import suffixed_path
 import yaml
 
 try:
@@ -461,11 +463,9 @@ class HTMLToMarkdown:
         self.dedupe = True
         self._written_hashes: dict[str, str] = {}
         self.last_duplicate_of: str | None = None
-        # One file, one URL: the first URL to write a file in this run keeps
-        # it. A later URL mapping to the same file (/about and /about.html)
-        # is skipped, and last_collision says which file and which URL kept it.
+        # One file, one URL: a later URL whose file another URL already wrote
+        # is written to a hash-suffixed name instead (see output/naming.py)
         self._written_paths: dict[str, str] = {}
-        self.last_collision: tuple[str, str] | None = None
         # Why the most recent convert_file() call failed, or None
         self.last_error: str | None = None
 
@@ -1479,7 +1479,6 @@ class HTMLToMarkdown:
         self.last_output_path = None
         self.last_output_existed = False
         self.last_duplicate_of = None
-        self.last_collision = None
         self.last_error = None
         filepath = Path(filepath)
         explicit_output = output_path is not None
@@ -1649,21 +1648,19 @@ class HTMLToMarkdown:
     def convert_file(self, filepath, metadata=None, output_path=None, html=None):
         """Convert one page and write it. With html given, filepath is only
         used for naming and is never read (markdown-only mode has no HTML on
-        disk). The first URL to write a file in this converter keeps it; a
-        later URL for the same file is a duplicate when its body matches,
-        otherwise a collision (last_collision)."""
+        disk). A page whose file another URL already wrote is a duplicate when
+        its body matches, otherwise it is written to a hash-suffixed name."""
         page = self.prepare(filepath, metadata=metadata, output_path=output_path, html=html)
         if page is None:
             return False
         owner = self._written_paths.get(page.output_path)
-        if owner and owner != page.url:
+        if owner and page.url and owner != page.url:
             if self._written_hashes.get(page.content_hash) == page.output_path:
+                print(f"  Skipped (same content as {Path(page.output_path).name}): {page.name}")
+                self.skipped += 1
                 self.last_duplicate_of = page.output_path
-            else:
-                self.last_collision = (page.output_path, owner)
-            print(f"  Skipped (file already written for {owner}): {page.name}")
-            self.skipped += 1
-            return False
+                return False
+            page.output_path = suffixed_path(page.output_path, page.url)
         self.commit(page)
         return True
 

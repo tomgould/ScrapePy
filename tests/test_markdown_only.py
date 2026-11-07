@@ -11,6 +11,7 @@ from scrapepy.cli import parse_args
 from scrapepy.config import ScrapeConfig
 from scrapepy.modes import crawl
 from scrapepy.output.run_summary import SUMMARY_FILENAME
+from scrapepy.output.naming import url_suffix
 from scrapepy.output.writer import create_output_dirs
 from tests.test_crawl_run import (  # noqa: F401  (pytest fixtures)
     BASE, WORDS, RecordingLimiter, page, recorder, site,
@@ -228,38 +229,43 @@ class TestPathCollisions:
     }
 
     @pytest.mark.parametrize("runner", [run_md_only, run_default], ids=["md-only", "default"])
-    def test_first_page_keeps_the_file(self, site, tmp_path, runner):
+    def test_later_page_gets_a_suffixed_name(self, site, tmp_path, runner):
         site(self.PAGES, None)
         config, summary = runner(tmp_path)
+        suffix = url_suffix(BASE + "/about.html")
         data, text = frontmatter(os.path.join(config.markdown_dir, "about.md"))
         assert data["url"] == BASE + "/about"
         assert "older copy" not in text
-        assert summary["collisions"] == [{
+        other, text = frontmatter(os.path.join(config.markdown_dir, f"about-{suffix}.md"))
+        assert other["url"] == BASE + "/about.html"
+        assert "older copy" in text
+        assert summary["renamed"] == [{
             "url": BASE + "/about.html",
-            "file": "MarkdownSites/example_com/about.md",
-            "kept": BASE + "/about",
+            "file": f"MarkdownSites/example_com/about-{suffix}.md",
+            "natural_file": "MarkdownSites/example_com/about.md",
         }]
-        assert summary["counts"]["collisions"] == 1
+        assert summary["counts"]["renamed"] == 1
         assert summary["counts"]["changed"] == 0
-        assert BASE + "/about.html" not in [f["url"] for f in summary["failed"]]
         if not config.markdown_only:
             mirror = open(os.path.join(config.output_dir, "about.html"), encoding="utf-8").read()
             assert "older copy" not in mirror
+            copy = open(os.path.join(config.output_dir, f"about-{suffix}.html"), encoding="utf-8").read()
+            assert "older copy" in copy
 
-    def test_rerun_keeps_the_same_page(self, site, tmp_path):
+    def test_rerun_keeps_the_same_files(self, site, tmp_path):
         site(self.PAGES, None)
         run_md_only(tmp_path)
         config, summary = run_md_only(tmp_path)
         data, _ = frontmatter(os.path.join(config.markdown_dir, "about.md"))
         assert data["url"] == BASE + "/about"
-        assert [c["url"] for c in summary["collisions"]] == [BASE + "/about.html"]
+        assert [r["url"] for r in summary["renamed"]] == [BASE + "/about.html"]
         assert summary["counts"]["changed"] == 0
 
     def test_identical_pages_on_one_file_are_duplicates(self, site, tmp_path):
         site({"/": page("Home", ["/about", "/about.html"]),
               "/about": rich_page("About"), "/about.html": rich_page("About")}, None)
         config, summary = run_md_only(tmp_path)
-        assert summary["collisions"] == []
+        assert summary["renamed"] == []
         assert [d["url"] for d in summary["duplicates"]] == [BASE + "/about.html"]
 
 

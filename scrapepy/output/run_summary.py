@@ -40,7 +40,7 @@ class RunStats:
     failed: list[dict] = field(default_factory=list)      # {"url", "reason"}
     blocked_by_robots: list[str] = field(default_factory=list)
     duplicates: list[dict] = field(default_factory=list)  # {"url", "same_as"}
-    collisions: list[dict] = field(default_factory=list)  # {"url", "file", "kept"}
+    renamed: list[dict] = field(default_factory=list)  # {"url", "file", "natural_file"}
     skipped_non_html: list[dict] = field(default_factory=list)  # {"url", "content_type"}
     skipped_old: int = 0
     interrupted: bool = False
@@ -65,20 +65,10 @@ class RunStats:
         """A page whose Markdown matched a file already written in this run."""
         self.duplicates.append({"url": url, "same_as": same_as_path})
 
-    def retract(self, url: str, markdown_paths: list[str]) -> None:
-        """Take back a page recorded as new, changed or unchanged earlier in
-        the run (it lost its file to a better URL)."""
-        for lst in (self.new, self.changed, self.unchanged):
-            while url in lst:
-                lst.remove(url)
-        for lst in (self.new_markdown, self.changed_markdown):
-            for p in markdown_paths:
-                while p in lst:
-                    lst.remove(p)
-
-    def record_collision(self, url: str, file_path: str, kept_url: str):
-        """A page skipped because another URL already wrote its file this run."""
-        self.collisions.append({"url": url, "file": file_path, "kept": kept_url})
+    def record_renamed(self, url: str, file_path: str, natural_path: str) -> None:
+        """A page written to a hash-suffixed name because another URL has
+        its natural path."""
+        self.renamed.append({"url": url, "file": file_path, "natural_file": natural_path})
 
     def record_non_html(self, url: str, content_type: str) -> None:
         """A response that was fetched but not converted because it is not HTML."""
@@ -156,7 +146,7 @@ def build_summary(
             "failed": len(stats.failed),
             "blocked_by_robots": len(stats.blocked_by_robots),
             "duplicates": len(stats.duplicates),
-            "collisions": len(stats.collisions),
+            "renamed": len(stats.renamed),
             "skipped_non_html": len(stats.skipped_non_html),
             "skipped_old": stats.skipped_old,
         },
@@ -170,9 +160,10 @@ def build_summary(
             for d in stats.duplicates
         ],
         "skipped_non_html": list(stats.skipped_non_html),
-        "collisions": [
-            {"url": c["url"], "file": relative_to_root(c["file"], root), "kept": c["kept"]}
-            for c in stats.collisions
+        "renamed": [
+            {"url": r["url"], "file": relative_to_root(r["file"], root),
+             "natural_file": relative_to_root(r["natural_file"], root)}
+            for r in stats.renamed
         ],
         "interrupted": stats.interrupted,
         "interrupted_by": stats.interrupted_by,

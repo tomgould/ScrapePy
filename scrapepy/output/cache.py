@@ -136,14 +136,22 @@ class CrawlCache:
         """Forget a page, so the next run fetches and converts it in full."""
         self._data["pages"].pop(url_path, None)
 
-    # --- Output file owners ---
+    def clear_pages(self) -> None:
+        """Forget every page, so the next run converts all of them."""
+        self._data["pages"] = {}
 
-    def get_file_owners(self) -> dict[str, str]:
-        """Output file (relative to the cache's folder) -> URL that owns it."""
-        return dict(self._data.get("files", {}))
+    # --- File assignments ---
 
-    def set_file_owners(self, owners: dict[str, str]) -> None:
-        self._data["files"] = dict(owners)
+    def has_assignments(self) -> bool:
+        """False for a cache written before file assignments were stored."""
+        return "assignments" in self._data
+
+    def get_assignments(self) -> dict[str, dict]:
+        """URL -> its files (paths relative to the cache's folder)."""
+        return {u: dict(a) for u, a in self._data.get("assignments", {}).items()}
+
+    def set_assignments(self, assignments: dict[str, dict]) -> None:
+        self._data["assignments"] = assignments
 
     # --- Assets ---
 
