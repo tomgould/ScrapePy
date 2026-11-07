@@ -295,9 +295,9 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
         else:
             start_path = posixpath.normpath(urlparse(config.url).path or "/")
             targeting.add_start(start_path if start_path.startswith("/") else "/" + start_path)
-    if config.follow_next and not config.max_pages and config.max_depth is None:
-        print("  Note: --follow-next without --max-pages or --max-depth follows pagination "
-              "for as long as the site offers another page")
+    if config.follow_next and not config.max_pages:
+        print("  Note: --follow-next without --max-pages follows pagination for as long as "
+              "the site offers another page (--max-depth does not limit pagination)")
 
     # Concurrency semaphore for page fetching (reuses -c flag)
     page_sem = asyncio.Semaphore(config.concurrent)
@@ -557,7 +557,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                 # Build conditional headers for incremental mode
                 cond_headers = None
                 if cache:
-                    cond_headers = cache.get_page_headers(url_path)
+                    cond_headers = _conditional_headers(cache, url_path, config)
 
                 html, status, page_info = await _fetch_with_http_async(
                     full_url, config, page_sem, headers=cond_headers, limiter=limiter,
@@ -652,6 +652,9 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                 print(f"  Unchanged (same content): {full_url}")
                 unchanged_count += 1
                 _meet_unchanged(full_url, names, stats, meet)
+                if config.follow_next and not cache.has_page_next(url_path):
+                    # A cache entry written without rel="next" paths gets them now
+                    cache.set_page_next(url_path, _rel_next(html, url_path, config))
                 links = _extract_links_from_html(html)
                 if targeting is not None:
                     targeting.note_links(links, html, visit_key, url_path)
@@ -727,7 +730,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                                     if (p not in prefetch_tasks and p not in visited
                                             and robots.can_fetch(p)):
                                         pf_url = config.base_url + p
-                                        pf_headers = cache.get_page_headers(p) if cache else None
+                                        pf_headers = _conditional_headers(cache, p, config)
                                         prefetch_tasks[p] = asyncio.create_task(
                                             _fetch_with_http_async(
                                                 pf_url, config, page_sem, headers=pf_headers,
@@ -970,7 +973,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                         if (p not in prefetch_tasks and p not in visited
                                 and robots.can_fetch(p)):
                             pf_url = config.base_url + p
-                            pf_headers = cache.get_page_headers(p) if cache else None
+                            pf_headers = _conditional_headers(cache, p, config)
                             prefetch_tasks[p] = asyncio.create_task(
                                 _fetch_with_http_async(
                                     pf_url, config, page_sem, headers=pf_headers,
@@ -985,7 +988,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                         if (p not in prefetch_tasks and p not in visited
                                 and robots.can_fetch(p)):
                             pf_url = config.base_url + p
-                            pf_headers = cache.get_page_headers(p) if cache else None
+                            pf_headers = _conditional_headers(cache, p, config)
                             prefetch_tasks[p] = asyncio.create_task(
                                 _fetch_with_http_async(
                                     pf_url, config, page_sem, headers=pf_headers,
@@ -1246,6 +1249,18 @@ def _queue_start(url: str, to_visit, query_starts: set[str], keep_query: bool) -
         to_visit.append(url)
     else:
         to_visit.append(parsed.path or "/")
+
+
+def _conditional_headers(cache, url_path: str, config: ScrapeConfig) -> dict | None:
+    """If-None-Match and If-Modified-Since for a cached page. With
+    --follow-next, a cache entry that holds no rel="next" paths (written by a
+    run that did not record them) is fetched in full, so a 304 never hides a
+    page's pagination."""
+    if not cache:
+        return None
+    if config.follow_next and cache.has_page(url_path) and not cache.has_page_next(url_path):
+        return None
+    return cache.get_page_headers(url_path)
 
 
 def _rel_next(html: str, url_path: str, config: ScrapeConfig) -> list[str]:
