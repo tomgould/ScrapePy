@@ -24,6 +24,7 @@ import html as html_lib
 import json
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass, field
 
 from bs4 import BeautifulSoup, Tag
@@ -277,11 +278,13 @@ def loads_lenient(text: str):
         if text.endswith(suffix):
             text = text[: -len(suffix)]
     text = text.strip().rstrip(";")
+    # Numbers keep the text they were published with (12.50, 1e21, NaN)
+    options = dict(strict=False, parse_float=str, parse_int=str, parse_constant=str)
     try:
-        return json.loads(text, strict=False)
+        return json.loads(text, **options)
     except ValueError:
         pass
-    return json.loads(_strip_comments_and_trailing_commas(text), strict=False)
+    return json.loads(_strip_comments_and_trailing_commas(text), **options)
 
 
 # ---------------------------------------------------------------------------
@@ -347,17 +350,76 @@ class _Resolver:
 # Field parsing
 # ---------------------------------------------------------------------------
 
-_RE_STEP_NUMBER = re.compile(r"^(?:step\s*)?\d{1,2}\s*[.):\-]\s+", re.IGNORECASE)
-_RE_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(“])")
+# "Step 2", "Step 2:", "Step 2." at the start of a step: always numbering
+_RE_STEP_WORD = re.compile(r"^step\s*(\d{1,3})\b\s*[.):\-]?\s*(?=\S)", re.IGNORECASE)
+# "2. " or "2) " before a word: numbering only when the number matches the
+# step's position or the whole list is numbered. Never a hyphen, a range, a
+# decimal ("1.5") or a quantity ("2) 1/2 cup").
+_RE_PLAIN_NUMBER = re.compile(r"^(\d{1,3})[.)]\s+(?=\S)(?!\d)")
+# Explicit numbering inside one line: "1. ... 2. ..." or "Step 1 ... Step 2"
+_RE_INLINE_NUMBER = re.compile(
+    r"(?:^|(?<=\s))(?:(step)\s*(\d{1,3})\b\s*[.):\-]?|(\d{1,3})[.)])\s+(?!\d)",
+    re.IGNORECASE,
+)
 
 
-def _clean_step(text: str) -> str:
-    return _RE_STEP_NUMBER.sub("", clean_text(text)).strip()
+def _clean_step(text) -> str:
+    return clean_text(text)
+
+
+def _plain_number(step: str) -> int | None:
+    m = _RE_PLAIN_NUMBER.match(step)
+    return int(m.group(1)) if m else None
+
+
+def strip_step_numbers(steps: list[str]) -> list[str]:
+    """Remove numbering a page wrote into its steps, never a quantity.
+
+    "Step N" is always numbering. A plain "N. " or "N) " is numbering when
+    N is the step's position in its list, or when every step in the list
+    starts that way with numbers going up by one. "2 - 3 drops", "3 cups",
+    "1.5 cups" and "2) 1/2 cup" are left alone."""
+    numbers = [_plain_number(s) for s in steps]
+    consistent = (
+        bool(steps) and all(n is not None for n in numbers)
+        and all(b == a + 1 for a, b in zip(numbers, numbers[1:]))
+    )
+    out = []
+    for position, (step, number) in enumerate(zip(steps, numbers), start=1):
+        m = _RE_STEP_WORD.match(step)
+        if m:
+            step = step[m.end():]
+        elif number is not None and (consistent or number == position):
+            step = _RE_PLAIN_NUMBER.sub("", step, count=1)
+        out.append(step.strip())
+    return [s for s in out if s]
+
+
+def _split_numbered_line(line: str) -> list[str]:
+    """Split one line at explicit numbering that starts at 1 and counts up
+    ("1. a 2. b" or "Step 1 a Step 2 b"). Any other line is one step."""
+    matches = list(_RE_INLINE_NUMBER.finditer(line))
+    if not matches or matches[0].start() != 0:
+        return [line]
+    expected, cuts, word = 1, [], None
+    for m in matches:
+        is_word = m.group(1) is not None
+        number = int(m.group(2) or m.group(3))
+        if word is None:
+            word = is_word
+        if is_word == word and number == expected:
+            cuts.append(m.start())
+            expected += 1
+    if len(cuts) < 2:
+        return [line]
+    cuts.append(len(line))
+    return [line[a:b].strip() for a, b in zip(cuts, cuts[1:]) if line[a:b].strip()]
 
 
 def split_steps(value: str) -> list[str]:
-    """Steps from one instruction string: list items, paragraphs or lines,
-    else sentences."""
+    """Steps from one instruction string: list items, paragraphs or lines.
+    One line is one step unless it carries explicit numbering. Sentences are
+    never split: abbreviations and decimals look like sentence ends."""
     text = str(value or "")
     for _ in range(3):
         if "&lt;" in text or "&amp;lt;" in text:
@@ -378,20 +440,45 @@ def split_steps(value: str) -> list[str]:
         text = html_lib.unescape(text)
     lines = [ln for ln in re.split(r"\s*\n\s*", text) if ln.strip()]
     if len(lines) == 1:
-        lines = _RE_SENTENCE_SPLIT.split(lines[0])
+        lines = _split_numbered_line(clean_text(lines[0]))
     return [s for s in (_clean_step(ln) for ln in lines) if s]
 
 
+def _item_text(item) -> str:
+    """One list item as text: a string as given, an object by its text or
+    name, else a compact "key: value; key: value" list of its fields."""
+    if isinstance(item, dict):
+        for key in ("text", "name"):
+            if clean_text(item.get(key)):
+                return clean_text(item[key])
+        pairs = [f"{k}: {clean_text(v)}" for k, v in item.items()
+                 if not str(k).startswith("@") and clean_text(v)]
+        return "; ".join(pairs)
+    return clean_text(item)
+
+
+def _flatten(value, depth: int = 0) -> list:
+    out = []
+    for item in _as_list(value):
+        if isinstance(item, list) and depth < _MAX_DEPTH:
+            out.extend(_flatten(item, depth + 1))
+        else:
+            out.append(item)
+    return out
+
+
 def _ingredients(value) -> list[str]:
-    items = _as_list(value)
+    items = _flatten(value)
     if len(items) == 1 and isinstance(items[0], str):
         lines = [ln for ln in re.split(r"\s*(?:\n|<br\s*/?>)\s*", items[0]) if ln.strip()]
         items = lines
     out = []
     for item in items:
-        text = clean_text(item)
+        text = _item_text(item)
         if text:
             out.append(text)
+        elif item not in (None, ""):
+            log.debug("ingredient item with no text skipped: %r", item)
     return out
 
 
@@ -486,13 +573,17 @@ def _instructions(value, resolve) -> list[tuple[str | None, list[str]]]:
             title = "Other steps"
         if title:
             seen_titled = True
-        out.append((title, steps))
+        steps = strip_step_numbers(steps)
+        if steps:
+            out.append((title, steps))
     return out
 
 
 def _nutrition_value(value) -> str:
     if isinstance(value, list):
-        value = value[0] if value else None
+        # Every value given, in order ("120 kcal / 502 kJ")
+        texts = [_nutrition_value(v) for v in _flatten(value)]
+        return " / ".join(t for t in texts if t)
     if isinstance(value, dict):
         number = value.get("value")
         unit = clean_text(value.get("unitText") or value.get("unitCode") or "")
@@ -685,14 +776,26 @@ def _find_recipes(html: str) -> list[Recipe]:
     return recipes
 
 
+_RE_NORM_NUMBERING = re.compile(r"^(?:step\s*\d{1,3}\b\s*[.):\-]?|\d{1,3}[.)])\s+(?!\d)")
+_RE_COMMENT_AREA = re.compile(r"comment|respond|reply", re.IGNORECASE)
+
+
 def _norm(text: str) -> str:
-    return " ".join(re.sub(r"[^\w]+", " ", text.lower()).split())
+    """Text for comparing a page element with a recipe item: Unicode
+    fractions and compatibility forms folded, case and punctuation ignored,
+    whitespace collapsed (so spans that split "150 g oats" still compare),
+    leading bullets and step numbering ignored."""
+    text = unicodedata.normalize("NFKC", text).replace("⁄", "/").lower()
+    text = re.sub(r"^[^\w]+", "", text.strip())
+    text = _RE_NORM_NUMBERING.sub("", text)
+    return " ".join(re.sub(r"[^\w]+", " ", text).split())
 
 
 def strip_recipe_text(html: str, recipes: list[Recipe]) -> str:
-    """The page HTML without the list items, paragraphs and label headings
-    that repeat the recipes' ingredients and steps, and without microdata
-    recipe properties. Never raises; on error the HTML comes back unchanged."""
+    """The page HTML without the list items and paragraphs that repeat the
+    recipes' ingredients and steps word for word, the label headings left
+    empty, microdata recipe properties and the JSON-LD. Never raises; on
+    error the HTML comes back unchanged."""
     try:
         return _strip_recipe_text(html, recipes)
     except Exception as e:
@@ -700,25 +803,31 @@ def strip_recipe_text(html: str, recipes: list[Recipe]) -> str:
         return html
 
 
-def _matches(text: str, targets: set[str], long_targets: list[str]) -> bool:
-    norm = _norm(text)
-    if not norm:
-        return False
-    if norm in targets:
-        return True
-    return any(t in norm and len(norm) <= len(t) + 12 for t in long_targets)
+def _in_comment_area(tag) -> bool:
+    node = tag
+    while node is not None and getattr(node, "attrs", None) is not None:
+        classes = node.get("class") or []
+        names = " ".join(classes if isinstance(classes, list) else [classes])
+        if _RE_COMMENT_AREA.search(names + " " + (node.get("id") or "")):
+            return True
+        node = node.parent
+    return False
 
 
 def _strip_recipe_text(html: str, recipes: list[Recipe]) -> str:
-    targets: set[str] = set()
+    # Each ingredient or step removes at most one page element whose text
+    # equals it (after _norm). An element that adds anything, even one word
+    # ("optional", "never", "160C fan"), is kept: a repeated line is better
+    # than a lost fact.
+    remaining: dict[str, int] = {}
+    titles: set[str] = set()
     for r in recipes:
-        targets.update(_norm(i) for i in r.ingredients)
-        for title, steps in r.method:
-            targets.update(_norm(s) for s in steps)
-            if title:
-                targets.add(_norm(title))
-    targets.discard("")
-    long_targets = [t for t in targets if len(t) >= 12]
+        items = list(r.ingredients) + [s for _t, steps in r.method for s in steps]
+        for item in items:
+            key = _norm(item)
+            if key:
+                remaining[key] = remaining.get(key, 0) + 1
+        titles.update(_norm(t) for t, _s in r.method if t)
     soup = BeautifulSoup(html, "lxml")
     # Content extractors read JSON-LD too, which would bring the steps back
     for script in soup.find_all("script", attrs={"type": re.compile(r"ld\+json", re.I)}):
@@ -738,7 +847,9 @@ def _strip_recipe_text(html: str, recipes: list[Recipe]) -> str:
             continue
         if tag.name == "p" and tag.find_parent("li") is not None:
             continue
-        if _matches(tag.get_text(" "), targets, long_targets):
+        key = _norm(tag.get_text(" "))
+        if remaining.get(key, 0) > 0 and not _in_comment_area(tag):
+            remaining[key] -= 1
             tag.decompose()
 
     for lst in list(body.find_all(["ul", "ol"])):
@@ -750,7 +861,7 @@ def _strip_recipe_text(html: str, recipes: list[Recipe]) -> str:
         if h.decomposed:
             continue
         text = _norm(h.get_text(" "))
-        if text not in _LABEL_HEADINGS and text not in targets:
+        if text not in _LABEL_HEADINGS and text not in titles:
             continue
         nxt = h.find_next_sibling()
         while nxt is not None and not nxt.get_text(strip=True) and nxt.name not in headings:

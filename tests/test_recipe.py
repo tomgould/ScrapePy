@@ -16,6 +16,7 @@ from scrapepy.convert.recipe import (
     loads_lenient,
     readable_duration,
     split_steps,
+    strip_step_numbers,
 )
 from scrapepy.convert.to_markdown import HTMLToMarkdown
 
@@ -383,7 +384,7 @@ def test_single_string_lists(tmp_path):
                                        "3. Serve straight away."]
 
 
-# 9. Instructions as one paragraph of sentences, numeric yield
+# 9. Instructions as one paragraph of sentences (kept as one step), numeric yield
 def test_sentence_instructions_and_numeric_yield(tmp_path):
     recipe = {
         "@type": "Recipe", "name": "Yoghurt Bark",
@@ -394,8 +395,8 @@ def test_sentence_instructions_and_numeric_yield(tmp_path):
     }
     front, body = convert(tmp_path, page(ld(recipe), f"<p>{STORY}</p>", title="Yoghurt Bark"))
     assert section(body, "Method") == [
-        "1. Line a tray with paper.", "2. Spread the yoghurt thinly!",
-        "3. Scatter over the berries.", "4. Freeze for 2 hours, then snap."]
+        "1. Line a tray with paper. Spread the yoghurt thinly! "
+        "Scatter over the berries. Freeze for 2 hours, then snap."]
     assert front["servings"] == "6"
     assert front["total_time"] == "2 hours"
     assert "- Total time: 2 hours (PT2H)" in body
@@ -542,7 +543,7 @@ def test_readable_duration(raw, expected):
 
 
 def test_loads_lenient_shapes():
-    assert loads_lenient('<!-- {"a": [1, 2,],} -->') == {"a": [1, 2]}
+    assert loads_lenient('<!-- {"a": [1, 2,],} -->') == {"a": ["1", "2"]}
     assert loads_lenient('{"a": "line\nbreak"}') == {"a": "line\nbreak"}
     assert loads_lenient('{"u": "http://x.example/a//b"} // note') == {"u": "http://x.example/a//b"}
     with pytest.raises(ValueError):
@@ -550,7 +551,7 @@ def test_loads_lenient_shapes():
 
 
 def test_split_steps_numbering_removed():
-    assert split_steps("Step 1: Mix.\nStep 2) Bake.") == ["Mix.", "Bake."]
+    assert strip_step_numbers(split_steps("Step 1: Mix.\nStep 2) Bake.")) == ["Mix.", "Bake."]
 
 
 def test_find_recipes_never_raises():
