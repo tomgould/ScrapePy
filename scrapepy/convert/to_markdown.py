@@ -5,6 +5,7 @@ Swagger UI, Adobe RoboHelp, and MadCap Flare documentation.
 """
 
 import hashlib
+import json
 import os
 import re
 from dataclasses import dataclass
@@ -348,33 +349,46 @@ class _FenceSafeConverter(markdownify.MarkdownConverter):
         return out[:start] + fence + out[start + 3:end] + fence + out[end + 3:]
 
 
-# Class or id words that mark the site's own header, logo or menu
-_SITE_CHROME_RE = re.compile(
-    r"(?:^|[\s_-])(?:site-?header|global-?header|masthead|logo|navbar|nav-?bar|"
-    r"site-?title|site-?name|site-?brand|site-?branding|branding|top-?bar)(?:$|[\s_-])",
-    re.IGNORECASE,
-)
+# Whole class or id tokens that mark the site's own header, logo or menu
+# (compared as whole tokens, so "has-navbar" or "docs-top-bar" do not match)
+_SITE_CHROME_TOKENS = frozenset({
+    "site-header", "siteheader", "global-header", "masthead", "navbar", "nav-bar",
+    "navbar-brand", "logo", "site-logo", "header-logo", "site-title", "site-name",
+    "site-brand", "site-branding", "branding", "top-bar", "topbar",
+})
 _CHROME_ROLES = ("banner", "navigation", "contentinfo", "complementary")
 # Separators between a page's name and the site's name in <title>
-_TITLE_SEP_RE = re.compile(r"\s+[|\-\u2013\u2014:\u00b7]\s+")
+_TITLE_SEP_RE = re.compile(r"\s*[|\-\u2013\u2014:\u00b7\u00bb]\s*")
+# Second-level labels under a country code ("acme.co.uk")
+_SECOND_LEVEL = {"co", "com", "org", "net", "ac", "gov", "edu", "ltd", "plc", "or", "ne"}
+
+
+def _norm(text: str) -> str:
+    """Lowercase letters and digits only, for comparing names."""
+    return re.sub(r"[\W_]+", "", (text or "").lower())
 
 
 def _is_chrome_h1(h1) -> bool:
     """Whether an H1 belongs to the site's chrome rather than the page: in a
     nav, footer or aside, a <header> outside <article> and <main>, a banner
-    or navigation role, or an element whose class or id names a site header,
-    masthead, logo or navbar."""
+    or navigation role, or an
+    element whose class or id is a site-header, masthead, logo or navbar
+    token. An H1 inside <main> or <article> is page content whatever wraps
+    it, so the walk up stops there (and at <body>)."""
     for el in [h1, *h1.parents]:
-        if el.name in ("body", "html", "[document]") or el.name is None:
-            break
+        if el.name in ("main", "article", "body", "html", "[document]") or el.name is None:
+            return False
+        if el.get("role") == "main":
+            return False
         if el.name in ("nav", "footer", "aside"):
-            return True
-        if el.get("role") in _CHROME_ROLES:
             return True
         if el.name == "header" and el.find_parent(["article", "main"]) is None:
             return True
-        hints = " ".join(el.get("class", []) + [el.get("id", "")])
-        if hints and _SITE_CHROME_RE.search(hints):
+        if el.get("role") in _CHROME_ROLES:
+            return True
+        tokens = [c.lower().replace("_", "-") for c in el.get("class", [])]
+        tokens.append(el.get("id", "").lower().replace("_", "-"))
+        if any(t in _SITE_CHROME_TOKENS for t in tokens):
             return True
     return False
 
@@ -384,41 +398,88 @@ def _title_text(soup) -> str:
     return clean_title(tag.get_text(" ", strip=True)) if tag else ""
 
 
-def _is_site_name_h1(h1, title: str) -> bool:
-    """Whether an H1 holds the site's name: it links to the home page, or its
-    text is the last part of <title> after a separator ("Page | Site")."""
+def _host_label(url: str | None) -> str:
+    """The registrable label of a URL's host ("acme" for www.acme.co.uk)."""
+    host = (urlparse(url or "").hostname or "").lower()
+    labels = [x for x in host.split(".") if x]
+    if len(labels) < 2 or labels[-1].isdigit():
+        return ""
+    if len(labels) >= 3 and labels[-2] in _SECOND_LEVEL and len(labels[-1]) == 2:
+        return labels[-3]
+    return labels[-2]
+
+
+def _brand_names(soup, page_url: str | None) -> set[str]:
+    """Normalised names the page gives for its site: og:site_name,
+    application-name, schema.org WebSite or publisher name, and the host's
+    registrable label."""
+    names = set()
+    for attrs in ({"property": "og:site_name"}, {"name": "application-name"}):
+        tag = soup.find("meta", attrs=attrs)
+        if tag and tag.get("content"):
+            names.add(_norm(tag["content"]))
+    for script in soup.find_all("script", type="application/ld+json"):
+        try:
+            data = json.loads(script.string or "")
+        except (ValueError, TypeError):
+            continue
+        stack = [data]
+        while stack:
+            item = stack.pop()
+            if isinstance(item, list):
+                stack.extend(item)
+            elif isinstance(item, dict):
+                if item.get("@type") == "WebSite" and isinstance(item.get("name"), str):
+                    names.add(_norm(item["name"]))
+                pub = item.get("publisher")
+                if isinstance(pub, dict) and isinstance(pub.get("name"), str):
+                    names.add(_norm(pub["name"]))
+                stack.extend(v for v in item.values() if isinstance(v, (dict, list)))
+    label = _host_label(page_url)
+    if label:
+        names.add(_norm(label))
+    names.discard("")
+    return names
+
+
+def _is_site_name_h1(h1, title: str, brands: set[str]) -> bool:
+    """Whether an H1 holds the site's name: it links to the home page, or it
+    equals one part of <title> ("Acme Corp - Contact us") and that part is
+    the site's name by og:site_name, application-name, schema.org or the
+    host name. Without such a signal the H1 is kept."""
     link = h1.find("a", href=True)
     if link is not None:
         parsed = urlparse(link["href"].strip())
         if parsed.path in ("", "/") and not parsed.query and not parsed.fragment:
             return True
-    parts = [p for p in _TITLE_SEP_RE.split(title) if p.strip()]
-    text = clean_title(h1.get_text(" ", strip=True)).lower()
-    return len(parts) >= 2 and bool(text) and text == parts[-1].strip().lower()
+    text = _norm(h1.get_text(" ", strip=True))
+    parts = [_norm(x) for x in _TITLE_SEP_RE.split(title) if x.strip()]
+    return len(parts) >= 2 and bool(text) and text in parts and text in brands
 
 
-def _remove_site_h1s(soup) -> set[str]:
+def _remove_site_h1s(soup, page_url: str | None = None) -> set[str]:
     """Remove H1s that are site chrome or the site's name; return their
-    texts, lowercased, so <title> can drop the site's name."""
+    texts, normalised, so <title> can drop the site's name."""
     title = _title_text(soup)
+    brands = _brand_names(soup, page_url)
     names = set()
     for h1 in soup.find_all("h1"):
-        if _is_chrome_h1(h1) or _is_site_name_h1(h1, title):
-            names.add(clean_title(h1.get_text(" ", strip=True)).lower())
+        if _is_chrome_h1(h1) or _is_site_name_h1(h1, title, brands):
+            names.add(_norm(h1.get_text(" ", strip=True)))
             h1.decompose()
     return names
 
 
 def _page_title(soup, site_names: set[str]) -> str:
     """The page's <title>, without the site's name when that name is a
-    separated part at either end ("Page | Site" or "Site - Page")."""
+    separated part at either end ("Page | Site" or "Site: Page")."""
     title = _title_text(soup)
     seps = list(_TITLE_SEP_RE.finditer(title))
     if seps and site_names:
         last, first = seps[-1], seps[0]
-        if title[last.end():].strip().lower() in site_names:
+        if _norm(title[last.end():]) in site_names:
             return title[:last.start()].strip()
-        if title[:first.start()].strip().lower() in site_names:
+        if _norm(title[:first.start()]) in site_names:
             return title[first.end():].strip()
     return title
 
@@ -466,6 +527,8 @@ class HTMLToMarkdown:
         # One file, one URL: a later URL whose file another URL already wrote
         # is written to a hash-suffixed name instead (see output/naming.py)
         self._written_paths: dict[str, str] = {}
+        # URL of the page being converted, for telling its site's name apart
+        self._page_url: str | None = None
         # Why the most recent convert_file() call failed, or None
         self.last_error: str | None = None
 
@@ -819,7 +882,7 @@ class HTMLToMarkdown:
     def extract_standard_content(self, soup):
         """Extract content from standard sites (WordPress, blogs, general CMS)."""
         # A logo or menu H1 in the site's chrome is never the title
-        page_title = _page_title(soup, _remove_site_h1s(soup))
+        page_title = _page_title(soup, _remove_site_h1s(soup, self._page_url))
         # An article's own <header> is removed with the other headers, so
         # its H1 (the story's title) is moved out first
         for h1 in soup.find_all("h1"):
@@ -1476,6 +1539,7 @@ class HTMLToMarkdown:
         too short, a duplicate of a file already written at another path, or
         failed, with last_error saying why). With html given, filepath is only
         used for naming and is never read."""
+        self._page_url = (metadata or {}).get("url") or self.base_url
         self.last_output_path = None
         self.last_output_existed = False
         self.last_duplicate_of = None
@@ -1570,7 +1634,7 @@ class HTMLToMarkdown:
             # Ensure page title is always present as # Heading
             if title_h1(md) is None:
                 title_soup = BeautifulSoup(html[:5000], "lxml")
-                site_names = _remove_site_h1s(title_soup)
+                site_names = _remove_site_h1s(title_soup, self._page_url)
                 title = ""
                 h1 = title_soup.find("h1")
                 if h1 and first_h1(md) is None:

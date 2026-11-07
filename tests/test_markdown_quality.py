@@ -201,11 +201,11 @@ class TestTitleIsTheFirstH1:
         assert normalize_headings(md) == "Kicker\n\n```\n# comment\n```\n\n# Title"
 
 
-def convert_page(tmp_path, body, title="Doc"):
-    html = f"<html><head><title>{title}</title></head><body>{body}</body></html>"
+def convert_page(tmp_path, body, title="Doc", head="", url="https://example.com/p"):
+    html = f"<html><head><title>{title}</title>{head}</head><body>{body}</body></html>"
     conv = HTMLToMarkdown(str(tmp_path), output_dir=tmp_path / "out")
     out = tmp_path / "out" / "page.md"
-    assert conv.convert_file(tmp_path / "page.html", metadata={"url": "https://example.com/p"},
+    assert conv.convert_file(tmp_path / "page.html", metadata={"url": url},
                              output_path=out, html=html)
     text = out.read_text(encoding="utf-8")
     import yaml
@@ -304,6 +304,67 @@ class TestTitleThroughConversion:
                           "date": "2026-02-20", "page_type": "article"}, output_path=out, html=html)
         body = out.read_text(encoding="utf-8").split("\n---\n", 1)[1]
         assert "# Dated\n\n**20 Feb 2026**" in body
+
+
+class TestSiteChromeH1:
+    @pytest.mark.parametrize("wrapper", [
+        '<div class="has-navbar">', '<div class="layout-with-top-bar">',
+        '<div class="branding-blue">', '<div class="docs-top-bar">',
+    ])
+    def test_wrapper_class_lookalikes_keep_the_h1(self, tmp_path, wrapper):
+        front, body = convert_page(tmp_path, f"{wrapper}<main><h1>Real article</h1>"
+                                   f"<p>{FILLER}</p></main></div>", title="Article | Site")
+        assert front["title"] == "Real article"
+        assert lines(body)[0] == "# Real article"
+
+    def test_h1_in_main_inside_a_navbar_wrapper_counts(self, tmp_path):
+        front, _ = convert_page(tmp_path, '<div class="navbar"><main><h1>Real article</h1>'
+                                f"<p>{FILLER}</p></main></div>", title="Article | Site")
+        assert front["title"] == "Real article"
+
+    @pytest.mark.parametrize("chrome", [
+        '<div class="site-header"><h1>Acme</h1></div>',
+        '<div id="masthead"><h1>Acme</h1></div>',
+        '<nav><h1>Menu</h1></nav>',
+        '<footer><h1>Acme footer</h1></footer>',
+    ])
+    def test_real_chrome_h1_is_not_the_title(self, tmp_path, chrome):
+        front, _ = convert_page(tmp_path, f"{chrome}<div><h2>Opening times</h2><p>{FILLER}</p></div>",
+                                title="Opening times")
+        assert front["title"] == "Opening times"
+
+
+class TestBrandH1:
+    SITE = '<meta property="og:site_name" content="Acme Corp">'
+
+    def page(self, tmp_path, title, h1, head="", url="https://example.com/p"):
+        return convert_page(tmp_path, f"<main><h1>{h1}</h1><p>{FILLER}</p></main>",
+                            title=title, head=head, url=url)[0]["title"]
+
+    def test_brand_first(self, tmp_path):
+        assert self.page(tmp_path, "Acme Corp - Contact us", "Acme Corp", self.SITE) == "Contact us"
+
+    def test_brand_last(self, tmp_path):
+        assert self.page(tmp_path, "Contact us | Acme Corp", "Acme Corp", self.SITE) == "Contact us"
+
+    def test_colon_without_space(self, tmp_path):
+        head = '<meta name="application-name" content="Acme">'
+        assert self.page(tmp_path, "Acme: Contact", "Acme", head) == "Contact"
+
+    def test_publisher_in_json_ld(self, tmp_path):
+        head = ('<script type="application/ld+json">{"@type": "Article", '
+                '"publisher": {"@type": "Organization", "name": "Acme Corp"}}</script>')
+        assert self.page(tmp_path, "Acme Corp » Contact us", "Acme Corp", head) == "Contact us"
+
+    def test_host_label(self, tmp_path):
+        assert self.page(tmp_path, "Contact | ACME", "ACME",
+                         url="https://www.acme.co.uk/contact") == "Contact"
+
+    def test_brand_alone_keeps_the_h1(self, tmp_path):
+        assert self.page(tmp_path, "Acme Corp", "Acme Corp", self.SITE) == "Acme Corp"
+
+    def test_no_brand_signal_keeps_the_h1(self, tmp_path):
+        assert self.page(tmp_path, "Acme Corp - Contact us", "Acme Corp") == "Acme Corp"
 
 
 class TestSmallFixes:
