@@ -143,7 +143,7 @@ class CrawlCache:
     # --- File assignments ---
 
     def has_assignments(self) -> bool:
-        """False for a cache written before file assignments were stored."""
+        """False for a cache that holds no file assignments."""
         return "assignments" in self._data
 
     def get_assignments(self) -> dict[str, dict]:

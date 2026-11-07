@@ -105,8 +105,8 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
         cache = CrawlCache(config.output_dir)
         cache.load()
         if not cache.has_assignments():
-            # A cache from before file assignments were stored: convert every
-            # page again once, so none is left "unchanged" without a file
+            # A cache that holds no file assignments: convert every page
+            # again once, so none is left "unchanged" without a file
             cache.clear_pages()
 
     # Date filtering state

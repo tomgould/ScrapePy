@@ -140,8 +140,8 @@ def _read_frontmatter(path: str) -> dict | None:
 
 def assignments_from_disk(markdown_dir: str) -> dict[str, dict]:
     """Rebuild URL -> Markdown file from the files' own frontmatter, for a
-    run with no stored assignments (no cache, a deleted cache, or one from
-    an older version), so URLs keep the files they already have. Generated
+    run with no stored assignments (no cache, a deleted cache, or a cache
+    that holds none), so URLs keep the files they already have. Generated
     listing pages (with an "articles" count) are skipped. When one URL has
     several files, its unsuffixed one wins, else the first by name."""
     found: dict[str, dict] = {}
