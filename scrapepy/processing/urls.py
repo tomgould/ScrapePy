@@ -8,7 +8,9 @@ from ..config import ScrapeConfig
 
 # File extensions to skip when crawling
 SKIP_EXTENSIONS = re.compile(
-    r'\.(pdf|doc|docx|jpg|jpeg|png|gif|svg|webp|ico|css|js|woff|woff2|ttf|eot|mp4|mp3|wav|webm|zip|tar|gz)$',
+    r'\.(pdf|doc|docx|jpg|jpeg|png|gif|svg|webp|ico|css|js|woff|woff2|ttf|eot|mp4|mp3|wav|webm|zip|tar|gz'
+    # Data formats: a page's JSON, XML or feed version is never a page
+    r'|json|xml|rss|atom)$',
     re.IGNORECASE,
 )
 

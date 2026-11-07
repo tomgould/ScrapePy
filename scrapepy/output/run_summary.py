@@ -40,6 +40,7 @@ class RunStats:
     failed: list[dict] = field(default_factory=list)      # {"url", "reason"}
     blocked_by_robots: list[str] = field(default_factory=list)
     duplicates: list[dict] = field(default_factory=list)  # {"url", "same_as"}
+    collisions: list[dict] = field(default_factory=list)  # {"url", "file", "kept"}
     skipped_old: int = 0
     interrupted: bool = False
     interrupted_by: str | None = None    # "SIGINT" or "SIGTERM"
@@ -62,6 +63,10 @@ class RunStats:
     def record_duplicate(self, url: str, same_as_path: str):
         """A page whose Markdown matched a file already written in this run."""
         self.duplicates.append({"url": url, "same_as": same_as_path})
+
+    def record_collision(self, url: str, file_path: str, kept_url: str):
+        """A page skipped because another URL already wrote its file this run."""
+        self.collisions.append({"url": url, "file": file_path, "kept": kept_url})
 
     def record_blocked(self, url: str):
         if url not in self.blocked_by_robots:
@@ -135,6 +140,7 @@ def build_summary(
             "failed": len(stats.failed),
             "blocked_by_robots": len(stats.blocked_by_robots),
             "duplicates": len(stats.duplicates),
+            "collisions": len(stats.collisions),
             "skipped_old": stats.skipped_old,
         },
         "new_markdown": [relative_to_root(p, root) for p in stats.new_markdown],
@@ -145,6 +151,10 @@ def build_summary(
         "duplicates": [
             {"url": d["url"], "same_as": relative_to_root(d["same_as"], root)}
             for d in stats.duplicates
+        ],
+        "collisions": [
+            {"url": c["url"], "file": relative_to_root(c["file"], root), "kept": c["kept"]}
+            for c in stats.collisions
         ],
         "interrupted": stats.interrupted,
         "interrupted_by": stats.interrupted_by,

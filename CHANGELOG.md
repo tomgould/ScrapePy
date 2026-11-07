@@ -21,6 +21,8 @@ All notable changes to ScrapePy are listed here. The format follows [Keep a Chan
 
 ### Fixed
 
+- A page's alternate formats (`<link rel="alternate">` JSON, Markdown or feed versions) and `.json`, `.xml`, `.rss` and `.atom` links were crawled as pages, and responses that are not HTML were converted, so data files overwrote real pages. They are no longer queued or converted.
+- A second URL mapping to a file already written in the same run (`/about.html` after `/about`) overwrote it. The first URL now keeps the file and the later one is listed under `collisions` in `run_summary.json`.
 - A junk-removal rule deleted every linked H2 or H3 heading, and links with a title attribute got `.md` appended after the title.
 
 ## 0.2.0

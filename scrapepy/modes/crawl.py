@@ -30,6 +30,25 @@ from ..processing.urls import (
 # Precompiled regexes for hot-path link extraction
 _RE_HREF = re.compile(r'href=["\']([^"\']+)["\']')
 _RE_DATA_HREF = re.compile(r'(?:data-href|data-url|data-link)=["\']([^"\']+)["\']')
+_RE_LINK_TAG = re.compile(r"<link\b[^>]*>", re.IGNORECASE)
+_RE_TAG_ATTR = re.compile(r'([a-zA-Z-]+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s>]+))')
+_HTML_TYPES = ("text/html", "application/xhtml+xml")
+
+
+def _drop_alternate_formats(html: str) -> str:
+    """Remove <link rel="alternate"> tags whose type is not HTML (a page's
+    JSON, Markdown or feed version), so their URLs are never queued.
+    Alternates with no type or an HTML type (language versions) are kept."""
+    def keep(m):
+        attrs = {}
+        for a in _RE_TAG_ATTR.finditer(m.group(0)):
+            attrs[a.group(1).lower()] = a.group(2) or a.group(3) or a.group(4) or ""
+        rels = attrs.get("rel", "").lower().split()
+        ctype = attrs.get("type", "").strip().lower()
+        if "alternate" in rels and ctype and not ctype.startswith(_HTML_TYPES):
+            return ""
+        return m.group(0)
+    return _RE_LINK_TAG.sub(keep, html)
 _RE_UI_ELEMENT_ID = re.compile(r'^(mintoc-|rh-|dropspot|#[a-z0-9]{8,})')
 _RE_RSS_FEED = re.compile(r'/(?:rss|feed|atom)(?:\.xml)?/?$', re.IGNORECASE)
 from ..processing.dates import get_best_date, url_has_old_date
@@ -239,7 +258,9 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
 
     # Files written during this run: a second URL saving to the same file
     # (such as / and /index.html) is not counted again.
-    written_this_run: set[str] = set()
+    # File path -> the URL that wrote it (or was seen unchanged) this run.
+    # The first URL keeps a file; a later URL mapping to it is a collision.
+    file_owners: dict[str, str] = {}
 
     if stats.interrupted:
         to_visit.clear()
@@ -377,6 +398,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                 # Handle 304 Not Modified
                 if status == 304:
                     print(f"  Unchanged (304): {full_url}")
+                    file_owners.setdefault(url_to_filepath(url_path, config, hash_fragment), full_url)
                     unchanged_count += 1
                     stats.unchanged.append(full_url)
                     cached_links = cache.get_page_links(url_path)
@@ -402,6 +424,13 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                 print(f"  Skipped (HTTP {status}): {full_url}")
                 broken_links.add(full_url)
                 stats.record_failed(full_url, f"HTTP {status}")
+                continue
+
+            # Only HTML is converted: a page's raw Markdown, JSON or XML
+            # version would be written as a second, garbled copy of the page
+            content_type = _content_type(page_info)
+            if content_type and not content_type.startswith(_HTML_TYPES):
+                print(f"  Skipped (not HTML, {content_type}): {full_url}")
                 continue
 
             # Quick error page check
@@ -432,6 +461,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
             # Content-hash check: skip if content hasn't changed
             if cache and cache.is_page_unchanged(url_path, html):
                 print(f"  Unchanged (same content): {full_url}")
+                file_owners.setdefault(url_to_filepath(url_path, config, hash_fragment), full_url)
                 unchanged_count += 1
                 stats.unchanged.append(full_url)
                 links = _extract_links_from_html(html)
@@ -606,14 +636,17 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
             # In markdown-only mode the HTML path only names the page; nothing
             # is written there and the converter is handed the HTML directly.
             filepath = url_to_filepath(url_path, config, hash_fragment)
-            already_written = filepath in written_this_run
+            owner = file_owners.get(filepath)
+            claimed_by = owner if owner and owner != full_url else None
+            already_written = claimed_by is not None
             existed_before = not already_written and (
                 (cache is not None and cache.has_page(url_path))
                 or (not config.markdown_only and os.path.exists(filepath))
             )
-            written_this_run.add(filepath)
+            file_owners.setdefault(filepath, full_url)
             html_for_md = None
-            if config.markdown_only:
+            if config.markdown_only or claimed_by:
+                # Another URL owns this file: never overwrite its HTML copy
                 html_for_md = html
             else:
                 # Rewrite URLs for offline viewing
@@ -667,6 +700,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                     md_converter.convert_file(
                         _Path(filepath), metadata=md_meta,
                         output_path=md_output_path, html=html_for_md,
+                        claimed_by=claimed_by,
                     )
                     md_written = md_converter.last_output_path
                 elif is_section_page:
@@ -676,10 +710,14 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                     md_converter.convert_file(
                         _Path(filepath), metadata=md_meta,
                         output_path=md_output_path, html=html_for_md,
+                        claimed_by=claimed_by,
                     )
                     md_written = md_converter.last_output_path
                 else:
-                    md_converter.convert_file(_Path(filepath), metadata=md_meta, html=html_for_md)
+                    md_converter.convert_file(
+                        _Path(filepath), metadata=md_meta, html=html_for_md,
+                        claimed_by=claimed_by,
+                    )
                     md_written = md_converter.last_output_path
 
                 if config.markdown_only and md_written and not already_written:
@@ -719,15 +757,23 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
 
             duplicate = md_converter.last_duplicate_of if md_converter else None
             conversion_error = md_converter.last_error if md_converter else None
+            if md_converter:
+                collision = md_converter.last_collision
+            else:
+                collision = (filepath, claimed_by) if claimed_by else None
             if conversion_error:
                 # No Markdown was written: report the page as failed, and keep
                 # it out of the cache so the next run converts it again
                 stats.record_failed(full_url, f"conversion failed: {conversion_error}")
-            elif not already_written and not duplicate:
+            elif collision:
+                # Another URL already wrote this file: keep the first, list
+                # this one, and leave it uncached so every run decides alike
+                stats.record_collision(full_url, collision[0], collision[1])
+            elif not duplicate and (not claimed_by or md_written):
                 stats.record_saved(full_url, existed_before, md_written)
 
             # Update cache
-            if cache and not conversion_error:
+            if cache and not conversion_error and not collision:
                 resp_headers = page_info.get("headers", {})
                 cache.update_page(
                     url_path, resp_headers, html, links=links,
@@ -1063,10 +1109,19 @@ def _check_rendered_error_page(html: str) -> bool:
         return False
 
 
+def _content_type(page_info: dict) -> str:
+    """The response's media type, lowercase, or "" when the server sent none."""
+    for key, value in (page_info.get("headers") or {}).items():
+        if str(key).lower() == "content-type":
+            return str(value).split(";", 1)[0].strip().lower()
+    return ""
+
+
 def _extract_links_from_html(html: str) -> list[str]:
     """Extract links from raw HTML via regex (preserves DOM order)."""
     seen = set()
     links = []
+    html = _drop_alternate_formats(html)
     for m in _RE_HREF.finditer(html):
         href = m.group(1)
         if href not in seen:

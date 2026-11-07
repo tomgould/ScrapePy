@@ -24,10 +24,10 @@ TOP_LEVEL_KEYS = {
     "schema_version", "status", "start_url", "started_at", "ended_at", "output_dir",
     "html_dir", "markdown_dir", "options", "counts", "new_markdown",
     "changed_markdown", "unchanged_urls", "failed", "blocked_by_robots",
-    "interrupted", "interrupted_by", "exit_code", "duplicates",
+    "interrupted", "interrupted_by", "exit_code", "duplicates", "collisions",
 }
 COUNT_KEYS = {"fetched", "new", "changed", "unchanged", "failed", "blocked_by_robots", "skipped_old",
-              "duplicates"}
+              "duplicates", "collisions"}
 
 
 def _config(tmp_path, **kw):
@@ -66,6 +66,7 @@ class TestSummarySchema:
         assert counts == {
             "fetched": 5, "new": 2, "changed": 1, "unchanged": 1,
             "failed": 1, "blocked_by_robots": 1, "skipped_old": 0, "duplicates": 0,
+            "collisions": 0,
         }
 
     def test_paths_relative_to_output_root(self, tmp_path):

@@ -281,7 +281,7 @@ The file is replaced as soon as a crawl starts with a placeholder whose `status`
   "options": { "concurrent": 4, "wait_seconds": 3.0, "ignore_robots": false, "...": "..." },
   "counts": {
     "fetched": 12, "new": 10, "changed": 0, "unchanged": 0,
-    "failed": 2, "blocked_by_robots": 0, "duplicates": 0, "skipped_old": 0
+    "failed": 2, "blocked_by_robots": 0, "duplicates": 0, "collisions": 0, "skipped_old": 0
   },
   "new_markdown": ["MarkdownSites/quotes_toscrape_com/_index.md"],
   "changed_markdown": [],
@@ -289,6 +289,7 @@ The file is replaced as soon as a crawl starts with a placeholder whose `status`
   "failed": [{ "url": "https://quotes.toscrape.com/missing", "reason": "HTTP 404" }],
   "blocked_by_robots": [],
   "duplicates": [],
+  "collisions": [],
   "interrupted": false,
   "interrupted_by": null,
   "exit_code": 0
@@ -304,11 +305,12 @@ The file is replaced as soon as a crawl starts with a placeholder whose `status`
 | `output_dir` | Absolute path of the output directory. `html_dir` and `markdown_dir` are relative to it; `markdown_dir` is `null` with `--no-markdown` |
 | `options` | The settings that shaped the run. Credentials are never written: `auth_used` and `proxy_used` only say whether they were set |
 | `counts.fetched` | Page requests that completed, with a response or a network error, including ones answered 304 Not Modified. A request still waiting for its turn when the run is interrupted is not counted |
-| `counts.new`, `counts.changed` | Pages saved this run. A page is changed when an earlier run saved it (it is in the incremental cache or its HTML file already exists). A second URL that saves to a file already written in the same run, such as `/index.html` after `/`, is fetched but not counted again |
+| `counts.new`, `counts.changed` | Pages saved this run. A page is changed when an earlier run saved it (it is in the incremental cache or its HTML file already exists). A second URL that maps to a file already written in the same run, such as `/index.html` after `/`, is fetched but not written or counted again: it is a duplicate when its Markdown matches, otherwise a collision |
 | `counts.unchanged` | Pages skipped because the server said 304 or the HTML matched the cache. Their URLs are in `unchanged_urls` |
 | `counts.failed` | Fetch errors, HTTP 4xx/5xx and error pages. `failed` lists each URL with a reason |
 | `counts.blocked_by_robots` | URLs skipped because robots.txt disallows them, listed in `blocked_by_robots` |
 | `counts.duplicates` | Pages whose Markdown was identical to a file already written in this run (such as `/` and `/index.html`). They are not written again; `duplicates` lists each `url` with the file it matched as `same_as` |
+| `counts.collisions` | Pages that map to a file another URL already wrote in this run (such as `/about.html` after `/about`) with different content. The first URL keeps the file and the later page is not written; `collisions` lists each `url` with the `file` and the URL it was `kept` for |
 | `counts.skipped_old` | Articles dropped by `--recent`/`--since` after fetching |
 | `new_markdown`, `changed_markdown` | Markdown files written for new and changed pages. A page too short to convert is counted but has no file here. Generated `_index.md` listing pages are not included |
 | `exit_code` | The exit code the run finished with |

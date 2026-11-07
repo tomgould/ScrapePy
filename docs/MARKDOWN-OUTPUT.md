@@ -33,7 +33,9 @@ A page's path on the site becomes its path under `MarkdownSites/<site>/`, with `
 
 Pages are classified as sections (listing pages: home, categories, tags) or articles. A section page becomes `_index.md` in a folder named after it. With `--recent` or `--since`, articles found on a section page are written under that section's folder.
 
-One page is one file. When a page's Markdown body is identical to a file already written in the same run (for example `/` and `/index.html`), it is not written again and `run_summary.json` lists it under `duplicates`. Query strings never reach file names, because links are queued without them.
+One page is one file. When a page's Markdown body is identical to a file already written in the same run (for example `/` and `/index.html`), it is not written again and `run_summary.json` lists it under `duplicates`. When a different page maps to a file another URL already wrote (or that a page seen unchanged owns) in the same run, the first URL keeps the file, the later page is not written (in the default mode its HTML copy is not written either), and `run_summary.json` lists it under `collisions`. Crawl order decides which URL comes first, so a re-run of the same site keeps the same page. Query strings never reach file names, because links are queued without them.
+
+Only pages are crawled. A URL ending in `.json`, `.xml`, `.rss` or `.atom` is never queued, nor is one that a page declares with `<link rel="alternate">` and a type that is not HTML (its JSON, Markdown or feed version); alternates with no type or an HTML type, such as language versions, are followed. Links to `.md` addresses in the body are followed like any other link, but a response is converted only when the server says it is HTML (`text/html` or `application/xhtml+xml`, or no type at all), so a raw Markdown, JSON or XML file is fetched and skipped rather than written as a garbled copy of the page.
 
 Some pages produce no file: error pages, RSS and Atom feeds met during a crawl (a feed given as the start URL is read in feed mode, below), pages with fewer than 50 words of content (recipe pages excepted), and paths containing `/feed`, `/author/`, `/category/`, `/tag/`, `/wp-includes/` or `/wp-json/` relative to the crawl's start. They are still fetched and counted in the summary.
 
@@ -161,7 +163,7 @@ When the start URL is an RSS 2.0 or Atom feed, ScrapePy reads it as content inst
 
 - Button text is kept only for questions and for toggles that open a panel (accordion and FAQ buttons with `aria-expanded` or `aria-controls`). A custom FAQ button with neither and no question mark ("Returns policy"), or a plan button ("Starter plan"), is dropped with its label. Toggles whose label looks like page furniture (share, load more, pagers, slide counters, cookie settings, search, Menu and Close in a few languages) or whose panel is mostly links are dropped too.
 
-- Different addresses can map to the same file: `/about`, `/about.html` and `/about/` all become `about.md`, and `/news/123/slug` and `/news/slug-123` both become `news/slug-123.md`. When their bodies differ, the page converted later overwrites the earlier file, so only one of them is kept, with the later `url`. Key documents on `url` and expect at most one file per name.
+- Different addresses can map to the same file: `/about`, `/about.html` and `/about/` all become `about.md`, and `/news/123/slug` and `/news/slug-123` both become `news/slug-123.md`. Only the first URL crawled gets a file; the others are listed under `collisions` in `run_summary.json` and have no document. Key documents on `url` and expect at most one file per name.
 - A page that redirects is written under the address requested, so a redirecting address and its target can both appear, and the later one is listed as a duplicate when their bodies match.
 
 ## Generated `_index.md` listing pages
@@ -181,12 +183,13 @@ Written to `ScrapedSites/<site>/run_summary.json` at the start of a crawl (with 
 | `output_dir` | string | Absolute path of the output folder |
 | `html_dir`, `markdown_dir` | string | Site folders, relative to `output_dir`; `markdown_dir` is null with `--no-markdown` |
 | `options` | object | The settings used. Credentials are never included |
-| `counts` | object of integers | `fetched`, `new`, `changed`, `unchanged`, `failed`, `blocked_by_robots`, `duplicates`, `skipped_old` |
+| `counts` | object of integers | `fetched`, `new`, `changed`, `unchanged`, `failed`, `blocked_by_robots`, `duplicates`, `collisions`, `skipped_old` |
 | `new_markdown`, `changed_markdown` | list of strings | Markdown files written for new and changed pages |
 | `unchanged_urls` | list of strings | Pages the server or the cache showed had not changed |
 | `failed` | list of `{url, reason}` | Fetch errors, HTTP 4xx and 5xx, error pages, and pages whose conversion to Markdown failed (these are not counted as new or changed and are converted again on the next run) |
 | `blocked_by_robots` | list of strings | URLs robots.txt disallowed |
 | `duplicates` | list of `{url, same_as}` | Pages whose Markdown matched a file already written, and that file |
+| `collisions` | list of `{url, file, kept}` | Pages not written because their file (`file`, relative to `output_dir`) already belongs to another URL this run (`kept`). They are not counted as new or changed and are not cached, so every run decides the same way |
 | `interrupted`, `interrupted_by` | boolean, string or null | Whether the run stopped early, and the signal (`SIGINT` or `SIGTERM`) |
 | `exit_code` | integer or null | The process exit code; null while running |
 | `feed` | object | Feed mode only (below) |

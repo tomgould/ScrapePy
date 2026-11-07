@@ -220,6 +220,49 @@ BAD_LINKS = ('<p>Call <a href="http://[your-server]:8080/api">your server</a> or
              '<a href="https://[ip]/">the box</a>.</p>')
 
 
+class TestPathCollisions:
+    PAGES = {
+        "/": page("Home", ["/about", "/about.html"]),
+        "/about": rich_page("About"),
+        "/about.html": rich_page("About, older copy"),
+    }
+
+    @pytest.mark.parametrize("runner", [run_md_only, run_default], ids=["md-only", "default"])
+    def test_first_page_keeps_the_file(self, site, tmp_path, runner):
+        site(self.PAGES, None)
+        config, summary = runner(tmp_path)
+        data, text = frontmatter(os.path.join(config.markdown_dir, "about.md"))
+        assert data["url"] == BASE + "/about"
+        assert "older copy" not in text
+        assert summary["collisions"] == [{
+            "url": BASE + "/about.html",
+            "file": "MarkdownSites/example_com/about.md",
+            "kept": BASE + "/about",
+        }]
+        assert summary["counts"]["collisions"] == 1
+        assert summary["counts"]["changed"] == 0
+        assert BASE + "/about.html" not in [f["url"] for f in summary["failed"]]
+        if not config.markdown_only:
+            mirror = open(os.path.join(config.output_dir, "about.html"), encoding="utf-8").read()
+            assert "older copy" not in mirror
+
+    def test_rerun_keeps_the_same_page(self, site, tmp_path):
+        site(self.PAGES, None)
+        run_md_only(tmp_path)
+        config, summary = run_md_only(tmp_path)
+        data, _ = frontmatter(os.path.join(config.markdown_dir, "about.md"))
+        assert data["url"] == BASE + "/about"
+        assert [c["url"] for c in summary["collisions"]] == [BASE + "/about.html"]
+        assert summary["counts"]["changed"] == 0
+
+    def test_identical_pages_on_one_file_are_duplicates(self, site, tmp_path):
+        site({"/": page("Home", ["/about", "/about.html"]),
+              "/about": rich_page("About"), "/about.html": rich_page("About")}, None)
+        config, summary = run_md_only(tmp_path)
+        assert summary["collisions"] == []
+        assert [d["url"] for d in summary["duplicates"]] == [BASE + "/about.html"]
+
+
 class TestMalformedUrls:
     @pytest.mark.parametrize("runner", [run_md_only, run_default], ids=["md-only", "default"])
     def test_bad_canonical_is_ignored(self, site, tmp_path, runner):

@@ -307,6 +307,11 @@ class HTMLToMarkdown:
         self.dedupe = True
         self._written_hashes: dict[str, str] = {}
         self.last_duplicate_of: str | None = None
+        # One file, one URL: the first URL to write a file in this run keeps
+        # it. A later URL mapping to the same file (/about and /about.html)
+        # is skipped, and last_collision says which file and which URL kept it.
+        self._written_paths: dict[str, str] = {}
+        self.last_collision: tuple[str, str] | None = None
         # Why the most recent convert_file() call failed, or None
         self.last_error: str | None = None
 
@@ -1303,12 +1308,18 @@ class HTMLToMarkdown:
 
         return metadata
 
-    def convert_file(self, filepath, metadata=None, output_path=None, html=None):
+    def convert_file(self, filepath, metadata=None, output_path=None, html=None,
+                     claimed_by=None):
         """Convert one page. With html given, filepath is only used for naming
-        and is never read (markdown-only mode has no HTML on disk)."""
+        and is never read (markdown-only mode has no HTML on disk).
+
+        claimed_by is the URL that already owns this page's file in this run,
+        when the caller knows one (the crawl does, for pages it saw unchanged):
+        the page is then not written unless it is a duplicate of a file."""
         self.last_output_path = None
         self.last_output_existed = False
         self.last_duplicate_of = None
+        self.last_collision = None
         self.last_error = None
         filepath = Path(filepath)
         explicit_output = output_path is not None
@@ -1440,10 +1451,17 @@ class HTMLToMarkdown:
             metadata.setdefault("scraped_at", utc_now_iso())
             metadata["content_hash"] = content_hash(md)
             first = self._written_hashes.get(metadata["content_hash"])
-            if self.dedupe and first and first != str(output_path):
+            owner = claimed_by or self._written_paths.get(str(output_path))
+            owned_by_other = bool(owner) and owner != metadata.get("url")
+            if self.dedupe and first and (first != str(output_path) or owned_by_other):
                 print(f"  Skipped (same content as {Path(first).name}): {filepath.name}")
                 self.skipped += 1
                 self.last_duplicate_of = first
+                return False
+            if owned_by_other:
+                print(f"  Skipped (file already written for {owner}): {filepath.name}")
+                self.skipped += 1
+                self.last_collision = (str(output_path), owner)
                 return False
             frontmatter = self._build_frontmatter(metadata)
             md = frontmatter + "\n" + md
@@ -1457,6 +1475,8 @@ class HTMLToMarkdown:
             self.converted += 1
             self.last_output_path = str(output_path)
             self._written_hashes.setdefault(metadata["content_hash"], str(output_path))
+            if metadata.get("url"):
+                self._written_paths.setdefault(str(output_path), metadata["url"])
             return True
 
         except Exception as e:
