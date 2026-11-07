@@ -645,8 +645,8 @@ def find_recipes(html: str) -> list[Recipe]:
 
 
 def _find_recipes(html: str) -> list[Recipe]:
-    if not html or ("ld+json" not in html and "schema.org/Recipe" not in html
-                    and "schema.org/recipe" not in html.lower()):
+    # Cheap test first: most pages never mention a recipe
+    if not html or "recipe" not in html.lower():
         return []
     soup = BeautifulSoup(html, "lxml")
     documents = []
