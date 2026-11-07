@@ -64,6 +64,17 @@ class RunStats:
         """A page whose Markdown matched a file already written in this run."""
         self.duplicates.append({"url": url, "same_as": same_as_path})
 
+    def retract(self, url: str, markdown_paths: list[str]) -> None:
+        """Take back a page recorded as new, changed or unchanged earlier in
+        the run (it lost its file to a better URL)."""
+        for lst in (self.new, self.changed, self.unchanged):
+            while url in lst:
+                lst.remove(url)
+        for lst in (self.new_markdown, self.changed_markdown):
+            for p in markdown_paths:
+                while p in lst:
+                    lst.remove(p)
+
     def record_collision(self, url: str, file_path: str, kept_url: str):
         """A page skipped because another URL already wrote its file this run."""
         self.collisions.append({"url": url, "file": file_path, "kept": kept_url})

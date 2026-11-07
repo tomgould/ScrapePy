@@ -132,6 +132,19 @@ class CrawlCache:
             return None
         return entry.get("page_type")
 
+    def remove_page(self, url_path: str) -> None:
+        """Forget a page, so the next run fetches and converts it in full."""
+        self._data["pages"].pop(url_path, None)
+
+    # --- Output file owners ---
+
+    def get_file_owners(self) -> dict[str, str]:
+        """Output file (relative to the cache's folder) -> URL that owns it."""
+        return dict(self._data.get("files", {}))
+
+    def set_file_owners(self, owners: dict[str, str]) -> None:
+        self._data["files"] = dict(owners)
+
     # --- Assets ---
 
     def get_asset_headers(self, asset_url: str) -> dict:

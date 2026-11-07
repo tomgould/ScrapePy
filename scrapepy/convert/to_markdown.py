@@ -5,7 +5,9 @@ Swagger UI, Adobe RoboHelp, and MadCap Flare documentation.
 """
 
 import hashlib
+import os
 import re
+from dataclasses import dataclass
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -340,6 +342,16 @@ class _FenceSafeConverter(markdownify.MarkdownConverter):
         fence = "`" * (longest + 1)
         start, end = out.index("```"), out.rindex("```")
         return out[:start] + fence + out[start + 3:end] + fence + out[end + 3:]
+
+
+@dataclass
+class PreparedPage:
+    """A page's Markdown file contents, ready to be written."""
+    output_path: str
+    text: str
+    content_hash: str
+    url: str | None
+    name: str
 
 
 class HTMLToMarkdown:
@@ -1380,14 +1392,13 @@ class HTMLToMarkdown:
 
         return metadata
 
-    def convert_file(self, filepath, metadata=None, output_path=None, html=None,
-                     claimed_by=None):
-        """Convert one page. With html given, filepath is only used for naming
-        and is never read (markdown-only mode has no HTML on disk).
+    def prepare(self, filepath, metadata=None, output_path=None, html=None):
+        """Convert one page to its Markdown file contents without writing it.
 
-        claimed_by is the URL that already owns this page's file in this run,
-        when the caller knows one (the crawl does, for pages it saw unchanged):
-        the page is then not written unless it is a duplicate of a file."""
+        Returns a PreparedPage, or None when the page gives no file (skipped,
+        too short, a duplicate of a file already written at another path, or
+        failed, with last_error saying why). With html given, filepath is only
+        used for naming and is never read."""
         self.last_output_path = None
         self.last_output_existed = False
         self.last_duplicate_of = None
@@ -1400,7 +1411,9 @@ class HTMLToMarkdown:
         else:
             output_path = self.get_output_path(filepath)
             if not output_path:
-                return False
+                return None
+        # One spelling per file, so the same file always compares equal
+        output_path = Path(os.path.abspath(output_path))
 
         try:
             if html is None:
@@ -1411,13 +1424,13 @@ class HTMLToMarkdown:
             if html.lstrip().startswith("<?xml") or "<rss" in html[:500] or "<feed" in html[:500]:
                 print(f"  Skipped (XML/RSS feed): {filepath.name}")
                 self.skipped += 1
-                return False
+                return None
 
             # Skip XML manifests and non-HTML content
             if html.lstrip().startswith("<manifest") or html.lstrip().startswith("<wlw"):
                 print(f"  Skipped (XML manifest): {filepath.name}")
                 self.skipped += 1
-                return False
+                return None
 
             # Skip known low-value WordPress paths
             rel_path = filepath.relative_to(self.input_dir)
@@ -1426,12 +1439,12 @@ class HTMLToMarkdown:
             if any(pat in "/" + rel_str for pat in wp_skip_patterns):
                 print(f"  Skipped (WordPress boilerplate): {filepath.name}")
                 self.skipped += 1
-                return False
+                return None
 
             if "<title>404" in html or "<title>403" in html or "NoSuchKey" in html:
                 print(f"  Skipped (error page): {filepath.name}")
                 self.skipped += 1
-                return False
+                return None
 
             # Build metadata if not provided (batch mode)
             if metadata is None:
@@ -1466,7 +1479,7 @@ class HTMLToMarkdown:
             if not md and not recipes:
                 print(f"  Skipped (no content/error page): {filepath.name}")
                 self.skipped += 1
-                return False
+                return None
 
             # Promote bold lines to headings first so junk section patterns
             # (which match ## headings) can catch promoted junk headings
@@ -1476,7 +1489,7 @@ class HTMLToMarkdown:
             if md is None:
                 print(f"  Skipped (content too short): {filepath.name}")
                 self.skipped += 1
-                return False
+                return None
 
             # Ensure page title is always present as # Heading
             if first_h1(md) is None:
@@ -1507,7 +1520,7 @@ class HTMLToMarkdown:
             if word_count < 50 and not recipes:
                 print(f"  Skipped (list/section page, {word_count} words): {filepath.name}")
                 self.skipped += 1
-                return False
+                return None
 
             metadata["word_count"] = word_count
 
@@ -1521,39 +1534,58 @@ class HTMLToMarkdown:
             metadata.setdefault("scraped_at", utc_now_iso())
             metadata["content_hash"] = content_hash(md)
             first = self._written_hashes.get(metadata["content_hash"])
-            owner = claimed_by or self._written_paths.get(str(output_path))
-            owned_by_other = bool(owner) and owner != metadata.get("url")
-            if self.dedupe and first and (first != str(output_path) or owned_by_other):
+            if self.dedupe and first and first != str(output_path):
                 print(f"  Skipped (same content as {Path(first).name}): {filepath.name}")
                 self.skipped += 1
                 self.last_duplicate_of = first
-                return False
-            if owned_by_other:
-                print(f"  Skipped (file already written for {owner}): {filepath.name}")
-                self.skipped += 1
-                self.last_collision = (str(output_path), owner)
-                return False
+                return None
             frontmatter = self._build_frontmatter(metadata)
-            md = frontmatter + "\n" + md
-
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            self.last_output_existed = output_path.exists()
-            with open(output_path, "w", encoding="utf-8") as f:
-                f.write(md)
-
-            print(f"  Converted: {filepath.name}")
-            self.converted += 1
-            self.last_output_path = str(output_path)
-            self._written_hashes.setdefault(metadata["content_hash"], str(output_path))
-            if metadata.get("url"):
-                self._written_paths.setdefault(str(output_path), metadata["url"])
-            return True
+            return PreparedPage(
+                output_path=str(output_path), text=frontmatter + "\n" + md,
+                content_hash=metadata["content_hash"], url=metadata.get("url"),
+                name=filepath.name,
+            )
 
         except Exception as e:
             print(f"  Error converting {filepath.name}: {type(e).__name__}: {e}")
             self.failed += 1
             self.last_error = f"{type(e).__name__}: {e}"
+            return None
+
+    def commit(self, page: "PreparedPage") -> None:
+        """Write a prepared page to its file."""
+        output_path = Path(page.output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        self.last_output_existed = output_path.exists()
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(page.text)
+        print(f"  Converted: {page.name}")
+        self.converted += 1
+        self.last_output_path = page.output_path
+        self._written_hashes.setdefault(page.content_hash, page.output_path)
+        if page.url:
+            self._written_paths[page.output_path] = page.url
+
+    def convert_file(self, filepath, metadata=None, output_path=None, html=None):
+        """Convert one page and write it. With html given, filepath is only
+        used for naming and is never read (markdown-only mode has no HTML on
+        disk). The first URL to write a file in this converter keeps it; a
+        later URL for the same file is a duplicate when its body matches,
+        otherwise a collision (last_collision)."""
+        page = self.prepare(filepath, metadata=metadata, output_path=output_path, html=html)
+        if page is None:
             return False
+        owner = self._written_paths.get(page.output_path)
+        if owner and owner != page.url:
+            if self._written_hashes.get(page.content_hash) == page.output_path:
+                self.last_duplicate_of = page.output_path
+            else:
+                self.last_collision = (page.output_path, owner)
+            print(f"  Skipped (file already written for {owner}): {page.name}")
+            self.skipped += 1
+            return False
+        self.commit(page)
+        return True
 
     def copy_assets(self):
         """Copy asset directories (images, media) to the markdown output directory."""

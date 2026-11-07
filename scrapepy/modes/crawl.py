@@ -58,6 +58,7 @@ from ..processing.robots import HostRateLimiter, RobotsPolicy
 from ..processing.navigation import extract_navigation
 from ..processing.outline import build_site_outline, SiteOutline
 from ..convert.html_prep import safe_urljoin
+from ..output.ownership import FileOwners, url_rank
 from ..output.writer import url_to_filepath, write_file
 from ..output.broken_links import BrokenLinkTracker
 from ..output.cache import CrawlCache
@@ -256,11 +257,69 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
         asset_client = create_asset_client(config)
         await asset_client.__aenter__()
 
-    # Files written during this run: a second URL saving to the same file
-    # (such as / and /index.html) is not counted again.
-    # File path -> the URL that wrote it (or was seen unchanged) this run.
-    # The first URL keeps a file; a later URL mapping to it is a collision.
-    file_owners: dict[str, str] = {}
+    # Output files that several URLs map to (/about and /about.html): one
+    # URL keeps each file, by a rule that does not depend on crawl order
+    # (see output/ownership.py). Owners from earlier runs come from the cache.
+    owners = FileOwners(_load_file_owners(cache))
+    pending: dict[str, dict] = {}       # pages waiting for an earlier owner
+    file_hashes: dict[str, str] = {}    # file -> body hash written this run
+    md_written_of: dict[str, str] = {}  # URL -> Markdown path recorded for it
+    url_path_of: dict[str, str] = {}    # URL -> its path, for the cache
+
+    def lose_page(url: str, contested: str, kept: str, body_hash: str | None) -> None:
+        """Record a page that does not get its file, and forget it in the
+        cache so every later run fetches and decides it again."""
+        if body_hash and file_hashes.get(contested) == body_hash:
+            stats.record_duplicate(url, contested)
+        else:
+            stats.record_collision(url, contested, kept)
+        if cache and url in url_path_of:
+            cache.remove_page(url_path_of[url])
+
+    def write_page(entry: dict) -> None:
+        """Write a page that won its files, taking them from any worse URL
+        that held them earlier in this run."""
+        url = entry["url"]
+        for loser, contested in entry["retract"]:
+            loser_hash = file_hashes.get(contested)
+            for f in owners.release(loser):
+                if f not in entry["files"] and os.path.exists(f):
+                    os.remove(f)  # an output of the losing page only
+                file_hashes.pop(f, None)
+            stats.retract(loser, [md_written_of.pop(loser)] if loser in md_written_of else [])
+            if loser_hash and loser_hash == entry["hash"]:
+                stats.record_duplicate(loser, contested)
+            else:
+                stats.record_collision(loser, contested, url)
+            if cache and loser in url_path_of:
+                cache.remove_page(url_path_of[loser])
+        if entry["mirror_html"] is not None:
+            write_file(entry["filepath"], entry["mirror_html"])
+            print(f"  Saved: {entry['filepath'].replace(config.output_dir + '/', '')}")
+        md_written = None
+        existed_before = entry["existed_before"]
+        if entry["prepared"] is not None:
+            md_converter.commit(entry["prepared"])
+            md_written = entry["prepared"].output_path
+            if config.markdown_only:
+                existed_before = existed_before or md_converter.last_output_existed
+        owners.claim(url, entry["files"])
+        for f in entry["files"]:
+            file_hashes[f] = entry["hash"] if entry["prepared"] is not None else None
+        if entry["error"]:
+            # No Markdown was written: report the page as failed, and keep
+            # it out of the cache so the next run converts it again
+            stats.record_failed(url, f"conversion failed: {entry['error']}")
+            return
+        if not entry["duplicate"]:
+            stats.record_saved(url, existed_before, md_written)
+            if md_written:
+                md_written_of[url] = md_written
+        if cache:
+            cache.update_page(
+                entry["url_path"], entry["headers"], entry["html"], links=entry["links"],
+                published_date=entry["pub_date"], page_type=entry["page_type"],
+            )
 
     if stats.interrupted:
         to_visit.clear()
@@ -398,9 +457,8 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                 # Handle 304 Not Modified
                 if status == 304:
                     print(f"  Unchanged (304): {full_url}")
-                    file_owners.setdefault(url_to_filepath(url_path, config, hash_fragment), full_url)
                     unchanged_count += 1
-                    stats.unchanged.append(full_url)
+                    _meet_unchanged(full_url, url_path, owners, stats, cache, url_path_of)
                     cached_links = cache.get_page_links(url_path)
                     if cached_links:
                         _queue_links(
@@ -461,9 +519,8 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
             # Content-hash check: skip if content hasn't changed
             if cache and cache.is_page_unchanged(url_path, html):
                 print(f"  Unchanged (same content): {full_url}")
-                file_owners.setdefault(url_to_filepath(url_path, config, hash_fragment), full_url)
                 unchanged_count += 1
-                stats.unchanged.append(full_url)
+                _meet_unchanged(full_url, url_path, owners, stats, cache, url_path_of)
                 links = _extract_links_from_html(html)
                 _queue_links(
                     links, url_path, config, visited, visited_hashes,
@@ -635,26 +692,19 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
             # Save the page. It counts as changed when an earlier run saved it.
             # In markdown-only mode the HTML path only names the page; nothing
             # is written there and the converter is handed the HTML directly.
+            # Nothing is written until the page is known to own its files.
             filepath = url_to_filepath(url_path, config, hash_fragment)
-            owner = file_owners.get(filepath)
-            claimed_by = owner if owner and owner != full_url else None
-            already_written = claimed_by is not None
-            existed_before = not already_written and (
+            url_path_of[full_url] = url_path
+            existed_before = (
                 (cache is not None and cache.has_page(url_path))
                 or (not config.markdown_only and os.path.exists(filepath))
             )
-            file_owners.setdefault(filepath, full_url)
-            html_for_md = None
-            if config.markdown_only or claimed_by:
-                # Another URL owns this file: never overwrite its HTML copy
-                html_for_md = html
-            else:
+            mirror_html = None
+            if not config.markdown_only:
                 # Rewrite URLs for offline viewing
-                rewritten_html = rewrite_urls(html, url_path, config)
-                write_file(filepath, rewritten_html)
-                print(f"  Saved: {filepath.replace(config.output_dir + '/', '')}")
-            md_written: str | None = None
-
+                mirror_html = rewrite_urls(html, url_path, config)
+            html_for_md = html if config.markdown_only else mirror_html
+            prepared = None
             # Inline markdown conversion
             if md_converter:
                 md_converter.last_error = None
@@ -697,31 +747,23 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                         md_output_path = article_filepath_in_section(
                             url_path, current_batch_section, config,
                         )
-                    md_converter.convert_file(
+                    prepared = md_converter.prepare(
                         _Path(filepath), metadata=md_meta,
                         output_path=md_output_path, html=html_for_md,
-                        claimed_by=claimed_by,
                     )
-                    md_written = md_converter.last_output_path
                 elif is_section_page:
                     # Section pages become _index.md in their own directory
                     from ..output.writer import section_index_filepath
                     md_output_path = section_index_filepath(url_path, config)
-                    md_converter.convert_file(
+                    prepared = md_converter.prepare(
                         _Path(filepath), metadata=md_meta,
                         output_path=md_output_path, html=html_for_md,
-                        claimed_by=claimed_by,
                     )
-                    md_written = md_converter.last_output_path
                 else:
-                    md_converter.convert_file(
+                    prepared = md_converter.prepare(
                         _Path(filepath), metadata=md_meta, html=html_for_md,
-                        claimed_by=claimed_by,
                     )
-                    md_written = md_converter.last_output_path
 
-                if config.markdown_only and md_written and not already_written:
-                    existed_before = existed_before or md_converter.last_output_existed
                 if md_converter.last_duplicate_of:
                     stats.record_duplicate(full_url, md_converter.last_duplicate_of)
 
@@ -755,30 +797,38 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                         "thumbnail": thumb_filename,
                     })
 
-            duplicate = md_converter.last_duplicate_of if md_converter else None
-            conversion_error = md_converter.last_error if md_converter else None
-            if md_converter:
-                collision = md_converter.last_collision
+            entry = {
+                "url": full_url, "url_path": url_path, "filepath": filepath,
+                "mirror_html": mirror_html, "prepared": prepared,
+                "existed_before": existed_before,
+                "error": md_converter.last_error if md_converter else None,
+                "duplicate": bool(md_converter and md_converter.last_duplicate_of),
+                "hash": prepared.content_hash if prepared else None,
+                "headers": page_info.get("headers", {}), "html": html, "links": links,
+                "pub_date": pub_date_str, "page_type": page_type_str,
+            }
+            # The files this page would write; any of them can be contested.
+            # The Markdown file comes first, so a collision names it.
+            files = []
+            if prepared is not None:
+                files.append(_file_key(prepared.output_path))
+            if mirror_html is not None:
+                files.append(_file_key(filepath))
+            if prepared is not None:
+                prepared.output_path = files[0]
+            if mirror_html is not None:
+                entry["filepath"] = files[-1]
+            entry["files"] = files
+            decision = owners.decide(full_url, files)
+            if decision["action"] == "write":
+                entry["retract"] = decision["retract"]
+                write_page(entry)
+            elif decision["action"] == "lose":
+                lose_page(full_url, decision["file"], decision["kept"], entry["hash"])
             else:
-                collision = (filepath, claimed_by) if claimed_by else None
-            if conversion_error:
-                # No Markdown was written: report the page as failed, and keep
-                # it out of the cache so the next run converts it again
-                stats.record_failed(full_url, f"conversion failed: {conversion_error}")
-            elif collision:
-                # Another URL already wrote this file: keep the first, list
-                # this one, and leave it uncached so every run decides alike
-                stats.record_collision(full_url, collision[0], collision[1])
-            elif not duplicate and (not claimed_by or md_written):
-                stats.record_saved(full_url, existed_before, md_written)
-
-            # Update cache
-            if cache and not conversion_error and not collision:
-                resp_headers = page_info.get("headers", {})
-                cache.update_page(
-                    url_path, resp_headers, html, links=links,
-                    published_date=pub_date_str, page_type=page_type_str,
-                )
+                # The file's owner from an earlier run has not been met yet:
+                # settled at the end of the run (see below)
+                pending[full_url] = entry
 
             # Queue extracted links (for sections, only non-article links reach here).
             # Old articles kept via min-articles don't queue links, they're filler
@@ -839,6 +889,26 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
         task.cancel()
     prefetch_tasks.clear()
 
+    # Pages that waited for a file's earlier owner: they lose when that owner
+    # was met in this run, and otherwise take the file (the owner has gone).
+    # An interrupted run settles nothing, since the owner may still be there.
+    if not stats.interrupted:
+        for url in sorted(pending, key=url_rank):
+            entry = pending[url]
+            gone = {owners.persisted.get(f) for f in entry["files"]} - owners.met - {url, None}
+            decision = owners.decide(url, entry["files"], final=True)
+            if decision["action"] == "write":
+                entry["retract"] = decision["retract"]
+                write_page(entry)
+                # The absent owner no longer holds its file: if it comes back
+                # it is fetched and decided in full, not taken as unchanged
+                for absent in gone:
+                    if cache and absent.startswith(config.base_url):
+                        cache.remove_page(absent[len(config.base_url):] or "/")
+            else:
+                lose_page(url, decision["file"], decision["kept"], entry["hash"])
+    pending.clear()
+
     # Generate section _index.md listing pages (skipped with --no-index-pages)
     md_output = config.markdown_dir
     if md_converter and section_articles and config.index_pages:
@@ -896,6 +966,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
 
     # Save cache first, so an interrupted run still resumes from here
     if cache:
+        _save_file_owners(cache, owners)
         cache.save()
 
     # Close persistent HTTP client
@@ -1107,6 +1178,44 @@ def _check_rendered_error_page(html: str) -> bool:
         return is_error_page_content(title_text, h1_text, body_text)
     except Exception:
         return False
+
+
+def _file_key(path: str) -> str:
+    """One spelling per output file, so two URLs for it compare equal."""
+    return os.path.abspath(path)
+
+
+def _load_file_owners(cache) -> dict[str, str]:
+    """Owners of output files from earlier runs, as absolute paths."""
+    if not cache:
+        return {}
+    base = os.path.dirname(cache.cache_path)
+    return {
+        os.path.normpath(os.path.join(base, rel)): url
+        for rel, url in cache.get_file_owners().items()
+    }
+
+
+def _save_file_owners(cache, owners) -> None:
+    """Store file owners relative to the cache's folder, so the output
+    folder can be moved."""
+    base = os.path.abspath(os.path.dirname(cache.cache_path))
+    cache.set_file_owners({
+        os.path.relpath(f, base): url for f, url in sorted(owners.persisted.items())
+    })
+
+
+def _meet_unchanged(url, url_path, owners, stats, cache, url_path_of) -> None:
+    """An unchanged page keeps its files, or is listed as a collision when a
+    better URL took one of them in this run."""
+    url_path_of[url] = url_path
+    lost = owners.meet_unchanged(url)
+    if lost:
+        stats.record_collision(url, lost[0], lost[1])
+        if cache:
+            cache.remove_page(url_path)
+    else:
+        stats.unchanged.append(url)
 
 
 def _content_type(page_info: dict) -> str:
