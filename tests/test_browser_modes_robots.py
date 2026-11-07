@@ -37,7 +37,8 @@ def mode_calls(monkeypatch):
     def recorder(name):
         async def fake(config, **kwargs):
             calls.append(name)
-            return 1
+            # -1 returns the crawl's run summary, the others a page count
+            return {"exit_code": EXIT_OK} if name == "single_page" else 1
         return fake
 
     monkeypatch.setattr(single_page, "run_single_page_mode", recorder("single_page"))

@@ -155,7 +155,12 @@ Starts page requests at least 10 seconds apart instead of the default 5 in brows
 python main.py https://api-reference.example.com -1
 ```
 
-Launches a stealth browser, loads the page, scrolls the entire document to trigger lazy loading (via `scroll_full_page()`), waits for all content to render, and saves the fully rendered HTML as `index.html`.
+Launches a stealth browser, loads the page, scrolls the entire document to trigger lazy loading (via `scroll_full_page()`), waits for all content to render, and saves the page as a crawl does: `ScrapedSites/<site>/<path>.html` with its assets, `MarkdownSites/<site>/<path>.md`, the incremental cache and `run_summary.json`. Several pages on one host, one per run, each keep their own file:
+
+```bash
+python main.py https://example.com/guides/first-guide -1 --headless
+python main.py https://example.com/guides/second-guide -1 --headless --site-name example_guides
+```
 
 ### SPA without Markdown output
 
@@ -163,7 +168,7 @@ Launches a stealth browser, loads the page, scrolls the entire document to trigg
 python main.py https://api-reference.example.com -1 --no-markdown
 ```
 
-Saves only the rendered HTML without Markdown conversion.
+Saves only the rendered HTML (named after the page's path) without Markdown conversion.
 
 ## Swagger/OpenAPI Documentation
 

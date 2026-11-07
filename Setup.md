@@ -127,13 +127,13 @@ ScrapePy creates these directories in the current working directory, or under th
 
 | Directory | Mode | Contents |
 |-----------|------|----------|
-| `ScrapedSites/<domain>/` | Default crawl, `-j` | HTML and assets (images/, css/, js/, fonts/, media/), `run_summary.json` and the cache. With `--markdown-only`, and in feed mode, only the run state |
-| `ScrapedSites/<domain>/` | `-1`, `--swagger`, `-d` | The saved HTML (`index.html`, plus `openapi-spec.json` or `.yaml` for `--swagger` and each page and `combined.html` for `-d`); no assets are downloaded |
+| `ScrapedSites/<domain>/` | Default crawl, `-j`, `-1` | HTML and assets (images/, css/, js/, fonts/, media/), `run_summary.json` and the cache. With `--markdown-only`, and in feed mode, only the run state |
+| `ScrapedSites/<domain>/` | `--swagger`, `-d` | The saved HTML (`index.html`, plus `openapi-spec.json` or `.yaml` for `--swagger` and each page and `combined.html` for `-d`); no assets are downloaded |
 | `ScrapedSites/instagram/<username>/` | `--instagram` | Profile, post data and media |
 | `MarkdownSites/<domain>/` | Default (use `--no-markdown` to skip) | Markdown files, plus images/ and media/ copied from `ScrapedSites` (not with `--markdown-only`) |
 | `tests/fixtures/<domain>/` | `--audit` | Test fixtures (HTML snapshots + expected values) |
 
-The `<domain>` directory name is derived from the URL: `www.` prefix stripped, dots replaced with underscores. With `--stay-in-path`, the path is appended (e.g., `docs_example_com_api_v2`). `--site-name NAME` replaces it, so targeted crawls of one site (`--include`, `--exclude`, `--max-depth`, `--max-pages`, `--urls-file`, `--only-recipes`, `--follow-next`) can share one folder. These options work with the default crawl and `-j` only: `-1`, `--swagger`, `-d`, `--instagram`, `--audit` and `--feed` exit 2 when combined with them, and a start URL that looks like a feed runs feed mode, prints a notice, ignores the options and exits as feed mode does (0 once the feed is read, 1 when it cannot be fetched).
+The `<domain>` directory name is derived from the URL: `www.` prefix stripped, dots replaced with underscores. With `--stay-in-path`, the path is appended (e.g., `docs_example_com_api_v2`). `--site-name NAME` replaces it, so targeted crawls of one site (`--include`, `--exclude`, `--max-depth`, `--max-pages`, `--urls-file`, `--only-recipes`, `--follow-next`) can share one folder. These options work with the default crawl and `-j` only (`--site-name` also with `-1`): `-1`, `--swagger`, `-d`, `--instagram`, `--audit` and `--feed` exit 2 when combined with them, and a start URL that looks like a feed runs feed mode, prints a notice, ignores the options and exits as feed mode does (0 once the feed is read, 1 when it cannot be fetched).
 
 ## Troubleshooting
 
@@ -145,7 +145,7 @@ pip install "scrapling[fetchers]"
 
 ### Browser not installed
 
-`-1`, `--swagger` and `-d` print `Error: Failed to load page (...)` with a reminder to run `scrapling install` when the browser cannot start; `-j` prints `Fetch failed (...)` for each page. Run `scrapling install` to download Chromium.
+`--swagger` and `-d` print `Error: Failed to load page (...)` with a reminder to run `scrapling install` when the browser cannot start; `-1` prints `Fetch failed (...)` with the same reminder, and `-j` prints `Fetch failed (...)` for each page. Run `scrapling install` to download Chromium.
 
 ### Cloudflare blocking
 
