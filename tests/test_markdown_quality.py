@@ -54,6 +54,22 @@ class TestNormalizeHeadings:
     def test_text_lines_untouched(self):
         assert normalize_headings("#hashtag\n# T") == "#hashtag\n# T"
 
+    def test_comment_lines_in_code_fences_are_never_headings(self):
+        md = ("# T\n\n```bash\n# install\n## step two\n```\n\n### Real\n\n"
+              "~~~\n# also code\n~~~\n\n#### Deeper")
+        assert normalize_headings(md) == (
+            "# T\n\n```bash\n# install\n## step two\n```\n\n## Real\n\n"
+            "~~~\n# also code\n~~~\n\n### Deeper")
+
+    def test_code_comments_survive_conversion(self):
+        html = form_page('<pre><code class="language-bash"># install the tool\n'
+                         'pip install thing\n## then run it\nthing --help</code></pre>'
+                         '<h4>After the code</h4><p>More text.</p>')
+        md, _ = convert(html)
+        assert "\n# install the tool\npip install thing\n## then run it\n" in md
+        assert "## After the code" in lines(md)
+        assert "## install the tool" not in md and "### then run it" not in md
+
     def test_headings_in_list_items_are_normalised(self):
         md = "# T\n\n- #### Card one\n\n  Blurb\n- #### Card two\n\n1. ###### Step\n\n### After"
         # Same rule as other headings: at most one level deeper than the last
