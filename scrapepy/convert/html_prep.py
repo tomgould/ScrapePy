@@ -217,6 +217,20 @@ def title_h1(md: str) -> str | None:
     return None
 
 
+def h1_first(md: str) -> str:
+    """md with its first H1 line (outside code) moved to the top, so text
+    above it (a kicker kept as a paragraph) follows the title instead."""
+    lines = md.split("\n")
+    for i, (_, m) in enumerate(_scan(md)):
+        if m and len(m.group(2)) == 1:
+            if i == 0:
+                return md
+            title = lines.pop(i)
+            rest = "\n".join(lines).strip("\n")
+            return f"{title}\n\n{rest}" if rest else title
+    return md
+
+
 def insert_after_h1(md: str, text: str) -> str:
     """Put text on its own paragraph after the first H1 line outside code
     (unchanged when there is no H1)."""

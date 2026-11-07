@@ -2,6 +2,7 @@
 heading and button rules: each keeps its own behaviour."""
 
 import os
+import re
 import threading
 from http.server import ThreadingHTTPServer
 
@@ -178,3 +179,46 @@ def server():
     yield f"http://127.0.0.1:{httpd.server_address[1]}"
     httpd.shutdown()
     httpd.server_close()
+
+
+STORY_P = "<p>" + "Story text about cooking with plenty of real words in it today. " * 8 + "</p>"
+
+
+def heading_lines(body):
+    return [line for line in body.split("\n") if re.match(r"^#{1,6} ", line)]
+
+
+RECIPE_HEADINGS = ["## Recipe details", "## Ingredients", "## Method", "## Nutrition"]
+
+
+class TestRecipeHeadingLevels:
+    @pytest.mark.parametrize("case,body,expected", [
+        ("kicker", f"<main><h3>Cakes</h3><h1>Rainbow Oat Bites</h1>{STORY_P}<h2>Tips</h2>{STORY_P}</main>",
+         ["# Rainbow Oat Bites", *RECIPE_HEADINGS, "## Page text", "### Tips"]),
+        ("late_h1", f"<main><h2>Intro</h2>{STORY_P}<h2>Tips</h2>{STORY_P}<h1>Newsletter</h1><p>Sign up.</p></main>",
+         ["# Doc", *RECIPE_HEADINGS, "## Page text", "### Intro", "### Tips", "### Newsletter"]),
+        ("two_h1s", f"<main><h1>Rainbow Oat Bites</h1>{STORY_P}<h1>More bakes</h1>{STORY_P}<h2>Cake</h2><p>x</p></main>",
+         ["# Rainbow Oat Bites", *RECIPE_HEADINGS, "## Page text", "### More bakes", "#### Cake"]),
+        ("no_h1", f"<main><h2>Story</h2>{STORY_P}<h3>Tips</h3>{STORY_P}</main>",
+         ["# Doc", *RECIPE_HEADINGS, "## Page text", "### Story", "#### Tips"]),
+        ("article_header", f"<article><header><h1>Rainbow Oat Bites</h1></header>{STORY_P}<h2>Tips</h2>{STORY_P}</article>",
+         ["# Rainbow Oat Bites", *RECIPE_HEADINGS, "## Page text", "### Tips"]),
+    ])
+    def test_heading_levels(self, tmp_path, case, body, expected):
+        html = (f"<html><head><title>Doc</title>{ld(BASIC)}</head><body>{body}</body></html>")
+        front, md = convert(tmp_path, html)
+        assert heading_lines(md) == expected
+        if case == "kicker":
+            assert "Cakes" in section(md, "Page text")
+
+    def test_several_recipes(self, tmp_path):
+        second = dict(BASIC, name="Second bites", recipeIngredient=["1 egg"],
+                      recipeInstructions=[{"@type": "HowToStep", "text": "Crack the egg."}])
+        html = (f"<html><head><title>Doc</title>{ld(BASIC, second)}</head><body><main>"
+                f"<h4>Snacks</h4><h1>Two bites</h1>{STORY_P}<h2>Notes</h2>{STORY_P}</main></body></html>")
+        _, md = convert(tmp_path, html)
+        levels = heading_lines(md)
+        assert levels[0] == "# Two bites"
+        assert levels[-2:] == ["## Page text", "### Notes"]
+        assert all(not h.startswith("# ") for h in levels[1:])
+        assert levels.count("## Page text") == 1

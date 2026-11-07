@@ -27,6 +27,7 @@ from .html_prep import (
     first_h1,
     title_h1,
     fix_block_links,
+    h1_first,
     insert_after_h1,
     normalize_headings,
     same_site,
@@ -1649,7 +1650,9 @@ class HTMLToMarkdown:
             # One H1, no skipped heading levels
             md = normalize_headings(md)
             if recipes:
-                md = normalize_headings(merge_recipe_markdown(md, recipes))
+                # The title H1 goes first, so a kicker above it becomes part
+                # of the page text rather than pushing the H1 into it
+                md = normalize_headings(merge_recipe_markdown(h1_first(md), recipes))
 
             # Capture title from first # Heading for metadata
             title_text = first_h1(md)
