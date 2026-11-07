@@ -168,7 +168,7 @@ Increase the wait time:
 python main.py https://slow-site.com -j --wait 15
 ```
 
-The browser navigation timeout is 120 seconds. In `-1`, `--swagger` and `-d`, `--wait` is also the time the browser waits after the page loads; in `-j` that wait is one second and `--wait` is only the gap between requests.
+The browser navigation timeout is 120 seconds. In `-1`, `--swagger` and `-d`, the mode also pauses `--wait` seconds after the page loads. In `-j`, `--wait` is only the gap between page requests: the browser returns the HTML once the page has loaded and Scrapling's Cloudflare check has finished (a few seconds), without scrolling, so a longer `--wait` does not give slow JavaScript more time.
 
 ### Permission errors on output
 
