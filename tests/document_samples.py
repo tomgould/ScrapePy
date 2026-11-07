@@ -163,3 +163,99 @@ def declare_huge_size(data: bytes, size: int = 4 * 1024 ** 3 - 1) -> bytes:
             return bytes(out)
         out[pos + 24:pos + 28] = size.to_bytes(4, "little")
         pos += 4
+
+
+def pdf_bomb(unpacked_mb: int = 80) -> bytes:
+    """A one-page PDF whose content stream is Flate-compressed zeros that
+    unpack to unpacked_mb (beyond pypdf's 75 MB stream limit at 80)."""
+    import zlib
+
+    packed = zlib.compress(b"0" * (unpacked_mb * 1024 * 1024), 9)
+    data = make_pdf([["placeholder"]])
+    start = data.index(b"4 0 obj")
+    content = data.index(b"5 0 obj")
+    end = data.index(b"endobj\n", content) + 7
+    body = (b"5 0 obj\n<< /Length %d /Filter /FlateDecode >>\nstream\n" % len(packed)
+            + packed + b"\nendstream\nendobj\n")
+    rebuilt = data[:content] + body
+    # Rewrite the cross-reference table for the new offsets
+    import re as _re
+    head = rebuilt
+    offsets = {int(m.group(1)): m.start() for m in _re.finditer(rb"(\d+) 0 obj\n", head)}
+    size = max(offsets) + 1
+    xref = len(head)
+    out = bytearray(head)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % size
+    for n in range(1, size):
+        out += b"%010d 00000 n \n" % offsets[n]
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (size, xref)
+    assert start < content
+    return bytes(out)
+
+
+def docx_with_tracked_changes() -> bytes:
+    """A DOCX with a tracked insertion, a tracked deletion and a nested table."""
+    import docx
+
+    document = docx.Document()
+    document.add_paragraph("Base text.")
+    outer = document.add_table(rows=1, cols=2)
+    outer.cell(0, 0).text = "Outer cell"
+    inner = outer.cell(0, 1).add_table(rows=1, cols=1)
+    inner.cell(0, 0).text = "Nested cell text"
+    buf = io.BytesIO()
+    document.save(buf)
+    w = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+    tracked = ('<w:p><w:r><w:t xml:space="preserve">Kept </w:t></w:r>'
+               '<w:ins w:id="1" w:author="A" w:date="2025-01-01T00:00:00Z"><w:r><w:t>inserted words</w:t></w:r></w:ins>'
+               '<w:del w:id="2" w:author="A" w:date="2025-01-01T00:00:00Z"><w:r><w:delText>deleted words</w:delText></w:r></w:del>'
+               '</w:p>')
+    return _replace_part(buf.getvalue(), "word/document.xml",
+                         lambda x: x.replace("<w:body>", "<w:body>" + tracked, 1))
+
+
+def _replace_part(data: bytes, name: str, change) -> bytes:
+    src = zipfile.ZipFile(io.BytesIO(data))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as dst:
+        for info in src.infolist():
+            part = src.read(info.filename)
+            if info.filename == name:
+                part = change(part.decode("utf-8")).encode("utf-8")
+            dst.writestr(info, part)
+    return out.getvalue()
+
+
+def pad_part(data: bytes, name: str, extra_bytes: int) -> bytes:
+    """The archive with an XML comment of extra_bytes added to one part."""
+    comment = "<!--" + " " * extra_bytes + "-->"
+    return _replace_part(data, name, lambda x: x.replace("?>", "?>" + comment, 1)
+                         if "?>" in x else comment + x)
+
+
+def with_encrypted_flag(data: bytes) -> bytes:
+    """The archive with the 'encrypted' flag set on its first part, in the
+    central directory (zipfile clears the flag when writing)."""
+    out = bytearray(data)
+    pos = out.find(b"PK\x01\x02")
+    flags = int.from_bytes(out[pos + 8:pos + 10], "little") | 0x1
+    out[pos + 8:pos + 10] = flags.to_bytes(2, "little")
+    return bytes(out)
+
+
+# Targets for the child-process tests (run in a spawned process)
+
+def child_sleep(pid_path: str) -> None:
+    import os, time
+    with open(pid_path, "w") as f:
+        f.write(str(os.getpid()))
+    time.sleep(600)
+
+
+def child_allocate(mb: int) -> int:
+    block = bytearray(mb * 1024 * 1024)
+    return len(block)
+
+
+def child_add(a: int, b: int) -> int:
+    return a + b

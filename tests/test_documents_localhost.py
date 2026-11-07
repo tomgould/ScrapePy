@@ -11,6 +11,7 @@ import json
 import os
 import sys
 import threading
+import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -85,6 +86,20 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(50 * 1024 * 1024))
             self.end_headers()
             self.wfile.write(b"%PDF-1.4\n")
+            return
+        if path == "/trickle.pdf":
+            # One byte every half second: each read is quick, the whole never ends
+            self.send_response(200)
+            self.send_header("Content-Type", PDF)
+            self.send_header("Content-Length", "1000")
+            self.end_headers()
+            try:
+                for _ in range(40):
+                    self.wfile.write(b"%")
+                    self.wfile.flush()
+                    time.sleep(0.5)
+            except OSError:
+                pass
             return
         if path == "/stream-big.pdf":
             self.send_response(200)
@@ -379,8 +394,45 @@ def test_symlink_in_files_folder_is_refused(site, tmp_path):
     os.symlink(outside, files / "reports")
     _, _, summary, _ = crawl(site, tmp_path / "out", documents=["pdf"])
     failed = reasons(summary["documents"]["failed"])
-    assert failed["reports/annual-report.pdf"] == "refused: symbolic link in the output path (reports)"
+    assert failed["reports/annual-report.pdf"] == (
+        f"refused: symbolic link in the output path (127_0_0_1:{Handler.port}/reports)")
     assert list(outside.iterdir()) == []
+
+
+def test_symlink_at_site_files_folder_is_refused(site, tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (tmp_path / "out" / "files").mkdir(parents=True)
+    os.symlink(outside, tmp_path / "out" / "files" / f"127_0_0_1:{Handler.port}")
+    _, _, summary, _ = crawl(site, tmp_path / "out", documents=["pdf"])
+    failed = reasons(summary["documents"]["failed"])
+    assert failed["plain.pdf"] == f"refused: symbolic link in the output path (127_0_0_1:{Handler.port})"
+    assert list(outside.iterdir()) == []
+
+
+def test_deleted_markdown_is_written_again(site, tmp_path):
+    config, _, _, _ = crawl(site, tmp_path, documents=["pdf"])
+    md = Path(config.markdown_dir) / "reports" / "annual-report.pdf.md"
+    md.unlink()
+    _, _, summary, requests = crawl(site, tmp_path, documents=["pdf"])
+    assert md.exists()
+    assert site + "/reports/annual-report.pdf" not in summary["unchanged_urls"]
+    assert f"MarkdownSites/{config.output_dir_name}/reports/annual-report.pdf.md" in \
+        summary["changed_markdown"]
+
+
+def test_slow_download_hits_the_deadline(site, tmp_path, monkeypatch):
+    from scrapepy.processing import documents as docs_mod
+    monkeypatch.setattr(docs_mod, "DOWNLOAD_DEADLINE_SECONDS", 2)
+    _, _, summary, _ = crawl(site, tmp_path, documents=["pdf"], start="/trickle.pdf",
+                             start_urls=["/trickle.pdf"], max_depth=0)
+    assert reasons(summary["documents"]["failed"]) == {
+        "trickle.pdf": "download took longer than 2 seconds"}
+
+
+def test_pages_saved_line_leaves_documents_out(site, tmp_path, capsys):
+    crawl(site, tmp_path, documents=ALL, include=["^/reports/"])
+    assert "Pages saved: 1\n" in capsys.readouterr().out
 
 
 def test_documents_with_html_mirror(site, tmp_path):
