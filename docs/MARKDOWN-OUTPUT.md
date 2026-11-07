@@ -63,7 +63,7 @@ Every file starts with YAML frontmatter between `---` lines, then a blank line, 
 
 ## Body
 
-- The first line is `# Title`. It is the only H1, and heading levels never skip (an H2 is followed by an H2 or H3, not an H4).
+- The first line is `# Title`. It is the only H1, and heading levels never skip (an H2 is followed by an H2 or H3, not an H4), counting headings that start a list item (`- ## Card title`) and ignoring `#` lines inside code blocks.
 - Article pages with a date have a line `**20 Feb 2026, 10:30**` after the title. Section pages do not.
 - Navigation, headers, footers, sidebars, cookie and newsletter boxes, share buttons and form furniture (inputs, "Submit", "Menu", "Close" and similar buttons) are removed. Accordion and FAQ questions on buttons are kept (as headings when the button sits in a heading), a `<select>` becomes a list of its options unless it is a long picker or a sort, filter or language switcher, and `<textarea>` text is kept. Removal is heuristic; some boilerplate can remain on unusual layouts.
 - Tables are GitHub-style Markdown tables. Code blocks are fenced with three backticks and carry the language when the HTML names one (`language-python`, `lang-js`, `data-lang`).

@@ -16,7 +16,8 @@ _BLOCK_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "div", "section", "artic
 _HEADINGS = ("h1", "h2", "h3", "h4", "h5", "h6")
 _SKIP_SCHEMES = ("mailto:", "tel:", "javascript:", "data:", "#")
 _RE_LANG_CLASS = re.compile(r"^(?:language|lang|highlight|brush)-?:?([A-Za-z0-9_+#.-]+)$")
-_RE_HEADING = re.compile(r"^(#{1,6})(\s+.*)$")
+# A heading, optionally inside a list item ("- #### Card title")
+_RE_HEADING = re.compile(r"^(\s*(?:[-*+]|\d{1,9}[.)])\s+)?(#{1,6})(\s+.*)$")
 _RE_FENCE = re.compile(r"^\s*(```|~~~)")
 
 
@@ -129,7 +130,7 @@ def normalize_headings(md: str) -> str:
 
     The first heading becomes H1. Any later H1 becomes H2. Each heading goes
     at most one level deeper than the one before it, so H1 then H4 becomes
-    H1 then H2.
+    H1 then H2. Headings at the start of a list item count too.
     """
     out = []
     in_fence = False
@@ -146,9 +147,9 @@ def normalize_headings(md: str) -> str:
         if prev == 0:
             level = 1
         else:
-            level = max(2, min(len(m.group(1)), prev + 1))
+            level = max(2, min(len(m.group(2)), prev + 1))
         prev = level
-        out.append("#" * level + m.group(2))
+        out.append((m.group(1) or "") + "#" * level + m.group(3))
     return "\n".join(out)
 
 

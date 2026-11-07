@@ -54,6 +54,19 @@ class TestNormalizeHeadings:
     def test_text_lines_untouched(self):
         assert normalize_headings("#hashtag\n# T") == "#hashtag\n# T"
 
+    def test_headings_in_list_items_are_normalised(self):
+        md = "# T\n\n- #### Card one\n\n  Blurb\n- #### Card two\n\n1. ###### Step\n\n### After"
+        # Same rule as other headings: at most one level deeper than the last
+        assert normalize_headings(md) == (
+            "# T\n\n- ## Card one\n\n  Blurb\n- ### Card two\n\n1. #### Step\n\n### After")
+
+    def test_list_item_headings_from_html_do_not_skip(self):
+        html = form_page('<ul><li><h4>First card</h4><p>About the first.</p></li>'
+                         '<li><h4>Second card</h4><p>About the second.</p></li></ul>')
+        md, _ = convert(html)
+        assert "- ## First card" in lines(md)
+        assert "- ### Second card" in lines(md)
+
 
 FILLER = " ".join(["The service covers every part of the country and runs all year."] * 6)
 
