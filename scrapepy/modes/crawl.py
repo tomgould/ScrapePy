@@ -56,6 +56,10 @@ from ..processing.dates import get_best_date, url_has_old_date
 from ..processing.classifier import classify_page, PageType
 from ..processing.discovery import run_discovery, DiscoveryMap, load_robots_policy, parse_robots_sitemaps
 from ..processing.robots import HostRateLimiter, RobotsPolicy
+from ..processing.targeting import (
+    SAMPLE_SIZE, Targeting, is_active as targeting_active, start_paths_seed_only,
+)
+from ..convert.recipe import find_recipes
 from ..processing.navigation import extract_navigation
 from ..processing.outline import build_site_outline, SiteOutline
 from ..convert.html_prep import safe_urljoin
@@ -73,6 +77,15 @@ DISCOVERY_MIN_INTERVAL = 1.0
 async def run_crawl_mode(config: ScrapeConfig) -> dict:
     """Run the crawl and return the run summary dict (also written to disk)."""
     stats = RunStats()
+    # Targeted crawling (--include, --exclude, --max-depth, --urls-file,
+    # --follow-next); None when none is given, so nothing below changes
+    targeting = None
+    if targeting_active(config):
+        targeting = Targeting(config, lambda link, path: _normalize_link_to_path(link, path, config))
+    seed_only = start_paths_seed_only(config)
+    query_starts: set[str] = set()      # start URLs with a query: fetched for links only
+    not_recipe: list[str] = []          # --only-recipes: pages fetched but not written
+    stopped_by_limit = False
     # Replace any summary from an earlier run straight away, so a reader never
     # mistakes it for this run's. It is rewritten when the crawl ends.
     _write_summary_quietly(config, build_summary(config, stats, in_progress=True))
@@ -169,12 +182,15 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
     limiter = HostRateLimiter(page_delay)
     limiter.reserve(urlparse(config.base_url).netloc)  # the robots.txt request just made
 
-    # 2. Run discovery (sitemaps + RSS), returns homepage HTML for reuse
+    # 2. Run discovery (sitemaps + RSS), returns homepage HTML for reuse.
+    # A targeted crawl seeded only from its start URLs needs none of it
+    # unless a date filter uses the sitemap and feed dates.
     try:
-        discovery_map, homepage_html, feed_urls = await run_discovery(
-            config, extra_sitemaps=robots_sitemaps,
-            robots=robots, limiter=limiter.with_interval(discovery_delay),
-        )
+        if not (seed_only and not config.has_date_filter):
+            discovery_map, homepage_html, feed_urls = await run_discovery(
+                config, extra_sitemaps=robots_sitemaps,
+                robots=robots, limiter=limiter.with_interval(discovery_delay),
+            )
     except asyncio.CancelledError:
         _note_interrupt(stats)
     if discovery_map:
@@ -226,7 +242,21 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
     hash_based_site = bool(config.starting_hash) or "#" in config.url
 
     # Seed the queue from outline or fallback
-    if outline and outline.nav_sections and not hash_based_site:
+    if seed_only:
+        # Only the start URLs, all at depth 0. A start URL with a query
+        # (a site search) is fetched as given, for its links only.
+        for start in (config.start_urls or [config.url]):
+            parsed = urlparse(start)
+            if parsed.query:
+                query_starts.add(start)
+                to_visit.append(start)
+                targeting.add_start(start)
+            else:
+                path = posixpath.normpath(parsed.path or "/")
+                path = path if path.startswith("/") else "/" + path
+                to_visit.append(path)
+                targeting.add_start(path)
+    elif outline and outline.nav_sections and not hash_based_site:
         # Always include the homepage
         parsed = urlparse(config.url)
         to_visit.append(parsed.path or "/")
@@ -252,6 +282,10 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
     else:
         parsed = urlparse(config.url)
         to_visit.append(parsed.path or "/")
+    if targeting is not None and not seed_only:
+        # --exclude or --follow-next alone: the start URL is still always fetched
+        start_path = posixpath.normpath(urlparse(config.url).path or "/")
+        targeting.add_start(start_path if start_path.startswith("/") else "/" + start_path)
 
     # Concurrency semaphore for page fetching (reuses -c flag)
     page_sem = asyncio.Semaphore(config.concurrent)
@@ -411,13 +445,27 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
         )
 
         visit_key = f"{url_path}{hash_fragment}" if hash_fragment else url_path
+        discovery_only = url_or_path in query_starts
+        if discovery_only:
+            full_url, visit_key = url_or_path, url_or_path
 
         if visit_key in visited:
             continue
         if hash_fragment and hash_fragment in visited_hashes:
             continue
 
-        if not is_in_scope(url_path, config):
+        if targeting is not None and not discovery_only:
+            if targeting.is_start(visit_key):
+                pass  # start URLs are always fetched
+            else:
+                reason = targeting.allow(url_path)
+                if reason == "scope":
+                    skipped_out_of_scope.add(url_path)
+                    continue
+                if reason:
+                    targeting.record_skip(reason, url_path)
+                    continue
+        elif not discovery_only and not is_in_scope(url_path, config):
             skipped_out_of_scope.add(url_path)
             continue
 
@@ -466,6 +514,11 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                             current_section_batch = None
                         continue
 
+        if config.max_pages and stats.fetched >= config.max_pages:
+            stopped_by_limit = True
+            print(f"  Stopped: --max-pages {config.max_pages} reached")
+            break
+
         visited.add(visit_key)
         if hash_fragment:
             visited_hashes.add(hash_fragment)
@@ -507,6 +560,8 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                     unchanged_count += 1
                     _meet_unchanged(full_url, names, stats, meet)
                     cached_links = cache.get_page_links(url_path)
+                    if cached_links and targeting is not None:
+                        targeting.note_links(cached_links, "", visit_key, url_path)
                     if cached_links:
                         _queue_links(
                             cached_links, url_path, config, visited, visited_hashes,
@@ -564,12 +619,26 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                 stats.record_failed(full_url, "error page")
                 continue
 
+            # A start URL with a query (a site search) is read for its links
+            # only: its query cannot reach a file name or the cache
+            if discovery_only:
+                links = _extract_links_from_html(html)
+                targeting.note_links(links, html, visit_key, url_path)
+                _queue_links(
+                    links, url_path, config, visited, visited_hashes,
+                    to_visit, hash_based_site,
+                    discovery_map=discovery_map, cutoff=config.cutoff_date,
+                )
+                continue
+
             # Content-hash check: skip if content hasn't changed
             if cache and cache.is_page_unchanged(url_path, html):
                 print(f"  Unchanged (same content): {full_url}")
                 unchanged_count += 1
                 _meet_unchanged(full_url, names, stats, meet)
                 links = _extract_links_from_html(html)
+                if targeting is not None:
+                    targeting.note_links(links, html, visit_key, url_path)
                 _queue_links(
                     links, url_path, config, visited, visited_hashes,
                     to_visit, hash_based_site,
@@ -583,6 +652,8 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                 links = await extract_links_browser(page_info["page"], config.base_url)
             else:
                 links = _extract_links_from_html(html)
+            if targeting is not None:
+                targeting.note_links(links, html, visit_key, url_path)
 
             # --- Date filtering: classify page and handle sections/articles ---
             page_type_str = None
@@ -635,7 +706,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                             if config.verbose:
                                 print(f"  [section] queued {len(article_links)} article links for ordered processing")
                             # Start prefetching first batch of articles immediately
-                            if not config.needs_browser:
+                            if not config.needs_browser and not config.max_pages:
                                 for p in article_links[:config.concurrent]:
                                     if (p not in prefetch_tasks and p not in visited
                                             and robots.can_fetch(p)):
@@ -715,6 +786,19 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                                 current_section_batch = None
                         if config.verbose:
                             print(f"  [{page_type.value}] keeping: no date found (conservative)")
+
+            # --only-recipes: a page without schema.org Recipe data is read for
+            # its links but not written
+            if config.only_recipes and not find_recipes(html):
+                print(f"  Not a recipe (links followed, not written): {full_url}")
+                not_recipe.append(full_url)
+                if not is_min_article and not focused_crawl:
+                    _queue_links(
+                        links, url_path, config, visited, visited_hashes,
+                        to_visit, hash_based_site,
+                        discovery_map=discovery_map, cutoff=config.cutoff_date,
+                    )
+                continue
 
             # Download assets (skip entirely when --no-markdown + --no-include-assets;
             # skip for min-articles filler; section pages download images only
@@ -860,8 +944,9 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                     cutoff=config.cutoff_date,
                 )
 
-            # Kick off prefetches for upcoming URLs
-            if not config.needs_browser:
+            # Kick off prefetches for upcoming URLs (none with --max-pages,
+            # which caps requests exactly)
+            if not config.needs_browser and not config.max_pages:
                 # Section batch articles
                 if current_section_batch:
                     _, upcoming = current_section_batch
@@ -1033,6 +1118,15 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
     print(f"Output folder: {config.output_dir}")
 
     stats.skipped_old = articles_skipped_old
+    if (targeting is not None or config.only_recipes or config.max_pages
+            or config.site_name):
+        stats.targeting = {
+            **(targeting.summary() if targeting is not None
+               else {"skipped_by_include": 0, "skipped_by_exclude": 0, "skipped_by_depth": 0}),
+            "skipped_not_recipe": len(not_recipe),
+            "not_recipe_sample": not_recipe[:SAMPLE_SIZE],
+            "stopped_by_limit": stopped_by_limit,
+        }
     summary = build_summary(config, stats)
     summary_path = _write_summary_quietly(config, summary)
     if summary_path:

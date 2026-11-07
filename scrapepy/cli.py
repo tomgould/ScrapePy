@@ -1,6 +1,7 @@
 """CLI argument parsing and main entry point."""
 
 import argparse
+import re
 import asyncio
 import signal
 import sys
@@ -87,6 +88,26 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
                         help="Treat the URL as an RSS or Atom feed: one Markdown file per "
                              "entry, from one request (automatic for URLs such as /feed or "
                              "/rss.xml). --max-articles caps the entries (default 50)")
+    target = parser.add_argument_group("Targeted crawling")
+    target.add_argument("--include", action="append", default=[], metavar="REGEX",
+                        help="Follow a link only when its path matches (repeatable); links "
+                             "inside the --stay-in-path scope are followed too")
+    target.add_argument("--exclude", action="append", default=[], metavar="REGEX",
+                        help="Never follow a link whose path matches (repeatable)")
+    target.add_argument("--max-depth", type=int, default=None, metavar="N",
+                        help="Follow links at most N steps from the start URLs (start = 0)")
+    target.add_argument("--max-pages", type=int, default=0, metavar="N",
+                        help="Stop after N page requests (default: 0 = no limit)")
+    target.add_argument("--urls-file", type=str, default=None, metavar="FILE",
+                        help="Start URLs, one per line (# comments), all on one site, in one run")
+    target.add_argument("--only-recipes", action="store_true",
+                        help="Write only pages with schema.org Recipe data; other pages are "
+                             "fetched to find links but not written")
+    target.add_argument("--site-name", type=str, default=None, metavar="NAME",
+                        help="Output folder name for the site, so several runs share one folder")
+    target.add_argument("--follow-next", action="store_true",
+                        help="Follow pagination (rel=next and /page/N links) without counting "
+                             "it as depth")
     parser.add_argument("--index-pages", action=argparse.BooleanOptionalAction, default=True,
                         help="Write generated _index.md listing pages for sections (default: on)")
     parser.add_argument("--auth", type=str, default=None,
@@ -126,9 +147,9 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
 
     args = parser.parse_args(argv)
 
-    # Validate: need either a URL or --accounts
-    if not args.url and not args.accounts:
-        parser.error("either provide a URL or use --accounts with a file of usernames")
+    # Validate: need a URL, --urls-file or --accounts
+    if not args.url and not args.accounts and not args.urls_file:
+        parser.error("either provide a URL, --urls-file, or --accounts with a file of usernames")
 
     # Instagram mode requires --instagram flag
     if args.accounts and not args.instagram:
@@ -166,6 +187,39 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
                          ("--audit", args.audit), ("-j/--js-render", args.js_render)):
             if on:
                 parser.error(f"--feed cannot be combined with {flag}")
+    start_urls: list[str] = []
+    if args.include or args.exclude or args.max_depth is not None or args.max_pages \
+            or args.urls_file or args.only_recipes or args.site_name or args.follow_next:
+        for flag, on in (("-1/--single-page", args.single_page), ("--swagger", args.swagger),
+                         ("-d/--docs", args.docs), ("--instagram", args.instagram),
+                         ("--audit", args.audit), ("--feed", args.feed)):
+            if on:
+                parser.error(f"targeted-crawl options work with the default crawl and -j, not {flag}")
+    for pattern in args.include + args.exclude:
+        try:
+            re.compile(pattern)
+        except re.error as e:
+            parser.error(f"invalid regular expression {pattern!r}: {e}")
+    if args.max_depth is not None and args.max_depth < 0:
+        parser.error("--max-depth must be 0 or more")
+    if args.max_pages < 0:
+        parser.error("--max-pages must be 0 or more")
+    if args.site_name is not None:
+        from .config import validate_site_name
+        try:
+            validate_site_name(args.site_name)
+        except ValueError as e:
+            parser.error(str(e))
+    if args.urls_file:
+        from .processing.targeting import read_urls_file
+        try:
+            start_urls = read_urls_file(args.urls_file, args.url)
+        except OSError as e:
+            parser.error(f"--urls-file could not be read: {e.strerror or e}")
+        except ValueError as e:
+            parser.error(str(e))
+        if args.url and args.url not in start_urls:
+            start_urls.insert(0, args.url)
     if args.proxy:
         from .proxy import validate_proxy
         try:
@@ -211,6 +265,15 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
         index_pages=args.index_pages,
         markdown_only=args.markdown_only,
         feed=args.feed,
+        include=list(args.include),
+        exclude=list(args.exclude),
+        max_depth=args.max_depth,
+        max_pages=args.max_pages,
+        urls_file=args.urls_file,
+        start_urls=start_urls,
+        only_recipes=args.only_recipes,
+        site_name=args.site_name,
+        follow_next=args.follow_next,
     )
 
 

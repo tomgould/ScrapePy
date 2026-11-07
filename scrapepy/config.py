@@ -64,6 +64,18 @@ def derive_output_dirs(output_root: str, site_dir_name: str) -> tuple[str, str]:
     )
 
 
+_RE_SITE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
+
+
+def validate_site_name(name: str) -> str:
+    """A --site-name usable as one folder name, or ValueError."""
+    name = (name or "").strip()
+    if not _RE_SITE_NAME.fullmatch(name):
+        raise ValueError("--site-name must be one folder name: letters, digits, '.', '_' "
+                         "or '-', starting with a letter or digit")
+    return name
+
+
 @dataclass
 class ScrapeConfig:
     url: str
@@ -98,6 +110,16 @@ class ScrapeConfig:
     index_pages: bool = True
     markdown_only: bool = False
     feed: bool = False
+    # Targeted crawling (all off by default)
+    include: list[str] = field(default_factory=list)
+    exclude: list[str] = field(default_factory=list)
+    max_depth: int | None = None
+    max_pages: int = 0
+    urls_file: str | None = None
+    start_urls: list[str] = field(default_factory=list)
+    only_recipes: bool = False
+    site_name: str | None = None
+    follow_next: bool = False
 
     # Derived fields (set in __post_init__)
     cutoff_date: datetime | None = field(init=False, default=None)
@@ -110,6 +132,10 @@ class ScrapeConfig:
     output_dir_name: str = field(init=False, default="")
 
     def __post_init__(self):
+        if self.start_urls and not self.url:
+            self.url = self.start_urls[0]
+        if self.site_name is not None:
+            self.site_name = validate_site_name(self.site_name)
         if self.markdown_only:
             # Markdown only: no HTML mirror, no asset downloads
             self.markdown = True
@@ -149,7 +175,9 @@ class ScrapeConfig:
             dir_name = "instagram"
         else:
             dir_name = self.domain.removeprefix("www.").replace(".", "_")
-            if self.stay_in_path and self.starting_path:
+            if self.site_name:
+                dir_name = self.site_name
+            elif self.stay_in_path and self.starting_path:
                 path_suffix = self.starting_path.lstrip("/").replace("/", "_")
                 if path_suffix:
                     dir_name += "_" + path_suffix
