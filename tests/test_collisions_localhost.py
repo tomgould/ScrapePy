@@ -191,6 +191,43 @@ class TestNoPageIsLost:
         assert sum("BODYA" in t for t in texts) == 1
         assert sum("BODYB" in t for t in texts) == 1
 
+    def test_duplicate_gets_its_own_file_when_the_body_moves(self, server, tmp_path):
+        site = Site()
+        site.pages = {"/story": ("Shared", "BODYA"), "/copy": ("Shared", "BODYA")}
+        site.order = ["/story", "/copy"]
+        site.serve()
+        config, summary = run(server, tmp_path)
+        previous = check(server, site, config, summary)
+        assert [d["url"] for d in summary["duplicates"]] == [server + "/copy"]
+        site.pages["/story"] = ("Changed", "BODYB")
+        site.serve()
+        config, summary = run(server, tmp_path)
+        check(server, site, config, summary, previous)
+        assert server + "/copy" in {u for u, _ in md_files(config).values()}
+
+    @pytest.mark.parametrize("order", [["/a", "/b"], ["/b", "/a"]])
+    def test_page_with_its_own_file_becomes_a_duplicate(self, server, tmp_path, order):
+        site = Site()
+        site.pages = {"/a": ("Page A", "BODYA"), "/b": ("Page B", "BODYB")}
+        site.order = ["/a", "/b"]
+        site.serve()
+        config, summary = run(server, tmp_path)
+        previous = check(server, site, config, summary)
+        site.pages["/b"] = ("Page A", "BODYA")
+        site.order = order
+        site.serve()
+        config, summary = run(server, tmp_path)
+        check(server, site, config, summary, previous)
+        assert [d["url"] for d in summary["duplicates"]] == [server + "/b"]
+        assert server + "/b" not in {u for u, _ in md_files(config).values()}
+        # And back to a body of its own: the same file as before
+        site.pages["/b"] = ("Page B", "BODYC")
+        site.serve()
+        config, summary = run(server, tmp_path)
+        check(server, site, config, summary, previous)
+        assert previous["b/_index.md"] == server + "/b"
+        assert md_files(config)["b/_index.md"][0] == server + "/b"
+
     def test_suffix_is_stable_and_listed(self, server, tmp_path):
         site = Site()
         site.pages = {"/story": ("One", "BODY1"), "/story.html": ("Two", "BODY2")}

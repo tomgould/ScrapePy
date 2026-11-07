@@ -312,8 +312,8 @@ class TestSiteChromeH1:
         '<div class="branding-blue">', '<div class="docs-top-bar">',
     ])
     def test_wrapper_class_lookalikes_keep_the_h1(self, tmp_path, wrapper):
-        front, body = convert_page(tmp_path, f"{wrapper}<main><h1>Real article</h1>"
-                                   f"<p>{FILLER}</p></main></div>", title="Article | Site")
+        front, body = convert_page(tmp_path, f'{wrapper}<div class="post"><h1>Real article</h1>'
+                                   f"<p>{FILLER}</p></div></div>", title="Article | Site")
         assert front["title"] == "Real article"
         assert lines(body)[0] == "# Real article"
 

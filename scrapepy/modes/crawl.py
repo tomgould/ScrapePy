@@ -297,8 +297,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
         for this run. A page whose body matches a file from an earlier run
         whose owner has not been met yet waits for that owner."""
         url = entry["url"]
-        has_own_file = bool(names.by_url.get(url, {}).get("md"))
-        if entry["prepared"] is not None and not has_own_file:
+        if entry["prepared"] is not None:
             hit = run_hashes.get(entry["hash"])
             if hit and hit[1] != url:
                 write_page(entry, duplicate_of=hit[0])
@@ -330,9 +329,10 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
             a["hash"] = entry["hash"]
             if config.markdown_only:
                 existed_before = existed_before or md_converter.last_output_existed
-        renamed = names.renamed_entry(url)
-        if renamed:
-            stats.record_renamed(url, renamed[0], renamed[1])
+        for kind in ("md", "html"):
+            if natural[kind] and a[kind] != natural[kind]:
+                stats.record_renamed(url, a[kind], natural[kind])
+                break
         if entry["error"]:
             # No Markdown was written: report the page as failed, and keep
             # it out of the cache so the next run converts it again
@@ -342,6 +342,13 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
             stats.record_duplicate(url, duplicate_of)
             if cache:
                 cache.remove_page(entry["url_path"])
+            # Its body is now in another file: a Markdown file it had from
+            # an earlier run would hold stale text, so it is removed (the
+            # name stays reserved for this URL)
+            own = names.by_url.get(url, {})
+            if own.get("md") and own["md"] != duplicate_of and os.path.exists(own["md"]):
+                os.remove(own["md"])
+            own.pop("hash", None)
             return
         else:
             stats.record_saved(url, existed_before, md_written)
