@@ -47,7 +47,7 @@ dependencies = [
 [project.optional-dependencies]
 # --documents: PDF, DOCX and XLSX conversion (CSV needs nothing extra)
 documents = [
-    "pypdf>=4.0",
+    "pypdf>=6.6",          # stream decompression limits (LimitReachedError)
     "pdfminer.six>=20231228",
     "python-docx>=1.1",
     "openpyxl>=3.1",
