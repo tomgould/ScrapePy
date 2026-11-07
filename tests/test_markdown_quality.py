@@ -247,6 +247,56 @@ class TestButtonsAndFormText:
         assert "Menu" not in md and "Submit" not in md and "basket" not in md
 
 
+NOISE_LABELS = [
+    "Share on Facebook", "Share this article", "Load more articles", "Show 10 more",
+    "Next page", "Previous", "1", "2", "Slide 1 of 3", "3 / 5",
+    "Manage cookie preferences", "Cookie settings", "Advanced search",
+    "Menü", "Schließen", "Fermer", "Menú", "Cerrar", "Chiudi", "Sluiten",
+]
+
+
+class TestButtonNoise:
+    @pytest.mark.parametrize("label", NOISE_LABELS)
+    def test_toggle_chrome_is_dropped(self, label):
+        html = form_page(f'<button type="button" aria-expanded="false" aria-controls="p">'
+                         f'{label}</button><div id="p"><p>Panel words here.</p></div>')
+        md, _ = convert(html)
+        assert label not in lines(md)
+
+    def test_mega_menu_button_is_dropped(self):
+        links = "".join(f'<li><a href="/p{i}">Product number {i}</a></li>' for i in range(6))
+        html = form_page(
+            '<button aria-expanded="false" aria-controls="mega">Products</button>'
+            f'<div id="mega"><ul>{links}</ul></div>'
+            '<button aria-expanded="false">Shop by category</button>'
+            f'<ul class="dropdown">{links}</ul>'
+        )
+        md, _ = convert(html)
+        assert "Products" not in lines(md)
+        assert "Shop by category" not in lines(md)
+
+    def test_faq_toggle_with_short_answer_link_is_kept(self):
+        html = form_page(
+            '<button aria-expanded="false" aria-controls="a1">Delivery times</button>'
+            '<div id="a1"><p>Most orders arrive in two days. See '
+            '<a href="/delivery">delivery</a> for details.</p></div>'
+        )
+        md, _ = convert(html)
+        assert "Delivery times" in lines(md)
+
+    def test_locale_select_is_dropped(self):
+        html = form_page('<select name="locale"><option>English</option>'
+                         '<option>Deutsch</option><option>Francais</option></select>')
+        md, _ = convert(html)
+        assert "Deutsch" not in md
+
+    def test_numeric_select_is_dropped(self):
+        html = form_page('<label>Quantity</label><select name="qty">'
+                         + "".join(f"<option>{i}</option>" for i in range(1, 6)) + "</select>")
+        md, _ = convert(html)
+        assert "- 1" not in lines(md) and "- 5" not in lines(md)
+
+
 class TestBlockLinks:
     def test_heading_inside_link_gets_the_link(self):
         soup = BeautifulSoup('<a href="/x"><div><h2>Card title</h2><p>Blurb</p></div></a>', "lxml")

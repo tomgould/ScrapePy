@@ -98,11 +98,22 @@ _CHROME_BUTTON_LABELS = frozenset({
     "my account", "sign in", "log in", "login", "sign up", "register", "cart",
     "basket", "back", "next", "previous", "prev", "play", "pause", "mute",
     "unmute", "copy", "print", "accept", "reject", "accept all", "reject all",
+    # Menu and Close in German, French, Spanish, Italian and Dutch
+    "menü", "menú", "menù", "schließen", "schliessen", "fermer", "cerrar",
+    "chiudi", "sluiten",
 })
+# Furniture labels by pattern: share, load or show more, pagers, slide
+# counters ("Slide 1 of 3", "3 / 5"), cookie settings and search toggles
+_CHROME_BUTTON_RE = re.compile(
+    r"^(?:share\b|load\s+more\b|(?:show|see|view)\s+(?:\d+\s+)?(?:more|less|all)\b"
+    r"|next\b|previous\b|prev\b|page\s*\d+\b|\d+$)"
+    r"|\b\d+\s*(?:of|/)\s*\d+\b|\bcookies?\b|\bsearch\b",
+    re.IGNORECASE,
+)
 # A <select> with more options than this is a picker (countries, years),
 # not a list worth indexing
 _MAX_SELECT_OPTIONS = 50
-_PICKER_SELECT_HINTS = ("sort", "filter", "lang", "country", "currency",
+_PICKER_SELECT_HINTS = ("sort", "filter", "lang", "locale", "country", "currency",
                         "per-page", "perpage", "per_page", "search", "jump")
 _PLACEHOLDER_OPTION_RE = re.compile(r"^(?:-+|select|choose|please|pick)\b", re.I)
 
@@ -112,8 +123,10 @@ def _button_label_is_content(btn, text: str) -> bool:
 
     Kept: questions, and labels of buttons that open a panel (accordion and
     FAQ toggles, which carry aria-expanded or aria-controls), unless the label
-    is common page furniture ("Menu", "Close") or the button opens a popup
-    menu. Everything else ("Submit", "Add to basket") is dropped.
+    is common page furniture ("Menu", "Close", "Share on Facebook", "Load
+    more", pager numbers, "Slide 1 of 3"), the button opens a popup menu, or
+    the panel it opens is mostly links. Everything else ("Submit", "Add to
+    basket") is dropped.
     """
     if not any(c.isalnum() for c in text):
         return False
@@ -123,7 +136,34 @@ def _button_label_is_content(btn, text: str) -> bool:
         return False
     toggles = btn.has_attr("aria-expanded") or btn.has_attr("aria-controls") or any(
         btn.get(attr) == "collapse" for attr in ("data-toggle", "data-bs-toggle"))
-    return toggles and text.lower().rstrip(".:") not in _CHROME_BUTTON_LABELS
+    if not toggles:
+        return False
+    if text.lower().rstrip(".:") in _CHROME_BUTTON_LABELS or _CHROME_BUTTON_RE.search(text):
+        return False
+    return not _opens_link_menu(btn)
+
+
+def _opens_link_menu(btn) -> bool:
+    """Whether the panel a toggle opens is a menu: three or more links that
+    hold most of its text (a mega-menu "Products" or "Shop by category").
+    The panel is the element named by aria-controls, else the next sibling."""
+    panel = None
+    target = btn.get("aria-controls")
+    if target:
+        root = btn
+        while root.parent is not None:
+            root = root.parent
+        panel = root.find(id=target)
+    if panel is None:
+        panel = btn.find_next_sibling()
+    if panel is None:
+        return False
+    links = panel.find_all("a")
+    if len(links) < 3:
+        return False
+    total = len(panel.get_text(" ", strip=True).split())
+    linked = sum(len(a.get_text(" ", strip=True).split()) for a in links)
+    return total > 0 and linked >= 0.6 * total
 
 
 def _replace_form_controls(soup) -> None:
@@ -132,8 +172,8 @@ def _replace_form_controls(soup) -> None:
     A button inside a heading is unwrapped, so accordion headers stay headings.
     Other buttons keep their text as a paragraph when it is content (see
     _button_label_is_content). A <select> becomes a list of its options,
-    without placeholders, unless it is a long picker or a sort, filter or
-    language switcher. A <textarea> with text becomes a paragraph. Inputs and
+    without placeholders, unless it is a long picker, a sort, filter or
+    language switcher, or only numbers (a quantity picker). A <textarea> with text becomes a paragraph. Inputs and
     iframes are removed.
     """
     for tag in soup.find_all(["input", "iframe"]):
@@ -163,7 +203,8 @@ def _replace_form_controls(soup) -> None:
                 continue
             options.append(label)
         if not options or len(options) > _MAX_SELECT_OPTIONS \
-                or any(h in hints for h in _PICKER_SELECT_HINTS):
+                or any(h in hints for h in _PICKER_SELECT_HINTS) \
+                or all(label.isdigit() for label in options):
             sel.decompose()
             continue
         ul = soup.new_tag("ul")

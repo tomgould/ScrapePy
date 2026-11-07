@@ -66,10 +66,14 @@ Every file starts with YAML frontmatter between `---` lines, then a blank line, 
 - The first line is `# Title`. It is the only H1: the page's first heading becomes it whatever its level, and every later heading is H2 or deeper.
 - Heading levels never skip and keep the page's outline. Headings that were siblings on the page stay siblings (three H4 cards under the title are all H2), a deeper heading becomes a child one level down, and a shallower one closes the deeper headings before it. Levels stop at H6. This applies to headings that start a list item (`- ## Card title`) and headings in blockquotes (`> ## Quoted`), but not to `#` lines inside code blocks, which are left alone.
 - Article pages with a date have a line `**20 Feb 2026, 10:30**` after the title. Section pages do not.
-- Navigation, headers, footers, sidebars, cookie and newsletter boxes, share buttons and form furniture (inputs, "Submit", "Menu", "Close" and similar buttons) are removed. Accordion and FAQ questions on buttons are kept (as headings when the button sits in a heading), a `<select>` becomes a list of its options unless it is a long picker or a sort, filter or language switcher, and `<textarea>` text is kept. Removal is heuristic; some boilerplate can remain on unusual layouts.
+- Navigation, headers, footers, sidebars, cookie and newsletter boxes, share buttons and form furniture (inputs, "Submit", "Menu", "Close" and similar buttons) are removed. Accordion and FAQ questions on buttons are kept (as headings when the button sits in a heading), a `<select>` becomes a list of its options unless it is a long picker, a sort, filter or language switcher, or only numbers, and `<textarea>` text is kept. See Limitations below. Removal is heuristic; some boilerplate can remain on unusual layouts.
 - Tables are GitHub-style Markdown tables. Code blocks are fenced with three backticks and carry the language when the HTML names one (`language-python`, `lang-js`, `data-lang`).
 - Lists are `-` bullets or numbered lists. Images are `![alt](url)`.
 - With `--markdown-only`, every link and image is an absolute URL on the live site. In the default mode, links to other crawled pages are rewritten to relative `.md` paths on a best-effort basis and images point at copies in the Markdown folder's `images/`.
+
+## Limitations
+
+- Button text is kept only for questions and for toggles that open a panel (accordion and FAQ buttons with `aria-expanded` or `aria-controls`). A custom FAQ button with neither and no question mark ("Returns policy"), or a plan button ("Starter plan"), is dropped with its label. Toggles whose label looks like page furniture (share, load more, pagers, slide counters, cookie settings, search, Menu and Close in a few languages) or whose panel is mostly links are dropped too.
 
 ## Generated `_index.md` listing pages
 
