@@ -8,7 +8,7 @@
 python main.py https://www.example.com
 ```
 
-Crawls all pages on `example.com`, downloads images and all assets (CSS, JS, fonts), rewrites URLs for offline viewing, and converts to Markdown. Reconnaissance runs first: fetches robots.txt, sitemaps, RSS feeds, parses homepage navigation (including mega-menus and dropdown panels), builds `site_outline.json`, and seeds the queue from navigation structure. Incremental caching is on by default. Output:
+Crawls all pages on `example.com`, downloads images and all assets (CSS, JS, fonts), rewrites URLs for offline viewing, and converts to Markdown. Reconnaissance runs first: fetches robots.txt (only to read its `Sitemap:` lines; its rules and `Crawl-delay` are not applied unless you add `--obey-robots`), sitemaps, RSS feeds, parses homepage navigation (including mega-menus and dropdown panels), builds `site_outline.json`, and seeds the queue from navigation structure. Incremental caching is on by default. Output:
 
 ```
 ScrapedSites/example_com/
@@ -84,7 +84,7 @@ python main.py https://recipes.example.com/category/baby-led-weaning/ \
   --max-pages 200 --site-name recipes_example_com --markdown-only
 ```
 
-Fetches the category listing and its later pages (`--follow-next` follows `rel="next"` links and the `/page/N/` links of the same listing without counting them as depth; only `--max-pages` bounds it, `--max-depth` does not), follows only links whose path starts with `/recipes/` and that are one step from a listing, stops after 200 fetched pages, and writes only pages with schema.org Recipe data. Only robots.txt and the pages are requested: with `--include`, `--max-depth` or `--urls-file`, no sitemap, feed or homepage requests are made unless `--recent` or `--since` is given. Everything goes into `MarkdownSites/recipes_example_com/`.
+Fetches the category listing and its later pages (`--follow-next` follows `rel="next"` links and the `/page/N/` links of the same listing without counting them as depth; only `--max-pages` bounds it, `--max-depth` does not), follows only links whose path starts with `/recipes/` and that are one step from a listing, stops after 200 fetched pages, and writes only pages with schema.org Recipe data. Only the pages are requested (and robots.txt, with `--obey-robots`): with `--include`, `--max-depth` or `--urls-file`, no sitemap, feed or homepage requests are made unless `--recent` or `--since` is given. Everything goes into `MarkdownSites/recipes_example_com/`.
 
 ### The results of a site search
 
@@ -146,6 +146,14 @@ python main.py https://slow-spa.com -j --wait 10
 ```
 
 Starts page requests at least 10 seconds apart instead of the default 5 in browser modes. It does not give each page longer to render.
+
+### Apply robots.txt
+
+```bash
+python main.py https://www.example.com --obey-robots
+```
+
+Skips every URL robots.txt disallows (they are counted in `run_summary.json` as `blocked_by_robots`) and waits at least its `Crawl-delay` between requests when that is longer than `--wait`. Without `--obey-robots`, ScrapePy applies neither, and requests robots.txt only to read its `Sitemap:` lines. `--ignore-robots` is still accepted and does nothing.
 
 ## Single Page Applications
 

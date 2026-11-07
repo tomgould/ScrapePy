@@ -198,8 +198,45 @@ def test_rss_with_and_without_content_encoded(server, tmp_path):
     assert feed["entries_skipped"] == [] and feed["entries_over_cap"] == 0
     assert sorted(summary["new_markdown"]) == sorted(
         str(p.relative_to(tmp_path)) for p in Path(config.markdown_dir).rglob("*.md"))
-    # Only robots.txt and the feed itself were requested
+    # Only the feed itself was requested: robots.txt is not, by default
+    assert Handler.log == ["/feed/"]
+    assert summary["options"]["obey_robots"] is False
+
+
+class _RecordingLimiter:
+    """Stands in for HostRateLimiter in feed mode and records the host slots reserved."""
+
+    reserved: list = []
+
+    def __init__(self, min_interval):
+        self.min_interval = min_interval
+
+    def reserve(self, host, interval=None):
+        _RecordingLimiter.reserved.append(host)
+        return 0
+
+    async def wait(self, url, interval=None):
+        return None
+
+
+@pytest.mark.parametrize("obey,expected", [(False, 0), (True, 1)])
+def test_feed_waits_for_a_robots_request_only_when_one_was_made(server, tmp_path, monkeypatch,
+                                                                obey, expected):
+    from scrapepy.modes import feed as feed_mode
+    _RecordingLimiter.reserved = []
+    monkeypatch.setattr(feed_mode, "HostRateLimiter", _RecordingLimiter)
+    Handler.routes = {"/feed/": (XML, RSS_FULL)}
+    _, code, _ = run(server + "/feed/", tmp_path, wait=3, obey_robots=obey)
+    assert code == 0
+    assert len(_RecordingLimiter.reserved) == expected
+
+
+def test_obey_robots_requests_robots_txt_before_the_feed(server, tmp_path):
+    Handler.routes = {"/feed/": (XML, RSS_FULL)}
+    _, code, summary = run(server + "/feed/", tmp_path, obey_robots=True)
+    assert code == 0
     assert Handler.log == ["/robots.txt", "/feed/"]
+    assert summary["options"]["obey_robots"] is True
 
 
 def test_atom_content_summary_xhtml_and_relative_links(server, tmp_path):
@@ -271,14 +308,24 @@ def test_second_run_reports_unchanged(server, tmp_path):
     assert summary["feed"]["entries_written"] == 0
 
 
-def test_robots_txt_blocks_the_feed(server, tmp_path):
+def test_robots_txt_blocks_the_feed_with_obey_robots(server, tmp_path):
     Handler.routes = {"/robots.txt": ("text/plain", "User-agent: *\nDisallow: /feed\n"),
                       "/feed": (XML, RSS_FULL)}
-    config, code, summary = run(server + "/feed", tmp_path)
+    config, code, summary = run(server + "/feed", tmp_path, obey_robots=True)
     assert code == 1
     assert summary["blocked_by_robots"] == [server + "/feed"]
     assert summary["counts"]["fetched"] == 0
     assert "/feed" not in Handler.log
+
+
+def test_default_fetches_a_feed_robots_txt_disallows(server, tmp_path):
+    Handler.routes = {"/robots.txt": ("text/plain", "User-agent: *\nDisallow: /feed\n"),
+                      "/feed": (XML, RSS_FULL)}
+    config, code, summary = run(server + "/feed", tmp_path)
+    assert code == 0
+    assert summary["blocked_by_robots"] == []
+    assert summary["counts"]["fetched"] == 1
+    assert Handler.log == ["/feed"]
 
 
 def test_explicit_feed_flag_on_html_fails(server, tmp_path):

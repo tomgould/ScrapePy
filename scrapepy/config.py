@@ -105,7 +105,7 @@ class ScrapeConfig:
     audit: bool = False
     auth: str | None = None
     user_agent: str | None = None
-    ignore_robots: bool = False
+    obey_robots: bool = False
     output_root: str = "."
     index_pages: bool = True
     markdown_only: bool = False

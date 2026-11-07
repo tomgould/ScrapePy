@@ -23,6 +23,8 @@ class TestBadArguments:
         ["https://example.com", "--wait", "-1"],
         ["https://example.com", "--user-agent", "  "],
         ["https://example.com", "--recent", "1d", "--since", "2026-01-01"],
+        ["https://example.com", "--obey-robots", "--ignore-robots"],
+        ["https://example.com", "--ignore-robots", "--obey-robots"],
         [],
     ])
     def test_returns_bad_args_code(self, argv, capsys):
@@ -59,24 +61,30 @@ class TestMainReturnsCode:
         monkeypatch.setattr(cli, "_run", boom)
         assert main(["https://example.com"]) == EXIT_INTERRUPTED
 
-    def test_ignore_robots_prints_warning(self, monkeypatch, capsys):
+    @pytest.mark.parametrize("argv", [
+        ["https://example.com"],
+        ["https://example.com", "--ignore-robots"],
+        ["https://example.com", "--obey-robots"],
+    ])
+    def test_no_robots_warning_in_any_mode(self, argv, monkeypatch, capsys):
         monkeypatch.setattr(cli, "_run", lambda config: 0)
-        main(["https://example.com", "--ignore-robots"])
-        out = capsys.readouterr().out
-        assert out.count("--ignore-robots") == 1
-        assert out.startswith("Warning:")
+        assert main(argv) == EXIT_OK
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err == ""
 
-    def test_no_warning_by_default(self, monkeypatch, capsys):
-        monkeypatch.setattr(cli, "_run", lambda config: 0)
-        main(["https://example.com"])
-        assert "ignore-robots" not in capsys.readouterr().out
+    def test_both_robots_flags_is_a_one_line_usage_error(self, capsys):
+        assert main(["https://example.com", "--obey-robots", "--ignore-robots"]) == EXIT_BAD_ARGS
+        err = capsys.readouterr().err
+        assert "--obey-robots and --ignore-robots cannot be combined" in err
+        assert len([line for line in err.splitlines() if line.startswith("scrapepy: error:")]) == 1
 
 
 class TestNewFlags:
     def test_defaults(self):
         config = parse_args(["https://example.com"])
         assert config.user_agent is None
-        assert config.ignore_robots is False
+        assert config.obey_robots is False
         assert config.index_pages is True
         assert config.concurrent == 4
 
@@ -84,8 +92,17 @@ class TestNewFlags:
         config = parse_args(["https://example.com", "--user-agent", " MyBot/1.0 "])
         assert config.user_agent == "MyBot/1.0"
 
-    def test_ignore_robots(self):
-        assert parse_args(["https://example.com", "--ignore-robots"]).ignore_robots is True
+    def test_ignore_robots_is_a_no_op(self):
+        assert parse_args(["https://example.com", "--ignore-robots"]) == parse_args(["https://example.com"])
+
+    def test_obey_robots(self):
+        assert parse_args(["https://example.com", "--obey-robots"]).obey_robots is True
+
+    def test_ignore_robots_stays_in_help(self, capsys):
+        with pytest.raises(SystemExit):
+            parse_args(["--help"])
+        out = capsys.readouterr().out
+        assert "--obey-robots" in out and "--ignore-robots" in out
 
     def test_no_index_pages(self):
         assert parse_args(["https://example.com", "--no-index-pages"]).index_pages is False

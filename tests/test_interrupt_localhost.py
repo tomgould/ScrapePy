@@ -60,11 +60,11 @@ def server():
     httpd.server_close()
 
 
-def _crawl(url, out_dir):
+def _crawl(url, out_dir, *extra):
     env = dict(os.environ, PYTHONUNBUFFERED="1", PYTHONPATH=str(REPO_ROOT))
     return subprocess.Popen(
         [sys.executable, "-m", "scrapepy", url, "-o", str(out_dir), "--wait", "0",
-         "-c", "1", "--no-include-assets"],
+         "-c", "1", "--no-include-assets", *extra],
         cwd=str(out_dir), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
     )
 
@@ -173,13 +173,14 @@ def test_signal_while_robots_txt_hangs_exits_promptly(silent_server, tmp_path, s
     assert summary["exit_code"] == code
 
 
-def test_robots_txt_timeout_disallows_everything(silent_server, tmp_path):
+def test_robots_txt_timeout_disallows_everything_with_obey_robots(silent_server, tmp_path):
     out = tmp_path / "out"
     out.mkdir()
-    proc = _crawl(silent_server + "/", out)
+    proc = _crawl(silent_server + "/", out, "--obey-robots")
     output, _ = proc.communicate(timeout=60)
     assert proc.returncode == 1, output[-2000:]
     assert "robots.txt could not be read (unreachable)" in output
+    assert "run without --obey-robots" in output
     summary = json.loads(next(out.glob("ScrapedSites/*/run_summary.json")).read_text())
     assert summary["status"] == "complete"
     assert summary["counts"]["fetched"] == 0

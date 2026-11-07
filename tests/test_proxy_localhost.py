@@ -250,8 +250,7 @@ def test_errors_that_quote_the_proxy_url_are_redacted(servers, tmp_path, capfd, 
         raise RuntimeError(f"could not reach {url} via {kwargs.get('proxy') or proxy} "
                            f"as {USER}:{PASSWORD}")
     monkeypatch.setattr(fetcher.Fetcher, "get", failing_get)
-    _, code, summary_path = run(f"http://{HOST}:{origin_port}/", tmp_path, proxy=proxy,
-                                ignore_robots=True)
+    _, code, summary_path = run(f"http://{HOST}:{origin_port}/", tmp_path, proxy=proxy)
     assert code == 1
     summary = json.loads(summary_path.read_text())
     assert summary["failed"] and "***" in summary["failed"][0]["reason"]

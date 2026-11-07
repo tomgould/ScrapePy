@@ -12,29 +12,35 @@ You are responsible for how you use ScrapePy. Follow the terms of service of the
 
 What ScrapePy does to keep a crawl polite:
 
+- robots.txt is optional, and ScrapePy does not apply it unless you pass `--obey-robots`. By default no URL is skipped because robots.txt disallows it, no `Crawl-delay` is waited out, and a robots.txt that cannot be read stops nothing. It is still requested once, only to read its `Sitemap:` lines, by the default crawl, `-j` and `--audit` when reconnaissance runs (`--audit` also saves it as a fixture). No other mode requests it, and neither does a targeted crawl that skips reconnaissance (see Targeted crawls). `run_summary.json` records the choice as `options.obey_robots`.
+- `--obey-robots` applies robots.txt as described below. `--ignore-robots`, which used to switch it off, is accepted and does nothing, so existing scripts keep working. Passing both flags is an error and exits 2.
+- Pacing is not part of robots.txt and always applies. Page requests to a site start at least `--wait` seconds apart (3 seconds by default, 5 in browser modes). Prefetching does not get around the gap: it overlaps waiting, not requests. Reconnaissance and page requests share one limiter, so the gap also holds between the last reconnaissance request and the first page.
+- At most 4 requests run at once by default (`-c` changes this).
+- Reconnaissance requests (sitemaps, feeds, homepage) are spaced by one second or `--wait`, whichever is shorter.
+
+With `--obey-robots`:
+
 - robots.txt is read at the start of every run (except in Instagram mode, see below) and its rules are applied to the URLs a mode picks to fetch. Blocked URLs are skipped, counted in the run summary and listed in `run_summary.json`.
 - Rules follow [RFC 9309](https://www.rfc-editor.org/rfc/rfc9309): the longest matching `Allow` or `Disallow` pattern wins whatever order the lines are in, and `Allow` wins a tie. `*` matches any run of characters and a trailing `$` anchors the end of the URL, so `Disallow: /*.pdf$` blocks PDFs and `Disallow: /*?sort=` blocks sorted listings. Links found while crawling never carry query strings (they are stripped before queueing), so rules about query strings only affect sitemap and feed URLs. Paths are case-sensitive and percent-encoding is normalised. An empty `Disallow:` allows everything, and a UTF-8 byte order mark at the start of the file is ignored. Path parameters (`;`) are matched as ordinary characters. Matching uses no regular expressions and its cost is bounded: `Allow` and `Disallow` patterns longer than 2,000 characters are ignored, and when the site has rules for you, a URL whose path and query come to more than 8,192 characters, measured after percent-encoding (so each non-ASCII byte counts as three), is not fetched and is counted as blocked by robots.txt.
 - The group is chosen by your `--user-agent` product token (`MyBot` in `MyBot/1.0`): a group whose `User-agent` line names the same token, compared case-insensitively and ignoring any version suffix, replaces the `User-agent: *` group. `User-agent: M` does not match `MyBot`. Groups naming the same token are merged. Without `--user-agent`, the `*` group applies. `Crawl-delay` is read from the chosen group only.
 - A robots.txt that returns 404 or another 4xx means there are no restrictions. One that returns a 5xx error, or a server that cannot be reached or does not answer within 10 seconds (one attempt, no retries), means the whole site is treated as disallowed: ScrapePy prints why and fetches nothing.
 - Up to five redirects are followed when fetching robots.txt, to any host, and the file they lead to applies to the site being crawled. Only `http` and `https` redirect targets are followed. More than five redirects, a redirect loop, a redirect without a `Location` header or a redirect to any other scheme (such as `file:` or `ftp:`) count as unreachable, so the site is treated as disallowed.
-- Page requests to a site start at least `--wait` seconds apart (3 seconds by default, 5 in browser modes). A robots.txt `Crawl-delay` raises that gap and is never lowered by `--wait`. Prefetching does not get around the gap: it overlaps waiting, not requests. Reconnaissance and page requests share one limiter, so the gap also holds between the last reconnaissance request and the first page.
-- At most 4 requests run at once by default (`-c` changes this).
-- Reconnaissance requests (sitemaps, feeds, homepage) are spaced by one second or `--wait`, whichever is shorter, and never by less than `Crawl-delay`.
+- A robots.txt `Crawl-delay` raises the gap between page requests and is never lowered by `--wait`. Reconnaissance requests are never spaced by less than `Crawl-delay` either.
 
-Which modes check robots.txt:
+Which modes use robots.txt:
 
-| Mode | robots.txt |
-|------|------------|
-| Default crawl, `-j` | Every page URL, including prefetched ones, and the sitemap, feed and homepage requests made during reconnaissance |
-| `-d` docs | The start URL and every sidebar link |
-| `-1` single page, `--swagger` | The start URL |
-| `--feed` (or a feed URL) | The feed URL, the only page request |
-| `--audit` | Reconnaissance requests and the sample pages. Audit writes into `tests/fixtures/` and ignores `-o` |
-| `--instagram` | Not checked. Instagram's robots.txt does not allow general crawling, so read its terms before using this mode |
+| Mode | Default | With `--obey-robots` |
+|------|---------|----------------------|
+| Default crawl, `-j` | Requested once for its `Sitemap:` lines, only when reconnaissance runs. No rule or `Crawl-delay` applied | Every page URL, including prefetched ones, and the sitemap, feed and homepage requests made during reconnaissance |
+| `-d` docs | Not requested | The start URL and every sidebar link |
+| `-1` single page, `--swagger` | Not requested | The start URL |
+| `--feed` (or a feed URL) | Not requested | The feed URL, the only page request |
+| `--audit` | Requested for its `Sitemap:` lines and saved to `meta/robots.txt`. No rule or `Crawl-delay` applied. Audit writes into `tests/fixtures/` and ignores `-o` | Reconnaissance requests and the sample pages |
+| `--instagram` | Not requested | Not checked. Instagram's robots.txt does not allow general crawling, so read its terms before using this mode |
 
 Asset downloads (images, CSS, JS) linked from an allowed page are not checked against robots.txt and are not paced, though they share the `-c` concurrency limit.
 
-`--ignore-robots` turns off the rules and `Crawl-delay`, and also overrides an unreadable (5xx) robots.txt. ScrapePy prints a warning when it is used. Only use it on sites you own or have permission to crawl this way.
+Only crawl sites you own or have permission to crawl when you leave robots.txt off.
 
 The stealth browser and proxy features exist because some sites block ordinary clients even for content they publish openly. They do not give you permission to access anything.
 
@@ -87,10 +93,11 @@ python main.py <url> [options]
 | `-d`, `--docs` | Documentation site mode |
 | `-a`, `--include-assets` / `--no-include-assets` | Include CSS/JS/font files (default: on, images always included) |
 | `-i`, `--incremental` / `--no-incremental` | Only re-download pages/assets modified since last crawl (default: on) |
-| `--wait SECONDS` | Minimum gap between page requests to the site (default: 3s HTTP, 5s browser). robots.txt `Crawl-delay` raises it |
+| `--wait SECONDS` | Minimum gap between page requests to the site (default: 3s HTTP, 5s browser). With `--obey-robots`, a robots.txt `Crawl-delay` raises it |
 | `-c`, `--concurrent N` | Max concurrent requests for assets and page prefetching (default: 4) |
-| `--user-agent STRING` | User-Agent header for all requests, also used to match robots.txt groups (default: a browser-like user agent) |
-| `--ignore-robots` | Do not apply robots.txt rules or `Crawl-delay`. Prints a warning; only use with permission |
+| `--user-agent STRING` | User-Agent header for all requests, also used to match robots.txt groups with `--obey-robots` (default: a browser-like user agent) |
+| `--obey-robots` | Apply robots.txt: skip URLs it disallows and wait out its `Crawl-delay`. Without it neither is applied (robots.txt is optional) |
+| `--ignore-robots` | Accepted and ignored, because not applying robots.txt is the default. Combined with `--obey-robots` it exits 2 |
 | `-o`, `--output-dir DIR` | Folder under which `ScrapedSites/` and `MarkdownSites/` are created (default: current directory) |
 | `--markdown-only` | Write only Markdown: no HTML mirror, no image or asset downloads, links and images stay absolute URLs. Default crawl and `-j` only |
 | `--include REGEX` | Follow a discovered link only when its path matches (repeatable). With `-s`, links inside the starting path are followed too. Start URLs are always fetched. See Targeted crawls for how patterns are matched |
@@ -286,7 +293,7 @@ The file is replaced as soon as a crawl starts with a placeholder whose `status`
   "output_dir": "/data/crawls",
   "html_dir": "ScrapedSites/quotes_toscrape_com",
   "markdown_dir": "MarkdownSites/quotes_toscrape_com",
-  "options": { "concurrent": 4, "wait_seconds": 3.0, "ignore_robots": false, "...": "..." },
+  "options": { "concurrent": 4, "wait_seconds": 3.0, "obey_robots": false, "ignore_robots": true, "...": "..." },
   "counts": {
     "fetched": 12, "new": 10, "changed": 0, "unchanged": 0,
     "failed": 2, "blocked_by_robots": 0, "duplicates": 0, "renamed": 0, "skipped_non_html": 0, "skipped_old": 0
@@ -312,12 +319,12 @@ The file is replaced as soon as a crawl starts with a placeholder whose `status`
 | `interrupted`, `interrupted_by` | Whether the run was stopped early, and by which signal (`SIGINT` or `SIGTERM`, otherwise `null`) |
 | `start_url`, `started_at`, `ended_at` | The URL given and the run's start and end times (UTC, ISO 8601) |
 | `output_dir` | Absolute path of the output directory. `html_dir` and `markdown_dir` are relative to it; `markdown_dir` is `null` with `--no-markdown` |
-| `options` | The settings that shaped the run. Credentials are never written: `auth_used` and `proxy_used` only say whether they were set |
+| `options` | The settings that shaped the run. Credentials are never written: `auth_used` and `proxy_used` only say whether they were set. `obey_robots` is `true` only with `--obey-robots`; `ignore_robots` is its opposite, kept for readers written before the default changed, and means robots.txt rules and `Crawl-delay` were not applied |
 | `counts.fetched` | Page requests that completed, with a response or a network error, including ones answered 304 Not Modified. A request still waiting for its turn when the run is interrupted is not counted |
 | `counts.new`, `counts.changed` | Pages saved this run. A page is changed when an earlier run saved it (it is in the incremental cache or its HTML file already exists). A page whose Markdown body matches a file already written or unchanged in the run is a duplicate and gets no file |
 | `counts.unchanged` | Pages skipped because the server said 304 or the HTML matched the cache. Their URLs are in `unchanged_urls` |
 | `counts.failed` | Fetch errors, HTTP 4xx/5xx and error pages. `failed` lists each URL with a reason |
-| `counts.blocked_by_robots` | URLs skipped because robots.txt disallows them, listed in `blocked_by_robots` |
+| `counts.blocked_by_robots` | URLs skipped because robots.txt disallows them, listed in `blocked_by_robots`. Always 0 without `--obey-robots` |
 | `counts.duplicates` | Pages whose Markdown was identical to a file already written in this run (such as `/` and `/index.html`). They are not written again; `duplicates` lists each `url` with the file it matched as `same_as` |
 | `counts.renamed` | Pages written to a hash-suffixed file name (`about-1f3a9c0e.md`) because another URL already has their natural name. A page never replaces another URL's file; the assignment is stored in the cache, so each URL keeps its file in later runs. `renamed` lists each `url` with its `file` and `natural_file`. Use the frontmatter `url` as the key, not the file name |
 | `counts.skipped_non_html` | Responses fetched but not converted because their Content-Type is not HTML; `skipped_non_html` lists each `url` with its `content_type` |
@@ -333,12 +340,12 @@ New, changed and unchanged are decided on the page HTML, so a page whose HTML ch
 | Code | Meaning |
 |------|---------|
 | 0 | Success: at least one page was fetched without failing (unchanged pages count) |
-| 1 | Nothing was fetched (for example robots.txt blocked the start URL) or every fetch failed |
-| 2 | Bad arguments, such as an invalid `--since` date |
+| 1 | Nothing was fetched (for example, with `--obey-robots`, robots.txt blocked the start URL) or every fetch failed |
+| 2 | Bad arguments, such as an invalid `--since` date or `--obey-robots` together with `--ignore-robots` |
 | 130 | Interrupted with Ctrl+C (SIGINT) |
 | 143 | Stopped with SIGTERM |
 
-Feed mode exits 1 when robots.txt blocks the feed or it cannot be fetched, when `--feed` is given and the response is not a feed, or when the feed has entries and none can be read or written (`feed.error` says why). `-1` exits 0 when its page is fetched and not recorded as failed: saved, unchanged since the last run, a duplicate of a file already in the folder, or too short to convert. It exits 1 when robots.txt blocks the URL (no `run_summary.json` is written then), the browser fails, the server answers 400 or above, the page is an error page or its conversion fails. `--swagger` and `-d` exit 1 when robots.txt blocks the start URL or they save no page. Audit and Instagram modes exit 0 unless the arguments are bad.
+Feed mode exits 1 when the feed cannot be fetched (with `--obey-robots`, also when robots.txt blocks it), when `--feed` is given and the response is not a feed, or when the feed has entries and none can be read or written (`feed.error` says why). `-1` exits 0 when its page is fetched and not recorded as failed: saved, unchanged since the last run, a duplicate of a file already in the folder, or too short to convert. It exits 1 when the browser fails, the server answers 400 or above, the page is an error page or its conversion fails, and with `--obey-robots` also when robots.txt blocks the URL (no `run_summary.json` is written then). `--swagger` and `-d` exit 1 when they save no page (with `--obey-robots`, also when robots.txt blocks the start URL). Audit and Instagram modes exit 0 unless the arguments are bad.
 
 ### Numeric Path Flattening
 
@@ -359,7 +366,7 @@ Section pages are not flattened in `MarkdownSites/`: every path segment becomes 
 Recursively crawls all pages on the same domain using HTTP requests with TLS fingerprint spoofing. Downloads images, rewrites internal URLs to relative paths for offline viewing, and detects error pages (404, 403, etc.).
 
 Before crawling begins, a lightweight reconnaissance step runs automatically:
-1. Fetches `robots.txt` for its access rules, `Crawl-delay` and sitemap URLs
+1. Fetches `robots.txt` for its sitemap URLs, and with `--obey-robots` also for its access rules and `Crawl-delay`
 2. Fetches sitemaps and RSS/Atom feeds to build a dated URL map
 3. Parses the homepage `<header>`/`<nav>`/`<footer>` to extract navigation structure (including mega-menus and dropdown panels)
 4. Saves a `site_outline.json` with the site's section hierarchy (including sub-sections from dropdowns) and sitemap stats
@@ -401,7 +408,7 @@ python main.py https://recipes.example.com/recipes/ --markdown-only --no-index-p
 
 ### Targeted crawls
 
-Without targeting options a crawl follows every in-scope link from the start page and the site's navigation. With `--include`, `--max-depth` or `--urls-file`, only the start URLs seed the queue, and without `--recent` or `--since` no sitemap, feed or homepage requests are made: the run requests robots.txt, the pages and, outside `--markdown-only`, their assets. Otherwise reconnaissance makes its usual requests (robots.txt, sitemaps, up to seven feed paths and the homepage) before the pages, and `--max-pages` does not count them. A discovered link is followed when it is on the same site, inside the `-s` scope (when `-s` is given) or matching an `--include`, matching no `--exclude`, and within `--max-depth`.
+Without targeting options a crawl follows every in-scope link from the start page and the site's navigation. With `--include`, `--max-depth` or `--urls-file`, only the start URLs seed the queue, and without `--recent` or `--since` no sitemap, feed or homepage requests are made: the run requests the pages and, outside `--markdown-only`, their assets, plus robots.txt with `--obey-robots`. Otherwise reconnaissance makes its usual requests (robots.txt, sitemaps, up to seven feed paths and the homepage) before the pages, and `--max-pages` does not count them. A discovered link is followed when it is on the same site, inside the `-s` scope (when `-s` is given) or matching an `--include`, matching no `--exclude`, and within `--max-depth`.
 
 `--include` and `--exclude` are Python regular expressions searched in the link's path: no query string, no fragment and no trailing slash (`/recipes/r3`, so `^/recipes/r3/$` never matches), case-sensitive, with percent-encoding as the site wrote it. They are your own patterns and Python's regular expressions have no time limit, so a pathological pattern (such as `(a+)+$`) can stall a run; only the first 2,048 characters of a path are matched. This is unlike the robots.txt matcher, whose cost is bounded.
 
@@ -426,7 +433,7 @@ A start URL with a query string, such as a site search, is fetched exactly as gi
 
 ### Feeds (`--feed`)
 
-An RSS 2.0 or Atom feed is fetched once, after checking robots.txt, and each entry becomes its own Markdown file (`page_type: feed_entry`) with the body from the feed. Entry links are not followed. `run_summary.json` gets a `feed` object; `teaser_urls` lists entries whose feed body is only a short excerpt, so you can crawl those pages yourself.
+An RSS 2.0 or Atom feed is fetched once (with `--obey-robots`, after checking robots.txt), and each entry becomes its own Markdown file (`page_type: feed_entry`) with the body from the feed. Entry links are not followed. `run_summary.json` gets a `feed` object; `teaser_urls` lists entries whose feed body is only a short excerpt, so you can crawl those pages yourself.
 
 ```bash
 # Detected from the URL

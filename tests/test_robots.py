@@ -275,7 +275,7 @@ class TestFetchStatus:
         assert "could not be read" in policy.note
         assert ("unreachable" in policy.note) == (status == 0)
 
-    def test_ignore_robots_overrides_5xx(self):
+    def test_unenforced_policy_overrides_5xx(self):
         policy = policy_from_response(503, None, base_url=BASE, enforced=False)
         assert policy.can_fetch("/page")
 
@@ -372,34 +372,58 @@ class TestLoadRobotsPolicy:
 
     def test_uses_fetched_content_and_user_agent(self, monkeypatch):
         self._patch(monkeypatch, FakeResponse(200, GROUPS.encode()))
-        policy, content = discovery.load_robots_policy(ScrapeConfig(url=BASE, user_agent="MyBot/1.0"))
+        policy, content = discovery.load_robots_policy(ScrapeConfig(url=BASE, user_agent="MyBot/1.0", obey_robots=True))
         assert content == GROUPS
         assert policy.can_fetch("/public")
         assert not policy.can_fetch("/private")
 
     def test_404_allows_all(self, monkeypatch):
         self._patch(monkeypatch, FakeResponse(404))
-        policy, content = discovery.load_robots_policy(ScrapeConfig(url=BASE))
+        policy, content = discovery.load_robots_policy(ScrapeConfig(url=BASE, obey_robots=True))
         assert content is None
         assert policy.can_fetch("/private/a")
 
     def test_503_disallows_all(self, monkeypatch):
         self._patch(monkeypatch, FakeResponse(503))
-        policy, _ = discovery.load_robots_policy(ScrapeConfig(url=BASE))
+        policy, _ = discovery.load_robots_policy(ScrapeConfig(url=BASE, obey_robots=True))
         assert not policy.can_fetch("/")
 
     def test_unreachable_disallows_all(self, monkeypatch):
         self._patch(monkeypatch, ConnectionError("refused"))
-        policy, content = discovery.load_robots_policy(ScrapeConfig(url=BASE))
+        policy, content = discovery.load_robots_policy(ScrapeConfig(url=BASE, obey_robots=True))
         assert content is None
         assert not policy.can_fetch("/")
         assert "unreachable" in policy.note
 
-    def test_ignore_robots_keeps_content_for_sitemaps(self, monkeypatch):
+    def test_default_keeps_content_for_sitemaps_but_applies_no_rule(self, monkeypatch):
         self._patch(monkeypatch, FakeResponse(200, GROUPS.encode()))
-        policy, content = discovery.load_robots_policy(ScrapeConfig(url=BASE, ignore_robots=True))
+        policy, content = discovery.load_robots_policy(ScrapeConfig(url=BASE, user_agent="MyBot/1.0"))
         assert content == GROUPS
+        assert not policy.enforced
         assert policy.can_fetch("/public")
+        assert policy.can_fetch("/private")
+
+    def test_obey_robots_enforces_the_same_file(self, monkeypatch):
+        self._patch(monkeypatch, FakeResponse(200, GROUPS.encode()))
+        policy, _ = discovery.load_robots_policy(
+            ScrapeConfig(url=BASE, user_agent="MyBot/1.0", obey_robots=True))
+        assert policy.enforced
+        assert not policy.can_fetch("/private")
+
+    @pytest.mark.parametrize("response", [FakeResponse(503), ConnectionError("refused")])
+    def test_default_allows_everything_when_robots_is_unreadable(self, monkeypatch, response):
+        self._patch(monkeypatch, response)
+        policy, content = discovery.load_robots_policy(ScrapeConfig(url=BASE))
+        assert content is None
+        assert policy.can_fetch("/")
+        assert policy.can_fetch("/private/a")
+
+    def test_default_ignores_crawl_delay(self, monkeypatch):
+        self._patch(monkeypatch, FakeResponse(200, b"User-agent: *\nCrawl-delay: 9\n"))
+        default, _ = discovery.load_robots_policy(ScrapeConfig(url=BASE))
+        obey, _ = discovery.load_robots_policy(ScrapeConfig(url=BASE, obey_robots=True))
+        assert default.min_delay(3.0) == 3.0
+        assert obey.min_delay(3.0) == 9.0
 
 
 class TestDiscoveryRespectsRobots:
@@ -493,7 +517,7 @@ class TestBom:
         body = "﻿User-agent: *\nDisallow: /private\n".encode("utf-8")
         monkeypatch.setattr(discovery, "fetch_page_http",
                             lambda url, config, headers=None, follow_redirects=True, **kw: FakeResponse(200, body))
-        policy, _ = discovery.load_robots_policy(ScrapeConfig(url=BASE))
+        policy, _ = discovery.load_robots_policy(ScrapeConfig(url=BASE, obey_robots=True))
         assert not policy.can_fetch("/private/x")
 
 
@@ -537,7 +561,7 @@ class TestRobotsRedirects:
     def _load(self, monkeypatch, routes):
         server = RedirectingServer(routes)
         monkeypatch.setattr(discovery, "fetch_page_http", server)
-        policy, text = discovery.load_robots_policy(ScrapeConfig(url=BASE))
+        policy, text = discovery.load_robots_policy(ScrapeConfig(url=BASE, obey_robots=True))
         return policy, text, server
 
     def test_redirect_to_other_host_applies_its_rules(self, monkeypatch):
@@ -593,11 +617,11 @@ class TestRobotsRedirects:
         policy, _, _ = self._load(monkeypatch, {BASE + "/robots.txt": (301, BASE + "/gone")})
         assert policy.can_fetch("/anything")
 
-    def test_ignore_robots_overrides_redirect_failure(self, monkeypatch):
+    def test_default_ignores_redirect_failure(self, monkeypatch):
         monkeypatch.setattr(discovery, "fetch_page_http", RedirectingServer({
             BASE + "/robots.txt": (301, BASE + "/robots.txt"),
         }))
-        policy, _ = discovery.load_robots_policy(ScrapeConfig(url=BASE, ignore_robots=True))
+        policy, _ = discovery.load_robots_policy(ScrapeConfig(url=BASE))
         assert policy.can_fetch("/x")
 
 
@@ -641,7 +665,7 @@ class TestMatchLimits:
         assert RobotsPolicy.from_text(None, base_url=BASE).can_fetch(long_path)
         assert allowed("User-agent: *\nDisallow:\n", long_path)
 
-    def test_overlong_path_allowed_with_ignore_robots(self):
+    def test_overlong_path_allowed_when_not_enforced(self):
         from scrapepy.processing.robots import MAX_PATH_LENGTH
         policy = RobotsPolicy.from_text("User-agent: *\nDisallow: /x\n", base_url=BASE, enforced=False)
         assert policy.can_fetch("/" + "a" * (MAX_PATH_LENGTH * 2))
@@ -654,7 +678,7 @@ class TestRedirectSchemes:
     def test_non_http_redirect_disallows_without_fetching(self, monkeypatch, target):
         server = RedirectingServer({BASE + "/robots.txt": (301, target)})
         monkeypatch.setattr(discovery, "fetch_page_http", server)
-        policy, _ = discovery.load_robots_policy(ScrapeConfig(url=BASE))
+        policy, _ = discovery.load_robots_policy(ScrapeConfig(url=BASE, obey_robots=True))
         assert server.requested == [BASE + "/robots.txt"]
         assert policy.disallow_all
         assert "non-HTTP" in policy.note
@@ -666,7 +690,7 @@ class TestRedirectSchemes:
             https: (200, "User-agent: *\nDisallow: /x\n"),
         })
         monkeypatch.setattr(discovery, "fetch_page_http", server)
-        policy, _ = discovery.load_robots_policy(ScrapeConfig(url="http://example.com"))
+        policy, _ = discovery.load_robots_policy(ScrapeConfig(url="http://example.com", obey_robots=True))
         assert not policy.can_fetch("/x")
 
 
@@ -679,7 +703,7 @@ class TestRobotsTimeout:
             raise TimeoutError("timed out")
 
         monkeypatch.setattr(discovery, "fetch_page_http", slow)
-        policy, _ = discovery.load_robots_policy(ScrapeConfig(url=BASE))
+        policy, _ = discovery.load_robots_policy(ScrapeConfig(url=BASE, obey_robots=True))
         assert calls == [(discovery.ROBOTS_TIMEOUT_SECONDS, 1)]
         assert policy.disallow_all
         assert "unreachable" in policy.note
