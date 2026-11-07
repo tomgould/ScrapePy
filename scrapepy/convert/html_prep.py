@@ -154,12 +154,55 @@ def code_language(el) -> str | None:
     return None
 
 
-def normalize_headings(md: str) -> str:
-    """One H1 (the first heading) and no skipped levels, outside code fences.
+def _scan(md: str):
+    """Yield (line, heading match or None) for each line. Lines inside code
+    fences never match. Fences follow CommonMark: a fence closes only on the
+    same character repeated at least as many times with no info string, and
+    a fence that is never closed runs to the end."""
+    fence = None             # (character, length) of the open code fence
+    for line in md.split("\n"):
+        f = _RE_FENCE.match(line)
+        if fence is not None:
+            if (f and f.group(1)[0] == fence[0] and len(f.group(1)) >= fence[1]
+                    and not f.group(2).strip()):
+                fence = None
+            yield line, None
+            continue
+        if f and not (f.group(1)[0] == "`" and "`" in f.group(2)):
+            fence = (f.group(1)[0], len(f.group(1)))
+            yield line, None
+            continue
+        yield line, _RE_HEADING.match(line)
 
-    The first heading is the page title and becomes H1 whatever its level.
-    Every later heading sits below it, from H2 down, and keeps its place in
-    the page's outline:
+
+def first_h1(md: str) -> str | None:
+    """Text of the first H1 line outside code, or None when there is none."""
+    for _, m in _scan(md):
+        if m and len(m.group(2)) == 1:
+            return m.group(3).strip()
+    return None
+
+
+def insert_after_h1(md: str, text: str) -> str:
+    """Put text on its own paragraph after the first H1 line outside code
+    (unchanged when there is no H1)."""
+    out = []
+    done = False
+    for line, m in _scan(md):
+        out.append(line)
+        if not done and m and len(m.group(2)) == 1:
+            out.extend(["", text])
+            done = True
+    return "\n".join(out)
+
+
+def normalize_headings(md: str) -> str:
+    """One H1 and no skipped levels, outside code fences.
+
+    The title is the first H1. Headings above it (a kicker or a site
+    tagline) become plain paragraphs, keeping their text. A page with no H1
+    gets its first heading as the H1. Every later heading sits below the
+    title, from H2 down, and keeps its place in the page's outline:
 
     - a heading at the same original level as an open one is its sibling and
       gets the same output level (three H4 cards under an H1 are all H2);
@@ -169,32 +212,23 @@ def normalize_headings(md: str) -> str:
 
     So levels never skip, and siblings never drift deeper. Headings that start
     a list item ("- #### Card") or sit in a blockquote ("> #### Quote") count,
-    keeping their prefix. Code fences follow CommonMark: a fence closes only on
-    the same character repeated at least as many times, and a fence that is
-    never closed runs to the end.
+    keeping their prefix. Code fences follow CommonMark (see _scan).
     """
+    has_h1 = first_h1(md) is not None
     out = []
-    fence = None             # (character, length) of the open code fence
     seen_title = False
     stack = []               # open headings below the title: (original, output)
-    for line in md.split("\n"):
-        f = _RE_FENCE.match(line)
-        if fence is not None:
-            if (f and f.group(1)[0] == fence[0] and len(f.group(1)) >= fence[1]
-                    and not f.group(2).strip()):
-                fence = None
-            out.append(line)
-            continue
-        if f and not (f.group(1)[0] == "`" and "`" in f.group(2)):
-            fence = (f.group(1)[0], len(f.group(1)))
-            out.append(line)
-            continue
-        m = _RE_HEADING.match(line)
+    for line, m in _scan(md):
         if not m:
             out.append(line)
             continue
+        prefix = m.group(1) or ""
         original = len(m.group(2))
         if not seen_title:
+            if has_h1 and original != 1:
+                # Above the title: keep the words, drop the heading
+                out.append(prefix + m.group(3).strip())
+                continue
             seen_title = True
             level = 1
         else:
@@ -205,7 +239,7 @@ def normalize_headings(md: str) -> str:
             else:
                 level = min(6, (stack[-1][1] if stack else 1) + 1)
                 stack.append((original, level))
-        out.append((m.group(1) or "") + "#" * level + m.group(3))
+        out.append(prefix + "#" * level + m.group(3))
     return "\n".join(out)
 
 

@@ -20,7 +20,9 @@ from .html_prep import (
     code_language,
     dominant_container,
     expand_truncated_link_text,
+    first_h1,
     fix_block_links,
+    insert_after_h1,
     normalize_headings,
     same_site,
 )
@@ -499,7 +501,7 @@ class HTMLToMarkdown:
                         md_parts.append(f"{response_section.get_text(strip=True)}\n")
             else:
                 md = self._md(str(main_content))
-                if title and not md.strip().startswith("# "):
+                if title and first_h1(md) is None:
                     md = f"# {clean_title(title)}\n\n{md}"
                 return md
 
@@ -669,7 +671,7 @@ class HTMLToMarkdown:
 
         md = self._md(str(body), strip=["img"])
 
-        if title and not md.strip().startswith(f"# {title}") and not md.strip().startswith("# "):
+        if title and first_h1(md) is None:
             md = f"# {clean_title(title)}\n\n{md}"
 
         return md
@@ -709,6 +711,9 @@ class HTMLToMarkdown:
 
     def extract_standard_content(self, soup):
         """Extract content from standard sites (WordPress, blogs, general CMS)."""
+        # The page's H1 can sit in a <header>, which is removed as junk
+        page_h1 = soup.find("h1")
+        page_h1 = page_h1.get_text(" ", strip=True) if page_h1 else ""
         self._remove_junk_elements(soup)
 
         # Try precise content selectors (most specific first)
@@ -744,13 +749,15 @@ class HTMLToMarkdown:
         h1 = content.find("h1") or soup.find("h1")
         if h1:
             title = h1.get_text(strip=True)
+        elif page_h1:
+            title = page_h1
         elif soup.find("title"):
             title = soup.find("title").get_text(strip=True)
 
         # Convert to markdown
         md = self._md(str(content))
 
-        if title and not md.strip().startswith("# "):
+        if title and first_h1(md) is None:
             md = f"# {clean_title(title)}\n\n{md}"
 
         return md
@@ -842,7 +849,7 @@ class HTMLToMarkdown:
                     title = soup.find("h1").get_text().strip()
 
                 md = self._md(str(main_content))
-                if title and not md.strip().startswith("# "):
+                if title and first_h1(md) is None:
                     md = f"# {clean_title(title)}\n\n{md}"
 
                 if len(md.strip()) > 100:
@@ -1452,7 +1459,7 @@ class HTMLToMarkdown:
                 return False
 
             # Ensure page title is always present as # Heading
-            if not md.lstrip().startswith('# '):
+            if first_h1(md) is None:
                 title_soup = BeautifulSoup(html[:5000], "lxml")
                 title = ""
                 h1 = title_soup.find("h1")
@@ -1469,9 +1476,9 @@ class HTMLToMarkdown:
                 md = normalize_headings(merge_recipe_markdown(md, recipes))
 
             # Capture title from first # Heading for metadata
-            title_match = re.match(r'^# (.+)$', md.lstrip(), re.MULTILINE)
-            if title_match and "title" not in metadata:
-                metadata["title"] = title_match.group(1).strip()
+            title_text = first_h1(md)
+            if title_text and "title" not in metadata:
+                metadata["title"] = title_text
 
             md = self.convert_links(md, filepath)
 
@@ -1489,9 +1496,7 @@ class HTMLToMarkdown:
             date_str = metadata.get("date")
             if date_str and date_str != "null" and metadata.get("page_type") != "section":
                 visible_date = _format_visible_date(date_str)
-                heading_match = re.match(r'^(# .+\n)', md)
-                if heading_match:
-                    md = heading_match.group(1) + f"\n**{visible_date}**\n" + md[heading_match.end():]
+                md = insert_after_h1(md, f"**{visible_date}**")
 
             metadata.setdefault("scraped_at", utc_now_iso())
             metadata["content_hash"] = content_hash(md)

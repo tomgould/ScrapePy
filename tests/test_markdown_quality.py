@@ -82,7 +82,8 @@ class TestNormalizeHeadings:
         assert levels_out(1, 6, 1, 6) == [1, 2, 2, 3]
 
     def test_never_deeper_than_h6(self):
-        assert levels_out(6, 1, 2, 3, 4, 5, 6) == [1, 2, 3, 4, 5, 6, 6]
+        # A second H1 opens a chain one level deeper than the first one could
+        assert levels_out(1, 1, 2, 3, 4, 5, 6) == [1, 2, 3, 4, 5, 6, 6]
 
     def test_code_fences_untouched(self):
         md = "# T\n\n```bash\n# not a heading\n### nor this\n```\n\n### Real"
@@ -154,6 +155,86 @@ class TestNormalizeHeadings:
         html = form_page("<blockquote><h4>Quoted title</h4><p>Quoted words.</p></blockquote>")
         md, _ = convert(html)
         assert "> ## Quoted title" in lines(md)
+
+
+class TestTitleIsTheFirstH1:
+    def test_heading_above_h1_becomes_a_paragraph(self):
+        md = "## Site tagline\n\n# Real title\n\n## Section\n\n### sub"
+        assert normalize_headings(md) == "Site tagline\n\n# Real title\n\n## Section\n\n### sub"
+
+    def test_two_h1s(self):
+        assert normalize_headings("# First\n\n# Second\n\n## Sec") == "# First\n\n## Second\n\n### Sec"
+
+    def test_no_h1_first_heading_becomes_h1(self):
+        assert normalize_headings("### Kicker\n\n#### Sub") == "# Kicker\n\n## Sub"
+
+    def test_h1_last(self):
+        assert normalize_headings("## A\n\ntext\n\n### B\n\n# Last") == "A\n\ntext\n\nB\n\n# Last"
+
+    def test_prefixed_heading_above_h1_keeps_prefix(self):
+        assert normalize_headings("- ### Kicker\n\n# Title") == "- Kicker\n\n# Title"
+
+    def test_hash_line_in_code_is_not_the_h1(self):
+        md = "## Kicker\n\n```\n# comment\n```\n\n# Title"
+        assert normalize_headings(md) == "Kicker\n\n```\n# comment\n```\n\n# Title"
+
+
+def convert_page(tmp_path, body, title="Doc"):
+    html = f"<html><head><title>{title}</title></head><body>{body}</body></html>"
+    conv = HTMLToMarkdown(str(tmp_path), output_dir=tmp_path / "out")
+    out = tmp_path / "out" / "page.md"
+    assert conv.convert_file(tmp_path / "page.html", metadata={"url": "https://example.com/p"},
+                             output_path=out, html=html)
+    text = out.read_text(encoding="utf-8")
+    import yaml
+    front = yaml.safe_load(text.split("\n---\n", 1)[0].removeprefix("---\n"))
+    return front, text.split("\n---\n", 1)[1]
+
+
+class TestTitleThroughConversion:
+    def test_tagline_above_h1(self, tmp_path):
+        front, body = convert_page(tmp_path, f"<main><h2>Site tagline</h2><h1>Real title</h1>"
+                                   f"<p>{FILLER}</p><h2>Section</h2><p>x</p><h3>sub</h3><p>y</p></main>")
+        assert front["title"] == "Real title"
+        assert headings(body) == [1, 2, 3]
+        assert "Site tagline" in lines(body) and "## Site tagline" not in body
+        assert body.count("Real title") == 1
+
+    def test_two_h1s(self, tmp_path):
+        front, body = convert_page(tmp_path, f"<main><h1>First</h1><p>{FILLER}</p>"
+                                   "<h1>Second</h1><p>z</p><h2>Sec</h2><p>q</p></main>")
+        assert front["title"] == "First"
+        assert "## Second" in lines(body) and "### Sec" in lines(body)
+
+    def test_no_h1_uses_page_title(self, tmp_path):
+        front, body = convert_page(tmp_path, f"<main><h3>Kicker</h3><p>{FILLER}</p>"
+                                   "<h4>Sub</h4><p>z</p></main>")
+        assert front["title"] == "Doc"
+        assert lines(body)[0] == "# Doc"
+
+    def test_h1_inside_header(self, tmp_path):
+        front, body = convert_page(tmp_path, "<header><h1>Header title</h1></header>"
+                                   f"<main><h2>Intro</h2><p>{FILLER}</p><h3>Deep</h3><p>q</p></main>")
+        assert front["title"] == "Header title"
+        assert lines(body)[0] == "# Header title"
+        assert "## Intro" in lines(body)
+
+    def test_h1_last(self, tmp_path):
+        front, body = convert_page(tmp_path, f"<main><h2>A</h2><p>{FILLER}</p><h3>B</h3><p>z</p>"
+                                   "<h1>Last title</h1><p>end words here</p></main>")
+        assert front["title"] == "Last title"
+        assert headings(body) == [1]
+        assert "A" in lines(body) and "B" in lines(body)
+
+    def test_visible_date_follows_the_h1(self, tmp_path):
+        html_body = (f"<main><h2>Kicker</h2><h1>Dated</h1><p>{FILLER}</p></main>")
+        html = f"<html><head><title>Doc</title></head><body>{html_body}</body></html>"
+        conv = HTMLToMarkdown(str(tmp_path), output_dir=tmp_path / "out")
+        out = tmp_path / "out" / "d.md"
+        conv.convert_file(tmp_path / "d.html", metadata={"url": "https://example.com/d",
+                          "date": "2026-02-20", "page_type": "article"}, output_path=out, html=html)
+        body = out.read_text(encoding="utf-8").split("\n---\n", 1)[1]
+        assert "# Dated\n\n**20 Feb 2026**" in body
 
 
 FILLER = " ".join(["The service covers every part of the country and runs all year."] * 6)
