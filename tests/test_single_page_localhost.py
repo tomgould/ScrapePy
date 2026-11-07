@@ -40,6 +40,9 @@ SITE = {
     "/moved/new-home-for-the-story": page("New home for the story"),
     # Served only with the trailing slash: /docs answers 404
     "/docs/": page("Documentation home"),
+    # Served at both addresses
+    "/both": page("Both addresses, no slash"),
+    "/both/": page("Both addresses, with slash"),
 }
 REDIRECTS = {"/old/story": "/moved/new-home-for-the-story"}
 
@@ -241,8 +244,8 @@ def test_site_name_works_with_single_page(site, tmp_path):
 
 @pytest.mark.parametrize("headless", [True, False])
 @pytest.mark.parametrize("given,cache_key,file", [
-    ("/docs/", "/docs", "docs.md"),
-    ("/docs/?page=2", "/docs?page=2", "docs.md"),
+    ("/docs/", "/docs/", "docs.md"),
+    ("/docs/?page=2", "/docs/?page=2", "docs.md"),
     ("", "/", "index.md"),
     ("/#/route", "/#/route", "index.md"),
 ])
@@ -264,6 +267,22 @@ def test_page_is_fetched_exactly_as_given(site, tmp_path, headless, given, cache
     assert found[expected_url] in (file, file.replace(".md", "/_index.md"), "_index.md")
     cache = json.loads((Path(config.output_dir) / ".scrapepy_cache.json").read_text())
     assert list(cache["pages"]) == [cache_key]
+
+
+def test_trailing_slash_is_its_own_cache_entry(site, tmp_path):
+    """/both/ and /both are two addresses: each keeps its own cache entry, so
+    running them in turn reports each one unchanged the second time."""
+    base, _ = site
+    for _ in range(2):
+        run(base + "/both/", tmp_path)
+        config, code = run(base + "/both", tmp_path)
+        assert code == 0
+    assert summary_of(config)["unchanged_urls"] == [base + "/both"]
+    config, _ = run(base + "/both/", tmp_path)
+    assert summary_of(config)["unchanged_urls"] == [base + "/both/"]
+    cache = json.loads((Path(config.output_dir) / ".scrapepy_cache.json").read_text())
+    assert sorted(cache["pages"]) == ["/both", "/both/"]
+    assert len(markdown_urls(config)) == 2
 
 
 def test_browser_wait_is_the_full_wait_only_with_a_page_action(monkeypatch):
