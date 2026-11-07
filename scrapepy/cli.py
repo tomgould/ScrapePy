@@ -83,6 +83,10 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
                         help="Write only Markdown: no HTML mirror and no image or asset "
                              "downloads; links and images stay absolute URLs "
                              "(default crawl and -j only)")
+    parser.add_argument("--feed", action="store_true",
+                        help="Treat the URL as an RSS or Atom feed: one Markdown file per "
+                             "entry, from one request (automatic for URLs such as /feed or "
+                             "/rss.xml). --max-articles caps the entries (default 50)")
     parser.add_argument("--index-pages", action=argparse.BooleanOptionalAction, default=True,
                         help="Write generated _index.md listing pages for sections (default: on)")
     parser.add_argument("--auth", type=str, default=None,
@@ -154,6 +158,14 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
                          ("--audit", args.audit)):
             if on:
                 parser.error(f"--markdown-only works with the default crawl and -j, not {flag}")
+    if args.feed:
+        if not args.markdown:
+            parser.error("--feed writes Markdown and cannot be combined with --no-markdown")
+        for flag, on in (("-1/--single-page", args.single_page), ("--swagger", args.swagger),
+                         ("-d/--docs", args.docs), ("--instagram", args.instagram),
+                         ("--audit", args.audit), ("-j/--js-render", args.js_render)):
+            if on:
+                parser.error(f"--feed cannot be combined with {flag}")
     if args.user_agent is not None and not args.user_agent.strip():
         parser.error("--user-agent must not be empty")
 
@@ -192,6 +204,7 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
         output_root=args.output_dir,
         index_pages=args.index_pages,
         markdown_only=args.markdown_only,
+        feed=args.feed,
     )
 
 

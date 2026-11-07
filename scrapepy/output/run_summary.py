@@ -43,6 +43,7 @@ class RunStats:
     skipped_old: int = 0
     interrupted: bool = False
     interrupted_by: str | None = None    # "SIGINT" or "SIGTERM"
+    feed: dict | None = None             # feed mode only, written as "feed"
 
     def record_saved(self, url: str, existed_before: bool, markdown_path: str | None):
         """Record a page that was fetched and written because it is new or changed."""
@@ -78,6 +79,7 @@ def options_used(config: ScrapeConfig) -> dict:
         "incremental": config.incremental,
         "index_pages": config.index_pages,
         "markdown_only": config.markdown_only,
+        "feed": config.feed,
         "wait_seconds": config.wait_time,
         "concurrent": config.concurrent,
         "user_agent": config.user_agent,
@@ -112,7 +114,7 @@ def build_summary(
     """The run_summary.json content. in_progress=True gives the placeholder
     written when a crawl starts: status "running", no end time, no exit code."""
     root = config.output_root or "."
-    return {
+    summary = {
         "schema_version": SCHEMA_VERSION,
         "status": run_status(stats, in_progress),
         "start_url": config.url,
@@ -145,6 +147,10 @@ def build_summary(
         "interrupted_by": stats.interrupted_by,
         "exit_code": None if in_progress else exit_code_for(stats),
     }
+    if stats.feed is not None:
+        summary["feed"] = {k: (list(v) if isinstance(v, list) else v)
+                           for k, v in stats.feed.items()}
+    return summary
 
 
 def write_summary(config: ScrapeConfig, summary: dict) -> str:

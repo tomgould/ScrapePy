@@ -97,6 +97,7 @@ class ScrapeConfig:
     output_root: str = "."
     index_pages: bool = True
     markdown_only: bool = False
+    feed: bool = False
 
     # Derived fields (set in __post_init__)
     cutoff_date: datetime | None = field(init=False, default=None)

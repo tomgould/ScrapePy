@@ -27,6 +27,14 @@ async def run_scraper(config: ScrapeConfig) -> int:
         return EXIT_OK
 
     if not (config.swagger or config.docs or config.single_page):
+        from .processing.feeds import looks_like_feed_url
+        if config.feed or (config.markdown and not config.js_render
+                           and looks_like_feed_url(config.url)):
+            from .modes.feed import run_feed_mode
+            summary = await run_feed_mode(config, explicit=config.feed)
+            if summary is not None:
+                return summary["exit_code"]
+            print("Not an RSS or Atom feed; crawling it as a site.\n")
         create_output_dirs(config)
         from .modes.crawl import run_crawl_mode
         summary = await run_crawl_mode(config)
