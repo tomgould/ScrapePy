@@ -137,7 +137,9 @@ def test_ignore_robots_alone_behaves_like_the_default(site, tmp_path):
     _, code_a, summary_a, paths_a, files_a, _ = crawl(site, tmp_path / "default")
     _, code_b, summary_b, paths_b, files_b, _ = crawl(site, tmp_path / "ignore", "--ignore-robots")
     assert code_a == code_b == 0
-    assert paths_a == paths_b
+    # The sitemap and the homepage are fetched together, so their order can vary
+    assert paths_a[0] == paths_b[0] == "/robots.txt"
+    assert sorted(paths_a) == sorted(paths_b)
     assert files_a.keys() == files_b.keys()
     assert summary_a["options"] == summary_b["options"]
     assert summary_a["counts"] == summary_b["counts"]
