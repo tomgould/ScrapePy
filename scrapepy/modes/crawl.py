@@ -267,9 +267,17 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
     # natural paths, or a hash-suffixed name when another URL already has
     # one. Assignments from earlier runs come from the cache and never change.
     stored = _load_assignments(cache) if cache and cache.has_assignments() else None
+    # Markdown files already on disk belong to the URL in their frontmatter
+    # (pages from an earlier run, or entries written by feed mode): their
+    # names are reserved for those URLs, added to any stored assignments
+    on_disk = assignments_from_disk(config.markdown_dir) if config.markdown else {}
     if stored is None:
-        # No stored assignments: rebuild them from the Markdown files
-        stored = assignments_from_disk(config.markdown_dir) if config.markdown else {}
+        stored = on_disk
+    else:
+        held = {a.get(k) for a in stored.values() for k in ("md", "html")}
+        for disk_url, a in on_disk.items():
+            if disk_url not in stored and a["md"] not in held:
+                stored[disk_url] = a
     names = FileNames(stored)
     met: set[str] = set()                          # URLs written or unchanged this run
     run_hashes: dict[str, tuple[str, str]] = {}    # body hash -> (file, URL), final this run

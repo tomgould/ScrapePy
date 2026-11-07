@@ -22,6 +22,7 @@ from scrapepy.config import ScrapeConfig
 from scrapepy.modes import crawl
 from scrapepy.output.naming import url_suffix
 from scrapepy.output.writer import create_output_dirs
+from scrapepy.scraper import run_scraper
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORDS = "Plenty of readable words appear here so the page passes the length check. " * 6
@@ -41,10 +42,20 @@ def home(links):
 class Handler(BaseHTTPRequestHandler):
     pages: dict = {}       # path -> html, or an int status
     delay: dict = {}       # path -> seconds
+    raw: dict = {}         # path -> (content type, body), such as a feed
 
     def do_GET(self):
         path = self.path.split("?")[0]
         time.sleep(Handler.delay.get(path, 0))
+        if path in Handler.raw:
+            ctype, body = Handler.raw[path]
+            data = body.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         page = Handler.pages.get(path, 404)
         if isinstance(page, int):
             self.send_response(page)
@@ -65,6 +76,7 @@ class Handler(BaseHTTPRequestHandler):
 def server():
     Handler.pages = {}
     Handler.delay = {}
+    Handler.raw = {}
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{httpd.server_address[1]}"
@@ -334,6 +346,19 @@ def test_random_sites_keep_every_page(server, tmp_path, seed):
         return config
 
     crawl_once()
+    # Feed mode writes entries into the same folder; the crawls that follow
+    # must neither take nor move their files
+    feed_links = [f"/copy{g}/" for g in range(2)] + [f"/news/entry-{rng.randint(0, 99)}"]
+    items = "".join(f"<item><title>Entry {link}</title><link>{server}{link}</link>"
+                    f"<description>FEEDENTRY {link} has enough words to keep here.</description></item>"
+                    for link in feed_links)
+    Handler.raw["/feed"] = ("application/rss+xml",
+                            f'<?xml version="1.0"?><rss version="2.0"><channel><title>F</title>{items}</channel></rss>')
+    feed_config = ScrapeConfig(url=server + "/feed", output_root=str(tmp_path), wait=0, feed=True)
+    asyncio.run(run_scraper(feed_config))
+    feed_files = {f: u for f, (u, _) in md_files(feed_config).items() if "FEEDENTRY" in _}
+    assert feed_files
+    previous = {**(previous or {}), **feed_files}
     # A page's content changes, twice
     for _ in range(2):
         path = rng.choice([p for p in site.pages if not isinstance(site.pages[p], int)])
@@ -353,6 +378,10 @@ def test_random_sites_keep_every_page(server, tmp_path, seed):
     os.remove(os.path.join(config.output_dir, ".scrapepy_cache.json"))
     crawl_once(reset_previous=True)
     crawl_once()
+    # Feed entries kept their files through every crawl
+    final = {f: u for f, (u, _) in md_files(feed_config).items()}
+    for f, u in feed_files.items():
+        assert final.get(f) == u, (f, u)
 
 
 class TestOldCaches:

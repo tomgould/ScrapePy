@@ -153,9 +153,11 @@ def assignments_from_disk(markdown_dir: str) -> dict[str, dict]:
                 continue
             path = os.path.abspath(os.path.join(d, name))
             front = _read_frontmatter(path)
-            if not front or not isinstance(front.get("url"), str) or "articles" in front:
+            url = front.get("url") if front else None
+            # A file without a usable url (hand edited, broken) is unowned
+            if (not isinstance(url, str) or not url.startswith(("http://", "https://"))
+                    or "articles" in front):
                 continue
-            url = front["url"]
             tail = f"-{url_suffix(url)}.md"
             natural = path[: -len(tail)] + ".md" if path.endswith(tail) else path
             current = found.get(url)
