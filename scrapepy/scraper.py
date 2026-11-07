@@ -5,6 +5,7 @@ import os
 from .config import ScrapeConfig
 from .output.run_summary import EXIT_NOTHING_FETCHED, EXIT_OK
 from .output.writer import create_output_dirs
+from .processing.robots import RobotsPolicy
 
 
 def exit_code_for_pages(pages_saved: int | None) -> int:
@@ -46,16 +47,19 @@ async def run_scraper(config: ScrapeConfig) -> int:
         # Crawl mode converts markdown inline, skip batch conversion
         return summary["exit_code"]
 
-    # Browser modes start from one URL the user named; check it against robots.txt.
-    from .processing.discovery import load_robots_policy
-    robots, _ = load_robots_policy(config)
-    if not robots.can_fetch(config.url):
-        if robots.note:
-            print(f"{robots.note}: {config.url}")
-        else:
-            print(f"Blocked by robots.txt: {config.url}")
-        print("Nothing fetched. Use --ignore-robots only if you have permission.")
-        return EXIT_NOTHING_FETCHED
+    # Browser modes start from one URL the user named. With --obey-robots,
+    # check it against robots.txt; otherwise robots.txt is not requested.
+    robots = RobotsPolicy.allow_all(config.base_url)
+    if config.obey_robots:
+        from .processing.discovery import load_robots_policy
+        robots, _ = load_robots_policy(config)
+        if not robots.can_fetch(config.url):
+            if robots.note:
+                print(f"{robots.note}: {config.url}")
+            else:
+                print(f"Blocked by robots.txt: {config.url}")
+            print("Nothing fetched. Run without --obey-robots to skip the robots.txt check.")
+            return EXIT_NOTHING_FETCHED
 
     create_output_dirs(config)
 

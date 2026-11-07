@@ -10,11 +10,6 @@ from .config import DEFAULT_CONCURRENCY, ScrapeConfig, _parse_recent, _parse_sin
 from .output.run_summary import EXIT_BAD_ARGS, EXIT_INTERRUPTED
 from .scraper import run_scraper
 
-IGNORE_ROBOTS_WARNING = (
-    "Warning: --ignore-robots is set. robots.txt rules and Crawl-delay are not "
-    "applied; make sure you have the site owner's permission."
-)
-
 
 def _positive_int(value: str) -> int:
     try:
@@ -68,14 +63,21 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
                         help="Only re-download pages/assets modified since last crawl (default: on)")
     parser.add_argument("--wait", type=_non_negative_float, default=None,
                         help="Minimum seconds between page requests to the site "
-                             "(default: 3 HTTP, 5 browser; robots.txt Crawl-delay raises it)")
+                             "(default: 3 HTTP, 5 browser; with --obey-robots a robots.txt "
+                             "Crawl-delay raises it)")
     parser.add_argument("-c", "--concurrent", type=_positive_int, default=DEFAULT_CONCURRENCY,
                         help=f"Max concurrent requests (default: {DEFAULT_CONCURRENCY})")
     parser.add_argument("--user-agent", type=str, default=None,
                         help="User-Agent header for all requests, also used to match "
-                             "robots.txt rules (default: a browser-like user agent)")
+                             "robots.txt rules with --obey-robots (default: a browser-like "
+                             "user agent)")
+    parser.add_argument("--obey-robots", action="store_true",
+                        help="Apply robots.txt: skip URLs it disallows and wait out its "
+                             "Crawl-delay (default: robots.txt rules and Crawl-delay are not "
+                             "applied)")
     parser.add_argument("--ignore-robots", action="store_true",
-                        help="Do not apply robots.txt rules or Crawl-delay (only with permission)")
+                        help="Accepted and ignored: robots.txt is not applied by default. "
+                             "Kept so existing scripts keep working")
     parser.add_argument("-o", "--output-dir", type=str, default=".",
                         help="Folder under which ScrapedSites/ and MarkdownSites/ are created "
                              "(default: current directory)")
@@ -160,6 +162,9 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
     # Instagram mode requires --instagram flag
     if args.accounts and not args.instagram:
         parser.error("--accounts requires --instagram")
+
+    if args.obey_robots and args.ignore_robots:
+        parser.error("--obey-robots and --ignore-robots cannot be combined")
 
     # Auth validation
     if args.auth and ":" not in args.auth:
@@ -272,7 +277,7 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
         max_articles=args.max_articles,
         audit=args.audit,
         user_agent=args.user_agent.strip() if args.user_agent else None,
-        ignore_robots=args.ignore_robots,
+        obey_robots=args.obey_robots,
         output_root=args.output_dir,
         index_pages=args.index_pages,
         markdown_only=args.markdown_only,
@@ -296,9 +301,6 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit as e:
         # argparse exits 2 on bad arguments and 0 for --help/--version
         return e.code if isinstance(e.code, int) else EXIT_BAD_ARGS
-
-    if config.ignore_robots:
-        print(IGNORE_ROBOTS_WARNING)
 
     try:
         return _run(config)

@@ -1,4 +1,6 @@
-"""robots.txt checks in the browser modes (-1, --swagger, -d), with no browser or network."""
+"""robots.txt checks in the browser modes (-1, --swagger, -d), with no browser or network.
+
+The checks run only with --obey-robots; by default these modes do not request robots.txt."""
 
 import asyncio
 
@@ -22,10 +24,15 @@ class FakeResponse:
 
 
 def _use_robots(monkeypatch, text, status=200):
+    """Serve this robots.txt; the returned list records each time it is requested."""
+    requested: list[str] = []
+
     def load(config):
+        requested.append(config.base_url)
         return policy_from_response(status, text, config.user_agent, config.base_url,
-                                    enforced=not config.ignore_robots), text
+                                    enforced=config.obey_robots), text
     monkeypatch.setattr(discovery, "load_robots_policy", load)
+    return requested
 
 
 @pytest.fixture
@@ -58,31 +65,46 @@ class TestStartUrlCheck:
     @pytest.mark.parametrize("name,flags", MODES)
     def test_disallowed_start_url_is_not_fetched(self, name, flags, monkeypatch, mode_calls, tmp_path):
         _use_robots(monkeypatch, "User-agent: *\nDisallow: /app\n")
-        config = ScrapeConfig(url=BASE + "/app", output_root=str(tmp_path), markdown=False, **flags)
+        config = ScrapeConfig(url=BASE + "/app", output_root=str(tmp_path), markdown=False,
+                              obey_robots=True, **flags)
         assert asyncio.run(scraper.run_scraper(config)) == EXIT_NOTHING_FETCHED
         assert mode_calls == []
 
     @pytest.mark.parametrize("name,flags", MODES)
     def test_allowed_start_url_runs_mode(self, name, flags, monkeypatch, mode_calls, tmp_path):
         _use_robots(monkeypatch, "User-agent: *\nDisallow: /private\n")
-        config = ScrapeConfig(url=BASE + "/app", output_root=str(tmp_path), markdown=False, **flags)
+        config = ScrapeConfig(url=BASE + "/app", output_root=str(tmp_path), markdown=False,
+                              obey_robots=True, **flags)
         assert asyncio.run(scraper.run_scraper(config)) == EXIT_OK
         assert mode_calls == [name]
 
     def test_unreadable_robots_blocks_with_reason(self, monkeypatch, mode_calls, tmp_path, capsys):
         _use_robots(monkeypatch, None, status=503)
         config = ScrapeConfig(url=BASE + "/app", output_root=str(tmp_path), markdown=False,
-                              single_page=True)
+                              single_page=True, obey_robots=True)
         assert asyncio.run(scraper.run_scraper(config)) == EXIT_NOTHING_FETCHED
-        assert "robots.txt could not be read (HTTP 503)" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "robots.txt could not be read (HTTP 503)" in out
+        assert "Run without --obey-robots" in out
         assert mode_calls == []
 
-    def test_ignore_robots_runs_mode(self, monkeypatch, mode_calls, tmp_path):
-        _use_robots(monkeypatch, "User-agent: *\nDisallow: /\n")
+    @pytest.mark.parametrize("name,flags", MODES)
+    def test_default_runs_mode_and_never_requests_robots(self, name, flags, monkeypatch,
+                                                         mode_calls, tmp_path, capsys):
+        requested = _use_robots(monkeypatch, "User-agent: *\nDisallow: /\n")
+        config = ScrapeConfig(url=BASE + "/app", output_root=str(tmp_path), markdown=False, **flags)
+        assert asyncio.run(scraper.run_scraper(config)) == EXIT_OK
+        assert mode_calls == [name]
+        assert requested == []
+        assert "robots" not in capsys.readouterr().out.lower()
+
+    def test_default_ignores_unreadable_robots(self, monkeypatch, mode_calls, tmp_path):
+        requested = _use_robots(monkeypatch, None, status=503)
         config = ScrapeConfig(url=BASE + "/app", output_root=str(tmp_path), markdown=False,
-                              single_page=True, ignore_robots=True)
+                              single_page=True)
         assert asyncio.run(scraper.run_scraper(config)) == EXIT_OK
         assert mode_calls == ["single_page"]
+        assert requested == []
 
 
 HOME = f"""<html><head><title>Docs</title></head><body><nav>

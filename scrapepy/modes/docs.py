@@ -20,7 +20,7 @@ from ..processing.robots import HostRateLimiter, RobotsPolicy
 
 
 async def run_docs_mode(config: ScrapeConfig, robots: RobotsPolicy | None = None) -> int:
-    """Returns the number of pages saved. Nav links robots.txt disallows are skipped."""
+    """Returns the number of pages saved. With --obey-robots, nav links robots.txt disallows are skipped."""
     print(f"Fetching documentation site: {config.url}")
     robots = robots or RobotsPolicy.allow_all(config.base_url)
     limiter = HostRateLimiter(robots.min_delay(config.wait_time))

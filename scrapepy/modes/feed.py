@@ -1,8 +1,9 @@
 """Feed mode: one Markdown file per RSS 2.0 or Atom entry, from one request.
 
-The feed URL is checked against robots.txt like a single page and fetched
-once, after the run's pacing gap. Entry links are not followed: the body
-comes from the feed (content:encoded, Atom content, else the summary).
+With --obey-robots the feed URL is checked against robots.txt like a single
+page. The feed is fetched once, after the run's pacing gap. Entry links are not
+followed: the body comes from the feed (content:encoded, Atom content, else the
+summary).
 """
 
 from __future__ import annotations
@@ -148,12 +149,15 @@ async def run_feed_mode(config: ScrapeConfig, explicit: bool = True) -> dict | N
     }
     stats.feed = info
     try:
-        try:
-            robots, _ = await run_blocking(load_robots_policy, config)
-        except asyncio.CancelledError:
-            _note_interrupt(stats)
-            robots = RobotsPolicy.blocked("interrupted before robots.txt was read",
-                                          base_url=config.base_url)
+        # robots.txt is requested only with --obey-robots: a feed has no sitemap to find
+        robots = RobotsPolicy.allow_all(config.base_url)
+        if config.obey_robots:
+            try:
+                robots, _ = await run_blocking(load_robots_policy, config)
+            except asyncio.CancelledError:
+                _note_interrupt(stats)
+                robots = RobotsPolicy.blocked("interrupted before robots.txt was read",
+                                              base_url=config.base_url)
         _print_robots_status(robots, config)
         if stats.interrupted:
             pass
@@ -162,7 +166,8 @@ async def run_feed_mode(config: ScrapeConfig, explicit: bool = True) -> dict | N
             print(f"  {robots.note or 'Blocked by robots.txt'}: {url}")
         else:
             limiter = HostRateLimiter(robots.min_delay(config.wait_time))
-            limiter.reserve(urlparse(config.base_url).netloc)  # the robots.txt request
+            if config.obey_robots:
+                limiter.reserve(urlparse(config.base_url).netloc)  # the robots.txt request
             await limiter.wait(url)
             print(f"Fetching feed: {url}")
             status, data, encoding, error = await run_blocking(_fetch, url, config)

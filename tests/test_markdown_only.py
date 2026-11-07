@@ -67,7 +67,7 @@ def all_frontmatter(config):
 class TestOutputLayout:
     def test_only_markdown_and_state_files(self, site, tmp_path, no_assets):
         site(SITE, "User-agent: *\nDisallow: /private/\n")
-        config, summary = run_md_only(tmp_path)
+        config, summary = run_md_only(tmp_path, obey_robots=True)
         state_files = set(os.listdir(config.output_dir))
         # page2 is a dead link, so broken_links.txt is written too
         assert state_files == {".scrapepy_cache.json", SUMMARY_FILENAME, "broken_links.txt"}
@@ -125,10 +125,18 @@ class TestIncremental:
 class TestEveryRequestIsCheckedAndPaced:
     def test_all_requests_wait_on_the_shared_limiter(self, site, tmp_path, recorder, no_assets):
         fake = site(SITE, "User-agent: *\nDisallow: /private/\n")
-        run_md_only(tmp_path)
+        run_md_only(tmp_path, obey_robots=True)
         assert len(recorder) == 1
         assert sorted(recorder[0].waited) == sorted(fake.requested)
         assert BASE + "/private/x" not in fake.requested
+
+    def test_default_waits_on_the_limiter_for_pages_robots_disallows(self, site, tmp_path,
+                                                                    recorder, no_assets):
+        fake = site(SITE, "User-agent: *\nDisallow: /private/\n")
+        run_md_only(tmp_path)
+        assert len(recorder) == 1
+        assert sorted(recorder[0].waited) == sorted(fake.requested)
+        assert BASE + "/private/x" in fake.requested
 
 
 class TestDuplicatesAndCanonical:

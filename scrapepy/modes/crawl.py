@@ -179,34 +179,43 @@ async def run_crawl_mode(
     homepage_html: str | None = None
     feed_urls: list[str] = []
 
-    # 1. Fetch robots.txt: access rules, Crawl-delay and extra sitemaps
-    # (single page mode has read it already)
+    # 1. robots.txt. With --obey-robots it gives the access rules and the
+    # Crawl-delay. Without it no rule and no Crawl-delay is applied, and the
+    # file is requested only for its Sitemap: lines, so only when discovery runs.
+    # A targeted crawl seeded only from its start URLs needs no discovery
+    # unless a date filter uses the sitemap and feed dates.
+    # Single page mode has read robots.txt already, and only with --obey-robots.
+    discovery_wanted = not (seed_only and not config.has_date_filter)
     if robots is None:
         print("Running site reconnaissance...")
-        # Fetched in a worker thread so Ctrl+C is not held up by a slow server
-        try:
-            robots, robots_content = await run_blocking(load_robots_policy, config)
-        except asyncio.CancelledError:
-            _note_interrupt(stats)
-            robots, robots_content = RobotsPolicy.blocked(
-                "interrupted before robots.txt was read", base_url=config.base_url), None
+        robots_requested = config.obey_robots or discovery_wanted
+        robots, robots_content = RobotsPolicy.allow_all(config.base_url), None
+        if robots_requested:
+            # Fetched in a worker thread so Ctrl+C is not held up by a slow server
+            try:
+                robots, robots_content = await run_blocking(load_robots_policy, config)
+            except asyncio.CancelledError:
+                _note_interrupt(stats)
+                robots, robots_content = RobotsPolicy.blocked(
+                    "interrupted before robots.txt was read", base_url=config.base_url), None
         if robots_content:
             robots_sitemaps = parse_robots_sitemaps(robots_content)
             if config.verbose and robots_sitemaps:
                 print(f"  Found {len(robots_sitemaps)} sitemaps in robots.txt")
         _print_robots_status(robots, config)
+    else:
+        robots_requested = config.obey_robots
     page_delay = robots.min_delay(config.wait_time)
     discovery_delay = robots.min_delay(min(config.wait_time, DISCOVERY_MIN_INTERVAL))
     # One limiter for the whole run, so the gap after the last discovery
     # request also applies to the first page request.
     limiter = HostRateLimiter(page_delay)
-    limiter.reserve(urlparse(config.base_url).netloc)  # the robots.txt request just made
+    if robots_requested:
+        limiter.reserve(urlparse(config.base_url).netloc)  # the robots.txt request just made
 
     # 2. Run discovery (sitemaps + RSS), returns homepage HTML for reuse.
-    # A targeted crawl seeded only from its start URLs needs none of it
-    # unless a date filter uses the sitemap and feed dates.
     try:
-        if not (seed_only and not config.has_date_filter):
+        if discovery_wanted:
             discovery_map, homepage_html, feed_urls = await run_discovery(
                 config, extra_sitemaps=robots_sitemaps,
                 robots=robots, limiter=limiter.with_interval(discovery_delay),
@@ -1220,12 +1229,12 @@ def _write_summary_quietly(config: ScrapeConfig, summary: dict) -> str | None:
 
 
 def _print_robots_status(robots: RobotsPolicy, config: ScrapeConfig) -> None:
-    """One line on how robots.txt shapes this run."""
-    if not robots.enforced:
-        return  # The CLI already printed the --ignore-robots warning
+    """One line on how robots.txt shapes this run. Silent unless --obey-robots is set."""
+    if not config.obey_robots:
+        return
     if robots.disallow_all:
         print(f"  {robots.note}. Nothing will be crawled "
-              "(use --ignore-robots only if you have permission).")
+              "(run without --obey-robots to crawl anyway).")
         return
     if not robots.has_rules:
         print("  robots.txt: none found, all URLs allowed")

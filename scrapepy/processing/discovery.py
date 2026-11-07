@@ -268,17 +268,18 @@ def fetch_robots_txt(config: ScrapeConfig) -> tuple[int, str | None]:
 def load_robots_policy(config: ScrapeConfig) -> tuple[RobotsPolicy, str | None]:
     """Fetch robots.txt and build the policy for this run.
 
-    Returns (policy, raw robots.txt or None). A 4xx means no restrictions;
-    a 5xx or an unreachable server means everything is disallowed (RFC 9309).
-    With --ignore-robots the file is still read for its Sitemap: lines but
-    its rules are not applied.
+    Returns (policy, raw robots.txt or None). With --obey-robots the policy
+    applies the file: a 4xx means no restrictions; a 5xx or an unreachable
+    server means everything is disallowed (RFC 9309). Without it the policy is
+    not enforced (every URL is allowed and Crawl-delay is not applied) and the
+    file is read only for its Sitemap: lines.
     """
     status, content = fetch_robots_txt(config)
     policy = policy_from_response(
         status, content,
         user_agent=config.user_agent,
         base_url=config.base_url,
-        enforced=not config.ignore_robots,
+        enforced=config.obey_robots,
     )
     return policy, content
 

@@ -163,7 +163,7 @@ The rest of the page (introduction, tips, notes), with its headings one level do
 
 When the start URL is an RSS 2.0 or Atom feed, ScrapePy reads it as content instead of crawling. A URL is treated as a feed when its path ends in `/feed`, `/rss`, `/atom`, `/feeds`, `rss.xml`, `atom.xml`, `feed.xml`, `index.xml`, `.rss` or `.atom`, or its query says `feed=rss2`, `format=atom` and similar; `--feed` forces it for any URL. A detected URL whose response is not a feed is crawled as a site; with `--feed` it is recorded as a failure instead.
 
-- robots.txt is checked for the feed URL, and the feed is fetched once, after the usual pacing gap. Entry links are not followed and nothing else is downloaded.
+- The feed is fetched once. Entry links are not followed and nothing else is downloaded. robots.txt is not requested unless `--obey-robots` is given: then it is checked for the feed URL first, and the feed is fetched after the usual pacing gap.
 - Each entry, in feed order, up to `--max-articles` entries (50 when not given), becomes one Markdown file named from its link like a crawled page. A query string in the link is kept in the name (`/?p=101` is `index-p-101.md`), an entry on another host goes under a folder named after that host (`feeds_example/...`), and when two entries would get the same name, both get a suffix from a short hash of their link (`post-1a2b3c4d.md`), so names do not change when the feed's order does. As in a crawl, no entry replaces another URL's file: an entry keeps the file it already has from an earlier run (read back from the files' `url`), and a name another URL already holds gets the same link-hash suffix. Every entry whose file name carries a suffix is listed under `renamed`.
 - Frontmatter: `title`, `url` (the entry link, made absolute against `xml:base` or the feed URL), `date` (RSS `pubDate` or `dc:date`, Atom `published` else `updated`, as ISO 8601 no more precise than published: a date stays a date, whether written `2026-10-03`, `20261003` or `Sat, 03 Oct 2026`, a time keeps its offset, and a time without one stays without one) with `date_source: FEED`, `page_type: feed_entry`, `author` when present, `word_count`, `domain` (the feed's host), `scraped_at` and `content_hash`. A date that cannot be read is left out.
 - A DOCTYPE in the feed, with any entity declarations, is removed before parsing: entities are never expanded, no DTD or other URL is fetched and no local file is read. Entities the feed then uses are shown as written (`&a;`). A feed that has entries none of which can be read is recorded as failed, with `feed.error` set, and the run exits 1.
@@ -201,12 +201,12 @@ Written to `ScrapedSites/<site>/run_summary.json` at the start of a crawl or a `
 | `started_at`, `ended_at` | string, string or null | UTC ISO 8601; `ended_at` is null while running |
 | `output_dir` | string | Absolute path of the output folder |
 | `html_dir`, `markdown_dir` | string | Site folders, relative to `output_dir`; `markdown_dir` is null with `--no-markdown` |
-| `options` | object | The settings used. Credentials are never included |
+| `options` | object | The settings used. Credentials are never included. `obey_robots` is true only when `--obey-robots` was given; `ignore_robots` is its opposite (true when robots.txt rules and `Crawl-delay` were not applied, which is the default) and stays for readers written before `--obey-robots` existed |
 | `counts` | object of integers | `fetched`, `new`, `changed`, `unchanged`, `failed`, `blocked_by_robots`, `duplicates`, `renamed`, `skipped_non_html`, `skipped_old` |
 | `new_markdown`, `changed_markdown` | list of strings | Markdown files written for new and changed pages |
 | `unchanged_urls` | list of strings | Pages the server or the cache showed had not changed |
 | `failed` | list of `{url, reason}` | Fetch errors, HTTP 4xx and 5xx, error pages, and pages whose conversion to Markdown failed (these are not counted as new or changed and are converted again on the next run) |
-| `blocked_by_robots` | list of strings | URLs robots.txt disallowed |
+| `blocked_by_robots` | list of strings | URLs robots.txt disallowed. Empty unless `--obey-robots` was given |
 | `duplicates` | list of `{url, same_as}` | Pages whose Markdown matched a file already written, and that file |
 | `skipped_non_html` | list of `{url, content_type}` | Responses fetched but not converted because the server said they are not HTML (a raw Markdown, JSON or plain-text file), with the media type it gave |
 | `renamed` | list of `{url, file, natural_file}` | Pages written to a hash-suffixed name because another URL has their natural file name, with the file used and the name they would have had (both relative to `output_dir`). Listed in every run where the page is written or unchanged |
@@ -243,8 +243,8 @@ In feed mode `counts.fetched` is 1 (the feed), `new_markdown` and `changed_markd
 | Code | Meaning |
 |------|---------|
 | 0 | At least one page was fetched without failing (unchanged pages count) |
-| 1 | Nothing was fetched, or every fetch failed (including robots.txt blocking the start URL) |
-| 2 | Bad arguments |
+| 1 | Nothing was fetched, or every fetch failed (including, with `--obey-robots`, robots.txt blocking the start URL) |
+| 2 | Bad arguments (including `--obey-robots` with `--ignore-robots`) |
 | 130 | Interrupted with Ctrl+C (SIGINT) |
 | 143 | Stopped with SIGTERM |
 

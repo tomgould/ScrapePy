@@ -106,12 +106,18 @@ class TestOptionsUsed:
         assert opts["proxy_used"] is True
 
     def test_records_responsible_use_settings(self, tmp_path):
-        config = _config(tmp_path, user_agent="Bot/1.0", ignore_robots=True, index_pages=False)
+        config = _config(tmp_path, user_agent="Bot/1.0", obey_robots=True, index_pages=False)
         opts = options_used(config)
         assert opts["user_agent"] == "Bot/1.0"
-        assert opts["ignore_robots"] is True
+        assert opts["obey_robots"] is True
+        assert opts["ignore_robots"] is False
         assert opts["index_pages"] is False
         assert opts["concurrent"] == 4
+
+    def test_robots_options_by_default(self, tmp_path):
+        opts = options_used(_config(tmp_path))
+        assert opts["obey_robots"] is False
+        assert opts["ignore_robots"] is True   # rules and Crawl-delay were not applied
 
 
 class TestWriteSummary:

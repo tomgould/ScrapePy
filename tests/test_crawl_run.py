@@ -1,7 +1,8 @@
 """End-to-end crawl tests with the network replaced by in-memory pages.
 
-These cover robots.txt enforcement in the crawl loop, request pacing,
-run_summary.json, incremental change tracking and --no-index-pages.
+These cover robots.txt in the crawl loop (applied only with obey_robots, the
+--obey-robots flag), request pacing, run_summary.json, incremental change
+tracking and --no-index-pages.
 """
 
 import asyncio
@@ -55,7 +56,7 @@ def site(monkeypatch):
         def load(config):
             return RobotsPolicy.from_text(
                 fake.robots, user_agent=config.user_agent, base_url=config.base_url,
-                enforced=not config.ignore_robots,
+                enforced=config.obey_robots,
             ), fake.robots
         monkeypatch.setattr(crawl, "load_robots_policy", load)
 
@@ -91,33 +92,41 @@ ROBOTS = "User-agent: *\nDisallow: /private/\n"
 
 
 class TestRobotsInCrawl:
-    def test_disallowed_page_is_not_requested(self, site, tmp_path):
+    def test_obey_robots_does_not_request_a_disallowed_page(self, site, tmp_path):
         fake = site(SITE, ROBOTS)
-        _, summary = run(tmp_path)
+        _, summary = run(tmp_path, obey_robots=True)
         assert BASE + "/private/secret" not in fake.requested
         assert summary["blocked_by_robots"] == [BASE + "/private/secret"]
         assert summary["counts"]["blocked_by_robots"] == 1
 
-    def test_ignore_robots_fetches_it(self, site, tmp_path):
+    def test_default_fetches_a_disallowed_page(self, site, tmp_path):
         fake = site(SITE, ROBOTS)
-        _, summary = run(tmp_path, ignore_robots=True)
+        _, summary = run(tmp_path)
         assert BASE + "/private/secret" in fake.requested
+        assert summary["blocked_by_robots"] == []
         assert summary["counts"]["blocked_by_robots"] == 0
+
+    def test_default_fetches_a_page_when_robots_disallows_everything(self, site, tmp_path):
+        fake = site(SITE, "User-agent: *\nDisallow: /\n")
+        _, summary = run(tmp_path)
+        assert BASE + "/" in fake.requested
+        assert BASE + "/private/secret" in fake.requested
+        assert summary["exit_code"] == EXIT_OK
 
     def test_missing_robots_allows_everything(self, site, tmp_path):
         fake = site(SITE, None)
-        run(tmp_path)
+        run(tmp_path, obey_robots=True)
         assert BASE + "/private/secret" in fake.requested
 
     def test_user_agent_group_applies(self, site, tmp_path):
         fake = site(SITE, "User-agent: PoliteBot\nDisallow: /about\n")
-        run(tmp_path, user_agent="PoliteBot/1.0")
+        run(tmp_path, user_agent="PoliteBot/1.0", obey_robots=True)
         assert BASE + "/about" not in fake.requested
         assert BASE + "/private/secret" in fake.requested
 
     def test_start_url_blocked_exits_non_zero(self, site, tmp_path):
         fake = site(SITE, "User-agent: *\nDisallow: /\n")
-        _, summary = run(tmp_path)
+        _, summary = run(tmp_path, obey_robots=True)
         assert fake.requested == []
         assert summary["counts"]["fetched"] == 0
         assert summary["exit_code"] == EXIT_NOTHING_FETCHED
@@ -171,11 +180,22 @@ class TestPacing:
         run(tmp_path, wait=2)
         assert recorder[0].reserved == ["example.com"]
 
-    def test_crawl_delay_sets_both_intervals(self, site, tmp_path, recorder):
+    def test_crawl_delay_sets_both_intervals_with_obey_robots(self, site, tmp_path, recorder):
         site(SITE, "User-agent: *\nCrawl-delay: 7\n")
-        run(tmp_path, wait=2)
+        run(tmp_path, wait=2, obey_robots=True)
         assert recorder[0].min_interval == 7.0
         assert recorder[0].view_intervals == [7.0]
+
+    def test_default_ignores_crawl_delay(self, site, tmp_path, recorder):
+        site(SITE, "User-agent: *\nCrawl-delay: 7\n")
+        run(tmp_path, wait=2)
+        assert recorder[0].min_interval == 2.0
+        assert recorder[0].view_intervals == [1.0]
+
+    def test_default_keeps_the_wait_floor_with_a_shorter_crawl_delay(self, site, tmp_path, recorder):
+        site(SITE, "User-agent: *\nCrawl-delay: 1\n")
+        run(tmp_path, wait=2)
+        assert recorder[0].min_interval == 2.0
 
     def test_wait_time_is_floor_without_crawl_delay(self, site, tmp_path, recorder):
         site(SITE, None)
@@ -183,16 +203,17 @@ class TestPacing:
         assert recorder[0].min_interval == 2.0
         assert recorder[0].view_intervals == [1.0]
 
-    def test_every_page_fetch_waits_on_limiter(self, site, tmp_path, recorder):
+    @pytest.mark.parametrize("obey", [False, True])
+    def test_every_page_fetch_waits_on_limiter(self, site, tmp_path, recorder, obey):
         fake = site(SITE, ROBOTS)
-        run(tmp_path)
+        run(tmp_path, obey_robots=obey)
         assert sorted(recorder[0].waited) == sorted(fake.requested)
 
 
 class TestRunSummaryFile:
     def test_written_with_counts(self, site, tmp_path):
         site(SITE, ROBOTS)
-        config, summary = run(tmp_path)
+        config, summary = run(tmp_path, obey_robots=True)
         path = os.path.join(config.output_dir, SUMMARY_FILENAME)
         with open(path, encoding="utf-8") as f:
             on_disk = json.load(f)
@@ -211,8 +232,8 @@ class TestRunSummaryFile:
 
     def test_second_run_reports_unchanged(self, site, tmp_path):
         site(SITE, ROBOTS)
-        run(tmp_path)
-        _, summary = run(tmp_path)
+        run(tmp_path, obey_robots=True)
+        _, summary = run(tmp_path, obey_robots=True)
         counts = summary["counts"]
         assert counts["unchanged"] == 2
         assert counts["new"] == 0
@@ -222,16 +243,16 @@ class TestRunSummaryFile:
 
     def test_changed_page_is_listed(self, site, tmp_path):
         fake = site(SITE, ROBOTS)
-        run(tmp_path)
+        run(tmp_path, obey_robots=True)
         fake.pages["/about"] = page("About", body=WORDS + " New paragraph added today.")
-        _, summary = run(tmp_path)
+        _, summary = run(tmp_path, obey_robots=True)
         assert summary["changed_markdown"] == ["MarkdownSites/example_com/about.md"]
         assert summary["counts"]["unchanged"] == 1
 
     def test_no_incremental_marks_existing_as_changed(self, site, tmp_path):
         site(SITE, ROBOTS)
-        run(tmp_path, incremental=False)
-        _, summary = run(tmp_path, incremental=False)
+        run(tmp_path, incremental=False, obey_robots=True)
+        _, summary = run(tmp_path, incremental=False, obey_robots=True)
         assert summary["counts"]["changed"] == 2
         assert summary["counts"]["new"] == 0
 
@@ -299,9 +320,20 @@ class TestPrefetchPacing:
         }
         pages.update({p: page(f"Article {i}") for i, p in enumerate(self.ARTICLES)})
         fake = site(pages, "User-agent: *\nDisallow: /news/a-long-article-slug-number-2\n")
-        _, summary = run(tmp_path, since="2000-01-01", concurrent=4)
+        _, summary = run(tmp_path, since="2000-01-01", concurrent=4, obey_robots=True)
         assert BASE + self.ARTICLES[2] not in fake.requested
         assert BASE + self.ARTICLES[2] in summary["blocked_by_robots"]
+
+    def test_prefetch_default_fetches_articles_robots_disallows(self, site, tmp_path):
+        pages = {
+            "/": page("Home", ["/news"], body="Short home."),
+            "/news": page("News", self.ARTICLES, body="Short list."),
+        }
+        pages.update({p: page(f"Article {i}") for i, p in enumerate(self.ARTICLES)})
+        fake = site(pages, "User-agent: *\nDisallow: /news/a-long-article-slug-number-2\n")
+        _, summary = run(tmp_path, since="2000-01-01", concurrent=4)
+        assert BASE + self.ARTICLES[2] in fake.requested
+        assert summary["blocked_by_robots"] == []
 
 
 class TestSameRunDuplicates:
@@ -326,29 +358,32 @@ class TestRobotsUnavailable:
 
         def load(config):
             return policy_from_response(status, None, config.user_agent, config.base_url,
-                                        enforced=not config.ignore_robots), None
+                                        enforced=config.obey_robots), None
         monkeypatch.setattr(crawl, "load_robots_policy", load)
         return fake
 
-    def test_5xx_fetches_nothing_and_says_why(self, site, tmp_path, monkeypatch, capsys):
+    def test_5xx_fetches_nothing_and_says_why_with_obey_robots(self, site, tmp_path, monkeypatch,
+                                                               capsys):
         fake = self._install_status(site, monkeypatch, 503)
-        _, summary = run(tmp_path)
+        _, summary = run(tmp_path, obey_robots=True)
         assert fake.requested == []
         assert summary["exit_code"] == EXIT_NOTHING_FETCHED
         assert summary["blocked_by_robots"] == [BASE + "/"]
         out = capsys.readouterr().out
         assert "robots.txt could not be read (HTTP 503)" in out
         assert "Nothing will be crawled" in out
+        assert "run without --obey-robots" in out
 
-    def test_ignore_robots_overrides_5xx(self, site, tmp_path, monkeypatch):
+    def test_default_crawls_through_a_5xx_robots_txt(self, site, tmp_path, monkeypatch, capsys):
         fake = self._install_status(site, monkeypatch, 503)
-        _, summary = run(tmp_path, ignore_robots=True)
+        _, summary = run(tmp_path)
         assert BASE + "/about" in fake.requested
         assert summary["exit_code"] == EXIT_OK
+        assert "robots" not in capsys.readouterr().out.lower()
 
     def test_404_allows_everything(self, site, tmp_path, monkeypatch):
         fake = self._install_status(site, monkeypatch, 404)
-        run(tmp_path)
+        run(tmp_path, obey_robots=True)
         assert BASE + "/private/secret" in fake.requested
 
 
@@ -417,7 +452,7 @@ class TestCancellation:
 
 
 class TestSlowRobotsDoesNotBlockInterrupt:
-    def test_cancel_while_robots_txt_is_slow(self, site, tmp_path, monkeypatch):
+    def test_cancel_while_robots_txt_is_slow(self, site, tmp_path, monkeypatch, capsys):
         import time as _time
         fake = site(SITE, None)
 
@@ -440,6 +475,11 @@ class TestSlowRobotsDoesNotBlockInterrupt:
         assert elapsed < 0.5
         assert summary["status"] == "interrupted"
         assert fake.requested == []
+        # The default does not apply robots.txt, so an interrupt says nothing about it
+        out = capsys.readouterr().out
+        assert "Crawl interrupted" in out
+        assert "Nothing will be crawled" not in out
+        assert "--obey-robots" not in out
 
 
 class TestRelativeOutputDir:
