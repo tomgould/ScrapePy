@@ -489,6 +489,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
             content_type = _content_type(page_info)
             if content_type and not content_type.startswith(_HTML_TYPES):
                 print(f"  Skipped (not HTML, {content_type}): {full_url}")
+                stats.record_non_html(full_url, content_type)
                 continue
 
             # Quick error page check

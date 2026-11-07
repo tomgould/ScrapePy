@@ -127,6 +127,21 @@ def test_raw_markdown_link_is_not_written(server, tmp_path):
     assert summary["counts"]["changed"] == 0
 
 
+def test_non_html_responses_are_listed(server, tmp_path):
+    Handler.pages = routes()
+    Handler.pages["/projects/"] = ("text/html", Handler.pages["/projects/"][1].replace(
+        "</article>", '<a href="/projects/plain.md">plain</a></article>'))
+    Handler.pages["/projects/plain.md"] = ("text/plain", "Just text.")
+    config, summary = crawl_md_only(server, tmp_path)
+    skipped = {e["url"]: e["content_type"] for e in summary["skipped_non_html"]}
+    assert skipped[f"{server}/projects/plain.md"] == "text/plain"
+    for s in SLUGS:
+        assert skipped[f"{server}/projects/{s}.md"] == "text/markdown"
+    assert summary["counts"]["skipped_non_html"] == len(summary["skipped_non_html"])
+    urls = [v[0]["url"] for v in markdown_files(config).values()]
+    assert f"{server}/projects/plain.md" not in urls
+
+
 def test_markdown_url_served_as_html_is_converted(server, tmp_path):
     Handler.pages = routes()
     Handler.pages["/projects/"] = ("text/html", Handler.pages["/projects/"][1].replace(

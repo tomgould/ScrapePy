@@ -41,6 +41,7 @@ class RunStats:
     blocked_by_robots: list[str] = field(default_factory=list)
     duplicates: list[dict] = field(default_factory=list)  # {"url", "same_as"}
     collisions: list[dict] = field(default_factory=list)  # {"url", "file", "kept"}
+    skipped_non_html: list[dict] = field(default_factory=list)  # {"url", "content_type"}
     skipped_old: int = 0
     interrupted: bool = False
     interrupted_by: str | None = None    # "SIGINT" or "SIGTERM"
@@ -78,6 +79,10 @@ class RunStats:
     def record_collision(self, url: str, file_path: str, kept_url: str):
         """A page skipped because another URL already wrote its file this run."""
         self.collisions.append({"url": url, "file": file_path, "kept": kept_url})
+
+    def record_non_html(self, url: str, content_type: str) -> None:
+        """A response that was fetched but not converted because it is not HTML."""
+        self.skipped_non_html.append({"url": url, "content_type": content_type})
 
     def record_blocked(self, url: str):
         if url not in self.blocked_by_robots:
@@ -152,6 +157,7 @@ def build_summary(
             "blocked_by_robots": len(stats.blocked_by_robots),
             "duplicates": len(stats.duplicates),
             "collisions": len(stats.collisions),
+            "skipped_non_html": len(stats.skipped_non_html),
             "skipped_old": stats.skipped_old,
         },
         "new_markdown": [relative_to_root(p, root) for p in stats.new_markdown],
@@ -163,6 +169,7 @@ def build_summary(
             {"url": d["url"], "same_as": relative_to_root(d["same_as"], root)}
             for d in stats.duplicates
         ],
+        "skipped_non_html": list(stats.skipped_non_html),
         "collisions": [
             {"url": c["url"], "file": relative_to_root(c["file"], root), "kept": c["kept"]}
             for c in stats.collisions

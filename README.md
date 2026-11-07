@@ -281,7 +281,7 @@ The file is replaced as soon as a crawl starts with a placeholder whose `status`
   "options": { "concurrent": 4, "wait_seconds": 3.0, "ignore_robots": false, "...": "..." },
   "counts": {
     "fetched": 12, "new": 10, "changed": 0, "unchanged": 0,
-    "failed": 2, "blocked_by_robots": 0, "duplicates": 0, "collisions": 0, "skipped_old": 0
+    "failed": 2, "blocked_by_robots": 0, "duplicates": 0, "collisions": 0, "skipped_non_html": 0, "skipped_old": 0
   },
   "new_markdown": ["MarkdownSites/quotes_toscrape_com/_index.md"],
   "changed_markdown": [],
@@ -290,6 +290,7 @@ The file is replaced as soon as a crawl starts with a placeholder whose `status`
   "blocked_by_robots": [],
   "duplicates": [],
   "collisions": [],
+  "skipped_non_html": [],
   "interrupted": false,
   "interrupted_by": null,
   "exit_code": 0
@@ -311,6 +312,7 @@ The file is replaced as soon as a crawl starts with a placeholder whose `status`
 | `counts.blocked_by_robots` | URLs skipped because robots.txt disallows them, listed in `blocked_by_robots` |
 | `counts.duplicates` | Pages whose Markdown was identical to a file already written in this run (such as `/` and `/index.html`). They are not written again; `duplicates` lists each `url` with the file it matched as `same_as` |
 | `counts.collisions` | Pages that map to the same file as another URL (such as `/about` and `/about/`) with different content. The shortest URL keeps the file (among URLs of the same length, the first in alphabetical order), whatever the crawl order, concurrency or cache state; `collisions` lists each other `url` with the `file` and the URL it was `kept` for. In the default mode a shared HTML copy counts too |
+| `counts.skipped_non_html` | Responses fetched but not converted because their Content-Type is not HTML; `skipped_non_html` lists each `url` with its `content_type` |
 | `counts.skipped_old` | Articles dropped by `--recent`/`--since` after fetching |
 | `new_markdown`, `changed_markdown` | Markdown files written for new and changed pages. A page too short to convert is counted but has no file here. Generated `_index.md` listing pages are not included |
 | `exit_code` | The exit code the run finished with |
