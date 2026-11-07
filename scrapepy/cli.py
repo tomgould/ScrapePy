@@ -31,6 +31,22 @@ def _non_negative_float(value: str) -> float:
     return n
 
 
+def _document_types(value: str) -> list[str]:
+    from .processing.documents import parse_document_types
+    try:
+        return parse_document_types(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e).removeprefix("--documents: "))
+
+
+def _document_mb(value: str) -> int:
+    from .config import MAX_DOCUMENT_MB_LIMIT
+    n = _positive_int(value)
+    if n > MAX_DOCUMENT_MB_LIMIT:
+        raise argparse.ArgumentTypeError(f"must be {MAX_DOCUMENT_MB_LIMIT} or less")
+    return n
+
+
 def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
     parser = argparse.ArgumentParser(
         prog="scrapepy",
@@ -104,7 +120,7 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
     target.add_argument("--max-pages", type=int, default=0, metavar="N",
                         help="Stop after N pages fetched (default: 0 = no limit). Retries of "
                              "one page, robots.txt, reconnaissance and asset requests are not "
-                             "counted")
+                             "counted; document requests (--documents) are")
     target.add_argument("--urls-file", type=str, default=None, metavar="FILE",
                         help="Start URLs, one per line (# comments), all on one site, in one run")
     target.add_argument("--only-recipes", action="store_true",
@@ -116,6 +132,14 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
                         help="Follow pagination (rel=next and /page/N links of an in-scope "
                              "listing) without counting it as depth. Only --max-pages bounds "
                              "it: without it, it continues while the site offers another page")
+    docs_group = parser.add_argument_group("Documents")
+    docs_group.add_argument("--documents", type=_document_types, default=None, metavar="TYPES",
+                            help="Also download linked documents of these types on the crawl's "
+                                 "site and convert them to Markdown: a comma list of pdf, docx, "
+                                 "xlsx, csv (default: off). Originals go under files/<site>/. "
+                                 "Needs pip install \"scrapepy[documents]\" for pdf, docx and xlsx")
+    docs_group.add_argument("--max-document-mb", type=_document_mb, default=None, metavar="MB",
+                            help="Largest document downloaded, in MB (1 to 200, default: 25)")
     parser.add_argument("--index-pages", action=argparse.BooleanOptionalAction, default=True,
                         help="Write generated _index.md listing pages for sections (default: on)")
     parser.add_argument("--auth", type=str, default=None,
@@ -198,6 +222,16 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
                          ("--audit", args.audit), ("-j/--js-render", args.js_render)):
             if on:
                 parser.error(f"--feed cannot be combined with {flag}")
+    if args.max_document_mb is not None and not args.documents:
+        parser.error("--max-document-mb needs --documents")
+    if args.documents:
+        if not args.markdown:
+            parser.error("--documents writes Markdown and cannot be combined with --no-markdown")
+        for flag, on in (("-1/--single-page", args.single_page), ("--swagger", args.swagger),
+                         ("-d/--docs", args.docs), ("--instagram", args.instagram),
+                         ("--audit", args.audit), ("--feed", args.feed)):
+            if on:
+                parser.error(f"--documents works with the default crawl and -j, not {flag}")
     start_urls: list[str] = []
     targeted = (args.include or args.exclude or args.max_depth is not None or args.max_pages
                 or args.urls_file or args.only_recipes or args.follow_next)
@@ -291,6 +325,8 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
         only_recipes=args.only_recipes,
         site_name=args.site_name,
         follow_next=args.follow_next,
+        documents=list(args.documents or []),
+        **({"max_document_mb": args.max_document_mb} if args.max_document_mb else {}),
     )
 
 
@@ -301,6 +337,13 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit as e:
         # argparse exits 2 on bad arguments and 0 for --help/--version
         return e.code if isinstance(e.code, int) else EXIT_BAD_ARGS
+
+    if config.documents:
+        from .processing.documents import missing_libraries
+        problem = missing_libraries(config.documents)
+        if problem:
+            print(problem, file=sys.stderr)
+            return EXIT_BAD_ARGS
 
     try:
         return _run(config)
@@ -375,6 +418,9 @@ def _run(config: ScrapeConfig) -> int:
             print(f"Max articles per section: {config.max_articles}")
         if config.single_page or config.docs or config.swagger:
             print("  (date filter has no effect in this mode; all pages saved)")
+    if config.documents:
+        print(f"Documents: {', '.join(config.documents)} up to {config.max_document_mb} MB, "
+              f"originals in {config.files_dir}")
     if config.markdown_only:
         print("Markdown only: no HTML mirror, no asset downloads, absolute links")
     elif config.include_assets:

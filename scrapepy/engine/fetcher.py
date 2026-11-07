@@ -119,6 +119,38 @@ def create_asset_client(config: ScrapeConfig):
     )
 
 
+async def download_document(
+    url: str, config: ScrapeConfig, client, headers: dict | None = None,
+    max_bytes: int = 25 * 1024 * 1024,
+) -> tuple[int, bytes | None, dict, str | None]:
+    """Download one document with the asset client, without following
+    redirects (the caller decides whether a redirect may be followed).
+
+    Returns (status, body, response_headers, error). body is set only for
+    a 200 response no larger than max_bytes; a larger one (by Content-Length
+    or while streaming, after any content decoding) returns error and no
+    body. A network error returns status 0 and error.
+    """
+    too_large = f"larger than the {max_bytes // (1024 * 1024)} MB document size cap"
+    try:
+        async with client.stream("GET", url, headers=headers or {},
+                                 follow_redirects=False) as resp:
+            resp_headers = dict(resp.headers)
+            if resp.status_code != 200:
+                return resp.status_code, None, resp_headers, None
+            length = resp.headers.get("content-length", "")
+            if length.isdigit() and int(length) > max_bytes:
+                return 200, None, resp_headers, too_large
+            body = bytearray()
+            async for chunk in resp.aiter_bytes():
+                body += chunk
+                if len(body) > max_bytes:
+                    return 200, None, resp_headers, too_large
+            return 200, bytes(body), resp_headers, None
+    except Exception as e:
+        return 0, None, {}, redact(f"{type(e).__name__}: {e}", config.proxy)
+
+
 async def download_asset(
     url: str, config: ScrapeConfig, headers: dict | None = None,
     client=None,

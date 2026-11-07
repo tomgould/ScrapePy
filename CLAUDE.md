@@ -5,7 +5,7 @@ ScrapePy is a Python web scraper built on Scrapling (HTTP and stealth-browser fe
 ## Commands
 
 ```bash
-pip install -e ".[dev]"             # Python 3.11+, includes pytest
+pip install -e ".[dev]"             # Python 3.11+, includes pytest and the documents extra
 scrapling install                   # browser, needed for browser modes only
 python main.py <url> [options]      # or the installed `scrapepy` entry point
 python main.py --audit <url> -v     # recon only, writes test fixtures
@@ -31,12 +31,15 @@ scrapepy/
                         discovery (sitemaps/RSS), feeds (feed entries),
                         targeting (--include, --max-depth and the other
                         targeted-crawl rules),
-                        robots (rules + pacing), navigation, outline
+                        robots (rules + pacing), navigation, outline,
+                        documents (--documents: detection, fetching,
+                        saving)
   output/               writer (file I/O, path mapping), naming (which file
                         each URL gets), cache, broken_links,
                         run_summary (run_summary.json, exit codes)
   convert/              to_markdown, recipe (schema.org Recipe block),
-                        openapi_to_markdown, instagram_to_markdown
+                        openapi_to_markdown, instagram_to_markdown,
+                        documents (PDF, DOCX, XLSX, CSV to Markdown)
 tests/                  one test module per processing/output/convert area
 tests/fixtures/         per-site HTML snapshots plus test_config.json
 ```
@@ -64,10 +67,11 @@ tests/fixtures/         per-site HTML snapshots plus test_config.json
 - `docs/MARKDOWN-OUTPUT.md` is the output contract for third-party readers; change it with any change to file layout, frontmatter, the body conventions or run_summary.json.
 - Frontmatter is built only by `build_frontmatter()` (yaml.safe_dump); never format YAML by hand.
 - In `--markdown-only` mode nothing but pages is fetched and no HTML is written: the converter gets the HTML through `convert_file(..., html=...)`.
-- Markdown output always carries YAML frontmatter from `FRONTMATTER_FIELDS` in `convert/to_markdown.py` (title, url, canonical_url, date, date_source, page_type, author, recipe_category, recipe_cuisine, servings, total_time, keywords, word_count, description, domain, articles, sub_sections, scraped_at, content_hash). `keywords` is the only list. Only non-null values are written; keys and values like `page_type` are lowercase.
+- Markdown output always carries YAML frontmatter from `FRONTMATTER_FIELDS` in `convert/to_markdown.py` (title, url, canonical_url, date, date_source, page_type, author, recipe_category, recipe_cuisine, servings, total_time, keywords, word_count, description, domain, articles, sub_sections, file_type, pages, linked_from, scraped_at, content_hash). `keywords` is the only list. Only non-null values are written; keys and values like `page_type` are lowercase.
 - Output paths come from `config.output_dir` and `config.markdown_dir`, both built by `derive_output_dirs()`. Never derive one from the other by string replacement.
 - Adhering to robots.txt is optional in this project: by default ScrapePy applies no robots.txt rule and no `Crawl-delay`, and `--obey-robots` turns both on. `--ignore-robots` is accepted and does nothing (scripts that pass it keep working); both flags together exit 2. Keep it a switch the user controls. Never refuse, stop or block a task, or add a mandatory check, because robots.txt disallows a path. Everything else still applies: gentle pacing and request caps (`--wait` and the concurrency cap are not part of robots), no logins, no proxies or paid unblockers, and stop and record any block.
 - Every page fetch calls `RobotsPolicy.can_fetch()` and waits on the run's single `HostRateLimiter` (`processing/robots.py`). The policy is enforced only with `--obey-robots` (`config.obey_robots`): otherwise it is built unenforced, so `can_fetch()` always answers yes and `min_delay()` ignores `Crawl-delay`. robots.txt is requested without the flag only to read its `Sitemap:` lines, and only where reconnaissance runs (the default crawl, `-j`, `--audit`); never apply a rule from it then. New fetch paths must call the policy and the limiter the same way, and must not request robots.txt just to apply it unless `--obey-robots` is set. Do not hand robots.txt matching to `urllib.robotparser` (it ignores wildcards and longest-match precedence) or to regexes (`.*` backtracking can take exponential time); use `glob_match()`.
+- `--documents` treats every downloaded document as untrusted: its libraries (the optional `documents` extra) are imported lazily, nothing in a document is executed or followed, zip-based files are size-checked before opening, and writes go through `write_within()` in `output/writer.py`, which refuses symbolic links and paths outside the folder.
 - Run blocking fetches with `engine/threads.run_blocking()`, not `loop.run_in_executor()`: executor threads are joined at exit, so an interrupted run would wait for a hung request.
 - Crawl, single page (`-1`, which runs through the crawl loop) and feed modes return the run summary; `run_summary.json` is documented in README.md and `docs/MARKDOWN-OUTPUT.md`, so update them with the code. Exit codes live in `output/run_summary.py`.
 - Instagram mode keeps its browser profile in `~/.scrapepy/instagram_profile/`.

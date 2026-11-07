@@ -157,6 +157,36 @@ class CrawlCache:
         """Forget every page, so the next run converts all of them."""
         self._data["pages"] = {}
 
+    # --- Documents (--documents) ---
+
+    def get_document(self, url_path: str) -> dict | None:
+        """The cached entry for a document: etag, last_modified, sha256 of
+        the downloaded file and whether Markdown was written for it."""
+        return (self._data.get("documents") or {}).get(url_path)
+
+    def get_document_headers(self, url_path: str) -> dict:
+        """Conditional request headers for a cached document, or empty dict."""
+        entry = self.get_document(url_path) or {}
+        headers = {}
+        if entry.get("etag"):
+            headers["If-None-Match"] = entry["etag"]
+        if entry.get("last_modified"):
+            headers["If-Modified-Since"] = entry["last_modified"]
+        return headers
+
+    def update_document(self, url_path: str, headers: dict, sha256: str, converted: bool) -> None:
+        self._data.setdefault("documents", {})[url_path] = {
+            "etag": _get_header(headers, "etag"),
+            "last_modified": _get_header(headers, "last-modified"),
+            "sha256": sha256,
+            "converted": converted,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def remove_document(self, url_path: str) -> None:
+        """Forget a document, so the next run fetches and converts it in full."""
+        (self._data.get("documents") or {}).pop(url_path, None)
+
     # --- File assignments ---
 
     def has_assignments(self) -> bool:

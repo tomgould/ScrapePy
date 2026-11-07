@@ -47,6 +47,7 @@ class RunStats:
     interrupted_by: str | None = None    # "SIGINT" or "SIGTERM"
     feed: dict | None = None             # feed mode only, written as "feed"
     targeting: dict | None = None        # targeted crawls only, written as "targeting"
+    documents: dict | None = None        # --documents only, written as "documents"
 
     def record_saved(self, url: str, existed_before: bool, markdown_path: str | None):
         """Record a page that was fetched and written because it is new or changed."""
@@ -115,6 +116,9 @@ def options_used(config: ScrapeConfig) -> dict:
         if value is None or value is False or value == [] or (value == 0 and key != "max_depth"):
             continue
         options[key] = value
+    if config.documents:
+        options["documents"] = list(config.documents)
+        options["max_document_mb"] = config.max_document_mb
     return options
 
 
@@ -183,6 +187,9 @@ def build_summary(
     if stats.targeting is not None:
         summary["targeting"] = {k: (list(v) if isinstance(v, list) else v)
                                 for k, v in stats.targeting.items()}
+    if stats.documents is not None:
+        summary["documents"] = {k: (list(v) if isinstance(v, list) else v)
+                                for k, v in stats.documents.items()}
     if stats.feed is not None:
         summary["feed"] = {k: (list(v) if isinstance(v, list) else v)
                            for k, v in stats.feed.items()}

@@ -45,7 +45,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+# --documents: PDF, DOCX and XLSX conversion (CSV needs nothing extra)
+documents = [
+    "pypdf>=4.0",
+    "pdfminer.six>=20231228",
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
+]
+dev = ["pytest>=8.0", "scrapepy[documents]"]
 
 [project.urls]
 Homepage = "https://github.com/tomgould/ScrapePy"

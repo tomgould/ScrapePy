@@ -31,7 +31,7 @@ Which modes use robots.txt:
 
 | Mode | Default | With `--obey-robots` |
 |------|---------|----------------------|
-| Default crawl, `-j` | Requested once for its `Sitemap:` lines, only when reconnaissance runs. No rule or `Crawl-delay` applied | Every page URL, including prefetched ones, and the sitemap, feed and homepage requests made during reconnaissance |
+| Default crawl, `-j` | Requested once for its `Sitemap:` lines, only when reconnaissance runs. No rule or `Crawl-delay` applied | Every page URL, including prefetched ones, and the sitemap, feed and homepage requests made during reconnaissance; with `--documents`, every document URL and every redirect a document request follows |
 | `-d` docs | Not requested | The start URL and every sidebar link |
 | `-1` single page, `--swagger` | Not requested | The start URL |
 | `--feed` (or a feed URL) | Not requested | The feed URL, the only page request |
@@ -50,6 +50,9 @@ pip install .
 
 # or, for development, with the test dependencies
 pip install -e ".[dev]"
+
+# Optional: the libraries --documents needs for PDF, DOCX and XLSX (CSV needs none)
+pip install ".[documents]"
 
 # Install the Patchright browser (Chromium), needed for browser modes only
 scrapling install
@@ -101,11 +104,13 @@ python main.py <url> [options]
 | `--include REGEX` | Follow a discovered link only when its path matches (repeatable). With `-s`, links inside the starting path are followed too. Start URLs are always fetched. See Targeted crawls for how patterns are matched |
 | `--exclude REGEX` | Never follow a link whose path matches (repeatable, matched like `--include`) |
 | `--max-depth N` | Follow links at most N steps from the start URLs (start = 0; default: no limit) |
-| `--max-pages N` | Stop after N pages fetched (default: 0 = no limit); `run_summary.json` records `stopped_by_limit`. Each page counts once however many times a failing request is retried, and robots.txt, reconnaissance and asset requests are not counted |
+| `--max-pages N` | Stop after N pages fetched (default: 0 = no limit); `run_summary.json` records `stopped_by_limit`. Each page counts once however many times a failing request is retried, and robots.txt, reconnaissance and asset requests are not counted. With `--documents`, each document request counts too |
 | `--urls-file FILE` | Start URLs, one per line (`#` comments, http or https, one site and one scheme), all at depth 0 in one run; the positional URL is optional |
 | `--only-recipes` | Write only pages with schema.org Recipe data; other pages are fetched to find links but not written |
 | `--site-name NAME` | Output folder name for the site (instead of the host and `-s` path), so several runs share one folder. Works with the default crawl, `-j` and `-1` |
 | `--follow-next` | Follow pagination (`rel="next"` and `/page/N` links) of in-scope listings without counting it as depth. Only `--max-pages` bounds it (pagination does not count as depth): without it, it continues as long as the site offers another page |
+| `--documents TYPES` | Also download linked documents of these types on the crawl's site and convert them to Markdown: a comma list of `pdf`, `docx`, `xlsx`, `csv` (default: off). Default crawl and `-j` only. See Documents below |
+| `--max-document-mb MB` | Largest document downloaded, 1 to 200 (default: 25). Needs `--documents` |
 | `--index-pages` / `--no-index-pages` | Write the generated `_index.md` section listing pages (default: on) |
 | `--feed` | Read the URL as an RSS or Atom feed: one Markdown file per entry from one request. Automatic for URLs such as `/feed` or `/rss.xml`. `--max-articles` caps the entries (default 50) |
 | `--auth USER:PASS` | HTTP Basic Auth credentials |
@@ -132,6 +137,9 @@ python main.py https://www.example.com
 
 # Write output somewhere else and identify your crawler
 python main.py https://www.example.com -o /data/crawls --user-agent "MyCrawler/1.0 (+https://example.org/bot)"
+
+# Markdown for a search index, with the site's linked PDF and Word files converted too
+python main.py https://example.com --markdown-only --no-index-pages --documents pdf,docx
 
 # Markdown for a search index: no HTML mirror or images, no generated listing pages
 python main.py https://www.example.com --markdown-only --no-index-pages -o /data/crawls
@@ -330,6 +338,7 @@ The file is replaced as soon as a crawl starts with a placeholder whose `status`
 | `new_markdown`, `changed_markdown` | Markdown files written for new and changed pages. A page too short to convert is counted but has no file here. Generated `_index.md` listing pages are not included |
 | `exit_code` | The exit code the run finished with |
 | `feed` | Feed mode only: the feed's format and title and its written, unchanged, over-cap, skipped and teaser entries. See [docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md) |
+| `documents` | With `--documents` only: the documents found, fetched, converted and unchanged, and those skipped or failed with the reason. Document requests are also counted in `counts.fetched` |
 
 New, changed and unchanged are decided on the page HTML, so a page whose HTML changed but whose Markdown did not still counts as changed. Compare `content_hash` if you need the stricter test.
 
@@ -429,6 +438,18 @@ python main.py --urls-file recipe-urls.txt --max-depth 0 --site-name recipes_exa
 
 A start URL with a query string, such as a site search, is fetched exactly as given when any targeting option is set, and the links on it are followed; the page itself is not written or cached, because its query cannot be part of a file name. Without a targeting option the query is dropped and the crawl starts from the path, as in every crawl. Query strings on discovered links are dropped, as in every crawl, so pagination such as `?page=2` is not followed; `/page/2/` style pagination is. `run_summary.json` gets a `targeting` object with the skipped counts (see [docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md)).
 
+### Documents (`--documents`)
+
+`--documents pdf,docx,xlsx,csv` (any of the four) makes a crawl also download the documents its pages link to and convert each one to Markdown with the same frontmatter as a page, so a search index picks them up with the pages. It is off by default; without it links to these files are handled as before. PDF, DOCX and XLSX need the optional libraries (`pip install "scrapepy[documents]"`: pypdf with pdfminer.six as a fallback, python-docx and openpyxl, all under permissive licences); when one is missing, the run stops before any request with exit code 2 and a one-line message naming the extra. CSV needs nothing extra.
+
+- Which documents: links on the crawl's own site (same scheme, host and port) whose path ends in a listed extension. They go through the crawl queue like page links, so `-s`, `--include`, `--exclude` (matched against the document's path), `--max-depth` (a document is one step deeper than the page that links it) and robots.txt apply, and each document request counts towards `--max-pages`. A document URL in `--urls-file` is fetched as a document. Links inside documents are never followed. `.doc` and `.xls` links (the old binary formats) are recorded as skipped and not fetched when `docx` or `xlsx` is listed.
+- Fetching: each document request waits on the same per-host gap as pages (`--wait`, raised by `Crawl-delay`) and goes through `--proxy` like asset downloads. A document larger than `--max-document-mb` (25 MB by default) is not saved: the download stops as soon as the size is known to be over. Redirects are followed, at most five, only to the crawl's own site and to paths robots.txt allows; a redirect to another site is refused and recorded as failed.
+- Files: the original goes under `files/<site>/` beside `ScrapedSites/` and `MarkdownSites/` (so an indexer reading `MarkdownSites/` never reads it twice), at its URL path. The Markdown goes under `MarkdownSites/<site>/` as the URL path plus `.md` (`/reports/2025.pdf` is `reports/2025.pdf.md`). Names follow the page rule: a document never takes another URL's file and gets a hash-suffixed name instead. A write through a symbolic link is refused.
+- Conversion: PDF text page by page under `## Page N` headings (no OCR: a scanned PDF with no text layer is saved and recorded as skipped with `no text layer`); DOCX headings, paragraphs, lists and tables; XLSX one table per sheet with formulas read as the values last saved (nothing is calculated and macros are ignored); CSV one table. Tables stop after 2,000 rows and 50 columns, PDFs after 2,000 pages and every document after 2,000,000 characters, each with a note in the text. Encrypted, corrupt or oversized files, and DOCX or XLSX files that would unpack to more than 256 MB, are recorded as failed with the reason; none of them stops the crawl.
+- Incremental runs: the cache keeps each document's ETag, Last-Modified and checksum, so an unchanged document is reported unchanged and its files are left alone.
+
+`run_summary.json` gets a `documents` object (found, fetched, converted, unchanged, and the skipped and failed documents with reasons). Converted documents are also listed in `new_markdown` or `changed_markdown`, unchanged ones in `unchanged_urls`, and failures in `failed`, like pages.
+
 ### Feeds (`--feed`)
 
 An RSS 2.0 or Atom feed is fetched once (with `--obey-robots`, after checking robots.txt), and each entry becomes its own Markdown file (`page_type: feed_entry`) with the body from the feed. Entry links are not followed. `run_summary.json` gets a `feed` object; `teaser_urls` lists entries whose feed body is only a short excerpt, so you can crawl those pages yourself.
@@ -509,6 +530,7 @@ Section-ordered traversal processes article links in DOM order (newest first). W
 - With `--urls-file` and `-s`, the scope is the first start URL's path.
 - `--site-name` is meant for one site. Using one name for two hosts overwrites nothing (each URL keeps its own file), but each run treats the other host's pages as changed and rewrites the cache; ScrapePy prints a warning when the folder's last run was on another host.
 - A start URL that looks like a feed runs feed mode, where the targeted-crawl options and any other `--urls-file` URLs do not apply; ScrapePy prints a notice.
+- With `--documents`, a document is fetched only from the crawl's own host; documents on another host (a CDN, say) are not followed. In the default mode the HTML copy's links to documents still point at `media/`, where nothing is saved.
 - `--follow-next` follows only path-based pagination (`/page/2/`) and `rel="next"` links whose path differs; pagination that changes only the query string (`?page=2`) leads back to the same page and stops.
 
 [docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md) lists more limits of the Markdown output.
@@ -532,7 +554,9 @@ ScrapePy uses Scrapling's built-in stealth features:
 | [markdownify](https://pypi.org/project/markdownify/) | HTML-to-Markdown conversion |
 | [trafilatura](https://pypi.org/project/trafilatura/) | Content extraction fallback |
 | [pyyaml](https://pypi.org/project/PyYAML/) | YAML frontmatter and OpenAPI YAML specs |
-| [httpx](https://pypi.org/project/httpx/) | Async HTTP for asset downloads |
+| [httpx](https://pypi.org/project/httpx/) | Async HTTP for asset and document downloads |
+
+The `documents` extra adds [pypdf](https://pypi.org/project/pypdf/) (BSD-3-Clause), [pdfminer.six](https://pypi.org/project/pdfminer.six/) (MIT), [python-docx](https://pypi.org/project/python-docx/) (MIT) and [openpyxl](https://pypi.org/project/openpyxl/) (MIT) for `--documents`.
 
 ## Licence
 
