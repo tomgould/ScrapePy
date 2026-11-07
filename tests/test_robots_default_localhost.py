@@ -211,3 +211,109 @@ def test_audit_obey_robots_skips_a_disallowed_section(site, tmp_path, quick_audi
     config = parse_args([site + "/", "--audit", "--obey-robots"])
     asyncio.run(run_scraper(config))
     assert "/private/area" not in [p for p, _ in Handler.log]
+
+
+# -1 (single page) runs the crawl with robots.txt read beforehand, and only with --obey-robots.
+# The browser is replaced by a plain fetch from the local server, so no browser is needed.
+
+class _FakeResponse:
+    def __init__(self, url, status, html):
+        self.url = url
+        self.status = status
+        self.body = html.encode("utf-8")
+        self.encoding = "utf-8"
+
+
+@pytest.fixture
+def browser(monkeypatch):
+    """Replace the browser fetch; the returned list holds each URL it was asked for."""
+    import urllib.error
+    import urllib.request
+
+    from scrapepy.modes import crawl as crawl_mode
+    from scrapepy.modes import single_page
+
+    asked: list = []
+
+    async def fake_browser(url, config, page_action=None, wait_time=None, **kwargs):
+        asked.append(url)
+        try:
+            with urllib.request.urlopen(url, timeout=10) as r:
+                return _FakeResponse(r.geturl(), r.status, r.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            return _FakeResponse(url, e.code, "")
+
+    for module in (crawl_mode, single_page):
+        monkeypatch.setattr(module, "fetch_page_browser", fake_browser, raising=False)
+    return asked
+
+
+def single_page_run(base, out, *flags, start="/about"):
+    Handler.log = []
+    config = parse_args(["-1", "--headless", base + start, "-o", str(out), "--wait", "0", *flags])
+    code = asyncio.run(run_scraper(config))
+    summary_path = Path(config.output_dir) / "run_summary.json"
+    summary = json.loads(summary_path.read_text()) if summary_path.exists() else None
+    return config, code, summary, [p for p, _ in Handler.log]
+
+
+def test_single_page_default_does_not_request_robots_txt(site, tmp_path, browser):
+    config, code, summary, paths = single_page_run(site, tmp_path)
+    assert code == 0
+    assert paths == ["/about"]
+    assert browser == [site + "/about"]
+    assert summary["counts"]["new"] == 1
+    assert summary["options"]["obey_robots"] is False
+
+
+def test_single_page_default_fetches_a_page_robots_txt_disallows(site, tmp_path, browser):
+    _, code, summary, paths = single_page_run(site, tmp_path, start="/private/secret")
+    assert code == 0
+    assert browser == [site + "/private/secret"]
+    assert "/robots.txt" not in paths
+    assert summary["counts"]["new"] == 1
+
+
+def test_single_page_obey_robots_skips_a_disallowed_page(site, tmp_path, browser, capsys):
+    _, code, summary, paths = single_page_run(site, tmp_path, "--obey-robots",
+                                              start="/private/secret")
+    assert code == 1
+    assert paths == ["/robots.txt"]
+    assert browser == []
+    assert summary is None
+    assert "Run without --obey-robots" in capsys.readouterr().out
+
+
+def test_single_page_obey_robots_requests_robots_txt_then_the_page(site, tmp_path, browser):
+    _, code, summary, paths = single_page_run(site, tmp_path, "--obey-robots")
+    assert code == 0
+    assert paths == ["/robots.txt", "/about"]
+    assert summary["options"]["obey_robots"] is True
+
+
+@pytest.mark.parametrize("obey,expected", [(False, 0), (True, 1)])
+def test_single_page_waits_for_a_robots_request_only_when_one_was_made(site, tmp_path, browser,
+                                                                      monkeypatch, obey, expected):
+    from scrapepy.modes import crawl as crawl_mode
+
+    reserved: list = []
+
+    class Limiter:
+        def __init__(self, interval):
+            self.min_interval = interval
+
+        def reserve(self, host, interval=None):
+            reserved.append(host)
+            return 0
+
+        async def wait(self, url, interval=None):
+            return None
+
+        def with_interval(self, interval):
+            return self
+
+    monkeypatch.setattr(crawl_mode, "HostRateLimiter", Limiter)
+    flags = ["--obey-robots"] if obey else []
+    _, code, _, _ = single_page_run(site, tmp_path, *flags)
+    assert code == 0
+    assert len(reserved) == expected
