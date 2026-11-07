@@ -55,6 +55,97 @@ class TestNormalizeHeadings:
         assert normalize_headings("#hashtag\n# T") == "#hashtag\n# T"
 
 
+FILLER = " ".join(["The service covers every part of the country and runs all year."] * 6)
+
+
+def form_page(inner):
+    return (f"<html><head><title>Help</title></head><body><main><h1>Help</h1>"
+            f"<p>{FILLER}</p>{inner}</main></body></html>")
+
+
+def lines(md):
+    return [ln.strip() for ln in md.split("\n") if ln.strip()]
+
+
+class TestButtonsAndFormText:
+    def test_bootstrap_accordion_questions_stay_headings(self):
+        html = form_page(
+            '<div class="accordion" id="faq">'
+            '<div class="accordion-item"><h2 class="accordion-header">'
+            '<button class="accordion-button" type="button" data-bs-toggle="collapse" '
+            'data-bs-target="#c1" aria-expanded="true" aria-controls="c1">'
+            'How long do refunds take?</button></h2>'
+            '<div id="c1" class="accordion-collapse collapse show">'
+            '<div class="accordion-body">Refunds reach your account within five days.</div>'
+            '</div></div>'
+            '<div class="accordion-item"><h2 class="accordion-header">'
+            '<button class="accordion-button collapsed" type="button" '
+            'data-bs-toggle="collapse" data-bs-target="#c2" aria-expanded="false" '
+            'aria-controls="c2">Can I cancel an order?</button></h2>'
+            '<div id="c2" class="accordion-collapse collapse">'
+            '<div class="accordion-body">Orders can be cancelled until they ship.</div>'
+            '</div></div></div>'
+        )
+        md, _ = convert(html)
+        assert "## How long do refunds take?" in lines(md)
+        assert "## Can I cancel an order?" in lines(md)
+        assert "Refunds reach your account within five days." in md
+        assert md.index("How long do refunds take?") < md.index("Refunds reach")
+
+    def test_plain_button_faq_keeps_questions(self):
+        html = form_page(
+            '<div class="faq-list">'
+            '<div class="faq-item"><button class="faq-question" aria-expanded="false" '
+            'aria-controls="a1">Can I change my delivery address?</button>'
+            '<div class="faq-answer" id="a1">Yes, until the parcel is dispatched.</div></div>'
+            '<div class="faq-item"><button class="faq-question" aria-expanded="false" '
+            'aria-controls="a2">Opening hours</button>'
+            '<div class="faq-answer" id="a2">We are open from nine to five.</div></div>'
+            '</div>'
+        )
+        md, _ = convert(html)
+        assert "Can I change my delivery address?" in lines(md)
+        assert "Opening hours" in lines(md)
+        assert md.index("Can I change") < md.index("Yes, until the parcel")
+
+    def test_select_options_are_kept(self):
+        html = form_page(
+            '<label for="size">Sizes we stock</label>'
+            '<select id="size"><option value="">Choose a size</option>'
+            '<option value="s">Small (up to 40 cm)</option>'
+            '<option value="m">Medium (40 to 60 cm)</option>'
+            '<option value="l">Large (over 60 cm)</option></select>'
+        )
+        md, _ = convert(html)
+        for option in ("Small (up to 40 cm)", "Medium (40 to 60 cm)", "Large (over 60 cm)"):
+            assert f"- {option}" in lines(md)
+        assert "Choose a size" not in md
+
+    def test_textarea_text_is_kept(self):
+        html = form_page(
+            '<p>Paste this notice into your project:</p>'
+            '<textarea readonly rows="3">Permission is granted to copy this guide '
+            'for teaching.</textarea>'
+            '<textarea placeholder="Your message"></textarea>'
+        )
+        md, _ = convert(html)
+        assert "Permission is granted to copy this guide for teaching." in md
+        assert "Your message" not in md
+
+    def test_ui_chrome_buttons_are_dropped(self):
+        html = form_page(
+            '<button type="button" aria-expanded="false" aria-controls="menu">Menu</button>'
+            '<button type="button" class="close" aria-label="Close">&times;</button>'
+            '<form><input type="email" name="email"><button type="submit">Submit</button></form>'
+            '<button type="button">Add to basket</button>'
+        )
+        md, _ = convert(html)
+        out = lines(md)
+        for label in ("Menu", "Submit", "\u00d7", "Add to basket"):
+            assert label not in out
+        assert "Menu" not in md and "Submit" not in md and "basket" not in md
+
+
 class TestBlockLinks:
     def test_heading_inside_link_gets_the_link(self):
         soup = BeautifulSoup('<a href="/x"><div><h2>Card title</h2><p>Blurb</p></div></a>', "lxml")

@@ -13,7 +13,7 @@ All notable changes to ScrapePy are listed here. The format follows [Keep a Chan
 ### Changed
 
 - Frontmatter is written with `yaml.safe_dump`, so values such as `yes`, `null`, `123` or text with colons, quotes and newlines load back unchanged. Strings are now quoted in YAML's usual way (single quotes where needed).
-- Markdown is better for indexing: one H1 and no skipped heading levels, the main content found on listing pages without a known content container, headings inside card links kept, truncated link text expanded from its title, buttons removed, code fenced with its language.
+- Markdown is better for indexing: one H1 and no skipped heading levels, the main content found on listing pages without a known content container, headings inside card links kept, truncated link text expanded from its title, button furniture removed while accordion and FAQ questions, option lists and textarea text are kept, code fenced with its language.
 - A page whose Markdown matches a file already written in the same run is not written twice.
 - Section URLs ending in `index.html` map to the section's own `_index.md`; listing pages no longer get a visible date from the server's Last-Modified header.
 

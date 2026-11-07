@@ -86,6 +86,102 @@ _JUNK_CLASS_KEYWORDS = (
 )
 
 
+# Button labels that are page furniture, not content, even on a button that
+# opens or closes something (aria-expanded, aria-controls)
+_CHROME_BUTTON_LABELS = frozenset({
+    "menu", "main menu", "open menu", "close menu", "toggle menu", "navigation",
+    "toggle navigation", "open navigation", "close", "open", "dismiss", "search",
+    "submit", "send", "go", "ok", "cancel", "share", "more", "show more",
+    "show less", "read more", "see more", "see all", "view all", "load more",
+    "expand", "collapse", "expand all", "collapse all", "filter", "filters",
+    "sort", "sort by", "options", "settings", "language", "account",
+    "my account", "sign in", "log in", "login", "sign up", "register", "cart",
+    "basket", "back", "next", "previous", "prev", "play", "pause", "mute",
+    "unmute", "copy", "print", "accept", "reject", "accept all", "reject all",
+})
+# A <select> with more options than this is a picker (countries, years),
+# not a list worth indexing
+_MAX_SELECT_OPTIONS = 50
+_PICKER_SELECT_HINTS = ("sort", "filter", "lang", "country", "currency",
+                        "per-page", "perpage", "per_page", "search", "jump")
+_PLACEHOLDER_OPTION_RE = re.compile(r"^(?:-+|select|choose|please|pick)\b", re.I)
+
+
+def _button_label_is_content(btn, text: str) -> bool:
+    """Whether a button's text belongs in the Markdown.
+
+    Kept: questions, and labels of buttons that open a panel (accordion and
+    FAQ toggles, which carry aria-expanded or aria-controls), unless the label
+    is common page furniture ("Menu", "Close") or the button opens a popup
+    menu. Everything else ("Submit", "Add to basket") is dropped.
+    """
+    if not any(c.isalnum() for c in text):
+        return False
+    if text.endswith("?"):
+        return True
+    if btn.has_attr("aria-haspopup"):
+        return False
+    toggles = btn.has_attr("aria-expanded") or btn.has_attr("aria-controls") or any(
+        btn.get(attr) == "collapse" for attr in ("data-toggle", "data-bs-toggle"))
+    return toggles and text.lower().rstrip(".:") not in _CHROME_BUTTON_LABELS
+
+
+def _replace_form_controls(soup) -> None:
+    """Keep the text of form controls that carries page content, drop the rest.
+
+    A button inside a heading is unwrapped, so accordion headers stay headings.
+    Other buttons keep their text as a paragraph when it is content (see
+    _button_label_is_content). A <select> becomes a list of its options,
+    without placeholders, unless it is a long picker or a sort, filter or
+    language switcher. A <textarea> with text becomes a paragraph. Inputs and
+    iframes are removed.
+    """
+    for tag in soup.find_all(["input", "iframe"]):
+        tag.decompose()
+    for btn in soup.find_all("button"):
+        if btn.parent is None:
+            continue
+        text = " ".join(btn.get_text(" ", strip=True).split())
+        if text and btn.find_parent(["h1", "h2", "h3", "h4", "h5", "h6"]):
+            btn.unwrap()
+        elif _button_label_is_content(btn, text):
+            btn.clear()
+            btn.append(text)
+            btn.name = "p"
+            btn.attrs = {}
+        else:
+            btn.decompose()
+    for sel in soup.find_all("select"):
+        if sel.parent is None:
+            continue
+        hints = " ".join([sel.get("name", ""), sel.get("id", "")] + sel.get("class", [])).lower()
+        options = []
+        for opt in sel.find_all("option"):
+            label = " ".join(opt.get_text(" ", strip=True).split())
+            if not label or opt.has_attr("disabled") or opt.get("value") == "" \
+                    or _PLACEHOLDER_OPTION_RE.match(label):
+                continue
+            options.append(label)
+        if not options or len(options) > _MAX_SELECT_OPTIONS \
+                or any(h in hints for h in _PICKER_SELECT_HINTS):
+            sel.decompose()
+            continue
+        ul = soup.new_tag("ul")
+        for label in options:
+            li = soup.new_tag("li")
+            li.string = label
+            ul.append(li)
+        sel.replace_with(ul)
+    for area in soup.find_all("textarea"):
+        text = area.get_text().strip()
+        if not text:
+            area.decompose()
+            continue
+        para = soup.new_tag("p")
+        para.string = " ".join(text.split())
+        area.replace_with(para)
+
+
 # Frontmatter keys in output order. Every Markdown file uses this set.
 FRONTMATTER_FIELDS = (
     "title", "url", "canonical_url", "date", "date_source", "page_type",
@@ -483,13 +579,13 @@ class HTMLToMarkdown:
         # Structural non-content
         for tag in soup.find_all(["script", "style", "noscript", "svg", "link"]):
             tag.decompose()
-        # Form controls: button labels ("Add to basket", "Search") are not content
-        for tag in soup.find_all(["button", "input", "select", "textarea", "iframe"]):
-            tag.decompose()
         for tag in soup.find_all(["nav", "header", "footer"]):
             tag.decompose()
         for tag in soup.find_all(attrs={"role": "navigation"}):
             tag.decompose()
+        # Form controls: keep accordion questions, option lists and textarea
+        # text; drop "Submit", "Menu", "Add to basket" and the like
+        _replace_form_controls(soup)
         for tag in soup.find_all(id=lambda x: x and x in ("access", "branding", "colophon")):
             tag.decompose()
 
