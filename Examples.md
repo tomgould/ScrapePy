@@ -74,6 +74,36 @@ python main.py https://www.example.com --no-include-assets
 
 Downloads images but skips CSS, JS, and font files.
 
+## Targeted Crawls
+
+### Recipes from one category listing
+
+```bash
+python main.py https://recipes.example.com/category/baby-led-weaning/ \
+  --include '^/recipes/' --only-recipes --max-depth 1 --follow-next \
+  --max-pages 200 --site-name recipes_example_com --markdown-only
+```
+
+Fetches the category listing and its later pages (`--follow-next` follows `rel="next"` and `/page/N/` links without counting them as depth), follows only links whose path starts with `/recipes/` and that are one step from a listing, stops after 200 page requests, and writes only pages with schema.org Recipe data. Only robots.txt and the pages are requested: with `--include`, `--max-depth` or `--urls-file`, no sitemap, feed or homepage requests are made unless `--recent` or `--since` is given. Everything goes into `MarkdownSites/recipes_example_com/`.
+
+### The results of a site search
+
+```bash
+python main.py "https://recipes.example.com/?s=baby+led+weaning" \
+  --include '^/recipes/' --only-recipes --max-depth 1 \
+  --site-name recipes_example_com --markdown-only
+```
+
+A start URL with a query string is fetched exactly as given and its links are followed; the search page itself is not written. `--site-name` puts the results in the same folder as the category crawl above, and the cache keeps each URL's file across the two runs.
+
+### A list of pages
+
+```bash
+python main.py --urls-file recipe-urls.txt --max-depth 0 --site-name recipes_example_com
+```
+
+`recipe-urls.txt` holds one URL per line (`#` starts a comment), all on one site; duplicates are fetched once. `run_summary.json` gets a `targeting` object with the pages skipped by `--include`, `--exclude` and `--max-depth`, the pages skipped as not recipes, and whether `--max-pages` stopped the run.
+
 ## Scoped Crawling
 
 ### Stay within a path
