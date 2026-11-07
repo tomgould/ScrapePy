@@ -23,8 +23,9 @@ from scrapepy.processing.documents import (
 )
 
 from .document_samples import (
-    add_zip_part, declare_huge_size, encrypt_pdf, make_docx, make_pdf, make_xlsx,
-    with_cached_formula_value, zip_bomb,
+    add_zip_part, declare_huge_size,
+    docx_with_tracked_changes, encrypt_pdf, make_docx, make_pdf, make_xlsx, pad_part,
+    pdf_bomb, with_cached_formula_value, with_encrypted_flag, zip_bomb,
 )
 
 GOLDEN = Path(__file__).parent / "golden_documents"
@@ -100,7 +101,7 @@ def test_zip_bomb_refused_before_unpacking():
 
 def test_crafted_sizes_refused_at_default_cap():
     result = convert_document(declare_huge_size(make_docx()), "docx")
-    assert result.reason == "unpacks to more than 256 MB (possible zip bomb)"
+    assert result.reason == "unpacks to more than 128 MB (possible zip bomb)"
 
 
 def test_too_many_zip_parts_refused():
@@ -166,7 +167,9 @@ def test_control_characters_removed():
 
 def test_pdf_text_clean_up():
     assert _clean_pdf_text("efﬁcient workﬂow\nmain-\ntenance\nWell-\nKnown\n\n\n\nend  ") == (
-        "efficient workflow\nmaintenance\nWell-\nKnown\n\nend")
+        "efficient workflow\nmain-tenance\nWell-\nKnown\n\nend")
+    # A hyphen at a line end is kept, so a hyphenated compound survives
+    assert _clean_pdf_text("a well-\nknown fact") == "a well-known fact"
     assert _clean_pdf_text("# Title\n> quote") == "\\# Title\n\\> quote"
 
 
@@ -308,3 +311,137 @@ def test_cli_documents_errors(argv):
     with pytest.raises(SystemExit) as e:
         parse_args(["https://example.com/"] + argv)
     assert e.value.code == 2
+
+
+# --- review fixes -------------------------------------------------------------
+
+def test_pdf_bomb_fails_without_pdfminer_fallback(monkeypatch):
+    from scrapepy.convert import documents as conv
+
+    def no_fallback(*args):
+        raise AssertionError("pdfminer.six must not run after a pypdf limit")
+    monkeypatch.setattr(conv, "_pdf_pdfminer", no_fallback)
+    result = convert_document(pdf_bomb(80), "pdf")
+    assert (result.status, result.reason) == (
+        "failed", "a compressed stream unpacks past the safety limit (possible PDF bomb)")
+
+
+def test_pdf_bomb_on_a_page_without_text_is_not_handed_to_pdfminer(monkeypatch):
+    from scrapepy.convert import documents as conv
+    from .document_samples import pdf_bomb
+
+    def no_fallback(*args):
+        raise AssertionError("pdfminer.six must not run on a PDF bomb")
+    monkeypatch.setattr(conv, "_pdf_pdfminer", no_fallback)
+    # No fonts: pypdf's extract_text returns "" without unpacking the stream
+    data = pdf_bomb(80).replace(b"/Resources << /Font << /F1 3 0 R >> >>",
+                                b"/Resources <<" + b" " * 23 + b">>")     # same length, same offsets
+    result = convert_document(data, "pdf")
+    assert result.reason == "a compressed stream unpacks past the safety limit (possible PDF bomb)"
+
+
+def test_pdfminer_respects_page_cap():
+    from scrapepy.convert.documents import _pdf_pdfminer
+    texts = _pdf_pdfminer(make_pdf([["one"], ["two"], ["three"]]), Limits(max_pages=2))
+    assert len(texts) == 2 and "two" in texts[1]
+
+
+def test_docx_xml_part_cap():
+    data = pad_part(make_docx(), "word/document.xml", 2 * 1024 * 1024)
+    result = convert_document(data, "docx", Limits(max_xml_part_bytes=1024 * 1024))
+    assert result.reason == "a part unpacks to more than 1 MB (possible zip bomb)"
+    assert convert_document(data, "docx").status == "converted"
+
+
+def test_xlsx_sheets_are_streamed_so_not_part_capped():
+    rows = [["n", "text"]] + [[i, "x" * 40] for i in range(30000)]
+    data = make_xlsx({"Big": rows})
+    result = convert_document(data, "xlsx", Limits(max_xml_part_bytes=1024 * 1024))
+    assert result.status == "converted"
+    shared = pad_part(data, "xl/styles.xml", 2 * 1024 * 1024)
+    assert convert_document(shared, "xlsx", Limits(max_xml_part_bytes=1024 * 1024)).reason == \
+        "a part unpacks to more than 1 MB (possible zip bomb)"
+
+
+def test_zip_encrypted_flag_refused():
+    assert convert_document(with_encrypted_flag(make_docx()), "docx").reason == \
+        "encrypted (needs a password)"
+
+
+def test_docx_tracked_insertions_and_nested_tables():
+    result = convert_document(docx_with_tracked_changes(), "docx")
+    assert result.text.startswith("Kept inserted words")
+    assert "deleted words" not in result.text
+    assert "| Outer cell | Nested cell text |" in result.text
+
+
+def test_csv_utf16_with_bom():
+    data = "name,city\nZo\u00eb,K\u00f8benhavn\n".encode("utf-16")
+    result = convert_document(data, "csv")
+    assert "| Zo\u00eb | K\u00f8benhavn |" in result.text
+
+
+# --- child process --------------------------------------------------------------
+
+def run_child(target, args, timeout=30, memory=0):
+    import asyncio
+    from scrapepy.processing.documents import run_in_child
+    return asyncio.run(run_in_child(target, args, timeout, memory))
+
+
+def test_child_returns_value():
+    assert run_child("tests.document_samples:child_add", [2, 3]) == ("ok", 5)
+
+
+def test_child_killed_on_timeout(tmp_path):
+    import time
+    pid_file = tmp_path / "pid"
+    started = time.monotonic()
+    assert run_child("tests.document_samples:child_sleep", [str(pid_file)], timeout=3) == ("timeout", None)
+    assert time.monotonic() - started < 15
+    pid = int(pid_file.read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="needs POSIX resource limits")
+def test_child_memory_limit():
+    outcome, value = run_child("tests.document_samples:child_allocate", [2048], memory=512 * 1024 * 1024)
+    assert outcome in ("error", "died")
+    if outcome == "error":
+        assert value == "too large to convert (memory limit reached)"
+    assert run_child("tests.document_samples:child_allocate", [16], memory=512 * 1024 * 1024) == ("ok", 16 * 1024 * 1024)
+
+
+def test_documents_empty_list_message_names_option_once(capsys):
+    with pytest.raises(SystemExit):
+        parse_args(["https://example.com/", "--documents", ","])
+    err = capsys.readouterr().err.strip().splitlines()[-1]
+    assert err.count("--documents") == 1
+    assert "needs at least one type" in err
+
+
+def test_child_never_reruns_the_callers_script(tmp_path):
+    """A script without an `if __name__ == "__main__"` guard runs once:
+    the child is a plain subprocess, not a multiprocessing spawn."""
+    import subprocess
+    import sys
+    script = tmp_path / "caller.py"
+    script.write_text(
+        "import asyncio\n"
+        "from scrapepy.processing.documents import run_in_child\n"
+        "print('started', flush=True)\n"
+        "print(asyncio.run(run_in_child('scrapepy.convert.documents:parse_pdf_date', "
+        "['D:20250314'], 30, 0)))\n")
+    root = str(Path(__file__).resolve().parent.parent)
+    out = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=120,
+                         env={**os.environ, "PYTHONPATH": root})
+    assert out.stdout.splitlines() == ["started", "('ok', '2025-03-14')"]
+
+
+def test_rows_scanned_are_capped():
+    data = b"a\n" + b",\n" * 50 + b"late\n"
+    result = convert_document(data, "csv", Limits(max_scan_rows=20))
+    assert "late" not in result.text
+    assert result.text.endswith("_Rows after row 20 are not read._")
+    assert "late" in convert_document(data, "csv").text

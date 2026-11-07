@@ -36,7 +36,7 @@ def _document_types(value: str) -> list[str]:
     try:
         return parse_document_types(value)
     except ValueError as e:
-        raise argparse.ArgumentTypeError(str(e).removeprefix("--documents: "))
+        raise argparse.ArgumentTypeError(str(e))
 
 
 def _document_mb(value: str) -> int:

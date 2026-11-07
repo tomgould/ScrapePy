@@ -34,7 +34,6 @@ from urllib.parse import unquote, urljoin, urlsplit
 
 from ..config import DOCUMENT_TYPES, ScrapeConfig
 from ..engine.fetcher import create_asset_client, download_document
-from ..engine.threads import run_blocking
 from ..output.naming import fit_path
 from ..output.run_summary import relative_to_root
 from ..output.writer import UnsafePathError, write_within
@@ -50,8 +49,13 @@ INSTALL_HINT = 'pip install "scrapepy[documents]"'
 MAX_REDIRECTS = 5
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
-# A conversion that runs longer is abandoned and recorded as failed
+# Each conversion runs in a child process that is killed after this long
+# and cannot use more memory or CPU time than this
 CONVERT_TIMEOUT_SECONDS = 120
+CONVERT_MEMORY_BYTES = 1024 * 1024 * 1024
+
+# A document download (all redirects included) that takes longer is abandoned
+DOWNLOAD_DEADLINE_SECONDS = 300
 
 _RE_EXTENSION = re.compile(r"\.([A-Za-z0-9]{1,5})$")
 _RE_UNSAFE_NAME_CHARS = re.compile(r'[\x00-\x1f\x7f<>:"|?*\\]')
@@ -60,7 +64,8 @@ _RE_LINK_CANONICAL = re.compile(r'<([^>]+)>\s*;[^,]*?\brel\s*=\s*"?canonical\b',
 
 def parse_document_types(value: str) -> list[str]:
     """The --documents list: lowercase, duplicates removed, in the order
-    given. Raises ValueError naming an unknown type."""
+    given. Raises ValueError naming an unknown type (the message has no
+    option name: argparse adds it)."""
     types: list[str] = []
     for raw in value.split(","):
         name = raw.strip().lower().lstrip(".")
@@ -69,14 +74,14 @@ def parse_document_types(value: str) -> list[str]:
         if name not in DOCUMENT_TYPES:
             known = ", ".join(DOCUMENT_TYPES)
             if name in LEGACY_TYPES:
-                raise ValueError(f"--documents: {name} is an old binary format and is not converted "
+                raise ValueError(f"{name} is an old binary format and is not converted "
                                  f"(.{name} links are recorded as skipped when "
                                  f"{LEGACY_TYPES[name]} is listed); choose from {known}")
-            raise ValueError(f"--documents: unknown type {name!r}; choose from {known}")
+            raise ValueError(f"unknown type {name!r}; choose from {known}")
         if name not in types:
             types.append(name)
     if not types:
-        raise ValueError("--documents needs at least one type: " + ", ".join(DOCUMENT_TYPES))
+        raise ValueError("needs at least one type: " + ", ".join(DOCUMENT_TYPES))
     return types
 
 
@@ -123,6 +128,48 @@ def safe_relpath(url_path: str) -> str:
     path = posixpath.normpath("/" + url_path.lstrip("/")).lstrip("/")
     parts = [_RE_UNSAFE_NAME_CHARS.sub("_", p) for p in path.split("/") if p not in ("", ".", "..")]
     return os.path.join(*parts) if parts else "index"
+
+
+async def run_in_child(target: str, args: list, timeout: float, memory_bytes: int):
+    """Run target ("module:function") with args (JSON values) in a child
+    Python process with an address-space limit of memory_bytes and a CPU
+    limit just over timeout. Returns ("ok", value), ("error", text),
+    ("timeout", None) or ("died", exit code). The child is killed on timeout
+    and when the caller is cancelled, so its memory is always given back.
+    It is a plain subprocess, so the caller's own script is never re-run."""
+    import json
+    import sys
+
+    env = dict(os.environ)
+    # The child finds scrapepy (and anything else importable here) the same way
+    env["PYTHONPATH"] = os.pathsep.join(p for p in sys.path if p and os.path.isdir(p))
+    request = json.dumps({"target": target, "args": list(args), "memory_bytes": memory_bytes,
+                          "cpu_seconds": int(timeout) + 2}).encode()
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-m", "scrapepy.convert.document_child",
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL, env=env,
+    )
+    try:
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(request), timeout)
+        except asyncio.TimeoutError:
+            return "timeout", None
+        try:
+            outcome, value = json.loads(stdout.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            return "died", proc.returncode
+        return outcome, value
+    finally:
+        if proc.returncode is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            try:
+                await asyncio.shield(proc.wait())
+            except BaseException:
+                pass
 
 
 def _same_site(url: str, config: ScrapeConfig) -> bool:
@@ -239,7 +286,15 @@ class DocumentCollector:
 
     async def _get(self, url: str, headers: dict | None):
         """Download url, following redirects only within the crawl's site
-        and robots.txt rules. Each request waits on the run's limiter."""
+        and robots.txt rules, within DOWNLOAD_DEADLINE_SECONDS in all (the
+        per-read timeout alone never ends a slow trickle)."""
+        try:
+            return await asyncio.wait_for(self._get_hops(url, headers), DOWNLOAD_DEADLINE_SECONDS)
+        except asyncio.TimeoutError:
+            return 0, None, {}, f"download took longer than {DOWNLOAD_DEADLINE_SECONDS} seconds"
+
+    async def _get_hops(self, url: str, headers: dict | None):
+        """Each request waits on the run's limiter."""
         current = url
         for _ in range(MAX_REDIRECTS + 1):
             await self.limiter.wait(current)
@@ -308,7 +363,8 @@ class DocumentCollector:
         existed = bool(entry) or _exists(known.get("md"))
         a = self.names.assign(full_url, natural)
         try:
-            write_within(a["file"], data, self.config.files_dir)
+            # Checked from files/ down, so a link at files/<site> is refused too
+            write_within(a["file"], data, os.path.dirname(self.config.files_dir))
         except UnsafePathError as e:
             self._fail(full_url, str(e), url_path)
             return
@@ -316,16 +372,21 @@ class DocumentCollector:
             self._fail(full_url, f"could not save the file ({e.strerror or e})", url_path)
             return
 
-        from ..convert.documents import convert_document
-        try:
-            result = await asyncio.wait_for(
-                run_blocking(convert_document, data, kind, self.limits),
-                timeout=CONVERT_TIMEOUT_SECONDS,
-            )
-        except asyncio.TimeoutError:
-            self._fail(full_url, f"conversion took longer than {CONVERT_TIMEOUT_SECONDS} seconds",
-                       url_path)
+        import dataclasses
+
+        from ..convert.documents import Converted
+        outcome, value = await run_in_child(
+            "scrapepy.convert.documents:convert_path",
+            [a["file"], kind, dataclasses.asdict(self.limits)],
+            CONVERT_TIMEOUT_SECONDS, CONVERT_MEMORY_BYTES)
+        if outcome != "ok":
+            reason = {
+                "timeout": f"conversion took longer than {CONVERT_TIMEOUT_SECONDS} seconds",
+                "died": "conversion stopped (memory or CPU limit reached, or the converter crashed)",
+            }.get(outcome) or f"conversion failed ({value})"
+            self._fail(full_url, reason, url_path)
             return
+        result = Converted(**value)
         if result.status == "failed":
             self._fail(full_url, result.reason or "conversion failed", url_path)
             return
@@ -342,7 +403,7 @@ class DocumentCollector:
 
         text = self._markdown(url_path, full_url, kind, result, resp_headers)
         try:
-            write_within(a["md"], text, self.config.markdown_dir)
+            write_within(a["md"], text, os.path.dirname(self.config.markdown_dir))
         except UnsafePathError as e:
             self._fail(full_url, str(e), url_path)
             return
