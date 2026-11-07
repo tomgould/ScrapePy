@@ -201,7 +201,7 @@ Written to `ScrapedSites/<site>/run_summary.json` at the start of a crawl or a `
 | `started_at`, `ended_at` | string, string or null | UTC ISO 8601; `ended_at` is null while running |
 | `output_dir` | string | Absolute path of the output folder |
 | `html_dir`, `markdown_dir` | string | Site folders, relative to `output_dir`; `markdown_dir` is null with `--no-markdown` |
-| `options` | object | The settings used. Credentials are never included. `obey_robots` is true only when `--obey-robots` was given; `ignore_robots` is its opposite (true when robots.txt rules and `Crawl-delay` were not applied, which is the default) and stays for readers written before `--obey-robots` existed |
+| `options` | object | The settings used. Credentials are never included. `obey_robots` is true only when `--obey-robots` was given; `ignore_robots` is its opposite: true when robots.txt rules and `Crawl-delay` were not applied, which is the default |
 | `counts` | object of integers | `fetched`, `new`, `changed`, `unchanged`, `failed`, `blocked_by_robots`, `duplicates`, `renamed`, `skipped_non_html`, `skipped_old` |
 | `new_markdown`, `changed_markdown` | list of strings | Markdown files written for new and changed pages |
 | `unchanged_urls` | list of strings | Pages the server or the cache showed had not changed |
