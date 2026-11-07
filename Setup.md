@@ -100,11 +100,7 @@ python main.py https://example.com --proxy http://proxy.corp:8080
 python main.py https://example.com --proxy http://user:pass@proxy.corp:8080
 ```
 
-The proxy is used by:
-- Browser modes: `StealthyFetcher.async_fetch()` (`proxy` argument)
-- Asset downloads: the `httpx.AsyncClient` (`proxy` argument)
-
-HTTP page requests made with `Fetcher.get()` (the default crawl, reconnaissance, robots.txt and feed mode) do not use the proxy.
+The proxy is used by every request: page fetches with `Fetcher.get()` (the default crawl, reconnaissance, robots.txt, sitemaps and feed mode), browser modes (`StealthyFetcher.async_fetch()`) and asset downloads (`httpx.AsyncClient`). The URL must use the `http`, `https`, `socks4`, `socks4a`, `socks5` or `socks5h` scheme; anything else exits with code 2. A user name and password in it are masked (`http://***@proxy.corp:8080`) in console output, logs, errors and `run_summary.json`.
 
 ## Instagram Login Setup
 
