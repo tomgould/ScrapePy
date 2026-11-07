@@ -20,11 +20,11 @@ _RE_LANG_CLASS = re.compile(r"^(?:language|lang|highlight|brush)-?:?([A-Za-z0-9_
 # come before a heading or a code fence
 _QUOTE = r"(?:[ \t]*>[ \t]?)"
 _ITEM = r"(?:[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+)"
-# A heading, optionally inside blockquotes and/or a list item. A heading with
+# A heading, optionally inside blockquotes and list items in any order. A heading with
 # neither must start the line (indented lines can be code).
-_RE_HEADING = re.compile(rf"^({_QUOTE}+{_ITEM}?|{_ITEM})?(#{{1,6}})([ \t]+.*)$")
+_RE_HEADING = re.compile(rf"^((?:{_QUOTE}|{_ITEM})+)?(#{{1,6}})([ \t]+.*)$")
 # A code fence: three or more backticks or tildes, then an info string
-_RE_FENCE = re.compile(rf"^{_QUOTE}*{_ITEM}?[ \t]*(`{{3,}}|~{{3,}})(.*)$")
+_RE_FENCE = re.compile(rf"^(?:{_QUOTE}|{_ITEM})*[ \t]*(`{{3,}}|~{{3,}})(.*)$")
 
 
 def clean_title(text: str | None) -> str:

@@ -237,6 +237,39 @@ class TestTitleThroughConversion:
         assert "# Dated\n\n**20 Feb 2026**" in body
 
 
+class TestSmallFixes:
+    def test_heading_in_quote_in_list_item(self):
+        md = "# T\n\n- > #### q\n\n1. > > ###### deeper"
+        assert normalize_headings(md) == "# T\n\n- > ## q\n\n1. > > ### deeper"
+
+    def test_code_containing_a_fence_gets_a_longer_fence(self):
+        html = form_page("<pre><code>before\n```\n# comment\n```\nafter</code></pre>"
+                         "<h4>After</h4><p>More text.</p>")
+        md, _ = convert(html)
+        assert "````\nbefore\n```\n# comment\n```\nafter\n````" in md
+        assert "## comment" not in md
+        assert "## After" in lines(md)
+
+    def test_fence_is_one_longer_than_the_longest_run(self):
+        html = form_page("<pre><code>x\n`````\ny</code></pre><p>More text.</p>")
+        md, _ = convert(html)
+        assert "``````\nx\n`````\ny\n``````" in md
+
+    def test_plain_code_keeps_three_backticks(self):
+        html = form_page("<pre><code>print(`x`)</code></pre><p>More text.</p>")
+        md, _ = convert(html)
+        assert "```\nprint(`x`)\n```" in md
+
+    def test_non_http_schemes_are_never_rewritten(self):
+        conv = HTMLToMarkdown("/nonexistent")
+        md = ("[js](javascript:alert(1)) [d](data:text/plain,hi) [m](mailto:a@example.com) "
+              "[t](tel:123) [f](ftp://example.com/x) [p](other-page)")
+        out = conv.convert_links(md, Path("/nonexistent/page.html"))
+        assert out == ("[js](javascript:alert(1)) [d](data:text/plain,hi) "
+                       "[m](mailto:a@example.com) [t](tel:123) [f](ftp://example.com/x) "
+                       "[p](other-page.md)")
+
+
 FILLER = " ".join(["The service covers every part of the country and runs all year."] * 6)
 
 

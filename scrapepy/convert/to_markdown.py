@@ -324,6 +324,24 @@ def content_hash(body: str) -> str:
     return "sha256:" + hashlib.sha256(body.encode("utf-8")).hexdigest()
 
 
+_RE_BACKTICK_RUN = re.compile(r"`+")
+_RE_URL_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+
+
+class _FenceSafeConverter(markdownify.MarkdownConverter):
+    """markdownify, with code fences longer than any backtick run inside the
+    code (minimum three), so code that shows a fence cannot close its own."""
+
+    def convert_pre(self, el, text, *args, **kwargs):
+        out = super().convert_pre(el, text, *args, **kwargs)
+        longest = max((len(r) for r in _RE_BACKTICK_RUN.findall(text or "")), default=0)
+        if longest < 3 or "```" not in out:
+            return out
+        fence = "`" * (longest + 1)
+        start, end = out.index("```"), out.rindex("```")
+        return out[:start] + fence + out[start + 3:end] + fence + out[end + 3:]
+
+
 class HTMLToMarkdown:
     def __init__(self, input_dir, output_dir=None, flatten=False, base_url=None, domain=None,
                  absolute_links=False):
@@ -385,10 +403,10 @@ class HTMLToMarkdown:
     def _md(html_text: str, **extra) -> str:
         """markdownify with the house options: ATX headings, "-" bullets,
         fenced code blocks labelled with the language the HTML gives."""
-        return markdownify.markdownify(
-            html_text, heading_style="ATX", bullets="-",
+        return _FenceSafeConverter(
+            heading_style="ATX", bullets="-",
             code_language_callback=code_language, **extra,
-        )
+        ).convert(html_text)
 
     def is_asset_directory(self, rel_path):
         first_part = rel_path.parts[0] if rel_path.parts else ""
@@ -1251,7 +1269,9 @@ class HTMLToMarkdown:
             if m:
                 url, title = m.group(1), m.group(2)
 
-            if url.startswith(("http://", "https://", "#", "mailto:", "tel:")):
+            # Absolute URLs of any scheme (http, mailto, javascript, data,
+            # tel...) and in-page anchors are never rewritten
+            if url.startswith("#") or _RE_URL_SCHEME.match(url):
                 return match.group(0)
 
             if url.endswith(".html"):
