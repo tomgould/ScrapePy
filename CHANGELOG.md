@@ -21,6 +21,9 @@ All notable changes to ScrapePy are listed here. The format follows [Keep a Chan
 
 ### Fixed
 
+- Accordion labels that contain a furniture word ("Next steps after your application", "Our cookie recipes", "2024") lost their text; furniture is now matched on the whole label, and number-only selects are kept unless named as a quantity.
+- A heading above the page's H1, such as a site tagline, became the title. The first H1 is now the title and headings above it are kept as paragraphs.
+- Code containing a line of three backticks broke out of its fence, headings in a quote inside a list item were not normalised, and `javascript:`, `data:` and `tel:` links got `.md` appended.
 - A page's alternate formats (`<link rel="alternate">` JSON, Markdown or feed versions) and `.json`, `.xml`, `.rss` and `.atom` links were crawled as pages, and responses that are not HTML were converted, so data files overwrote real pages. They are no longer queued or converted.
 - A second URL mapping to a file already written in the same run (`/about.html` after `/about`) overwrote it. The first URL now keeps the file and the later one is listed under `collisions` in `run_summary.json`.
 - A junk-removal rule deleted every linked H2 or H3 heading, and links with a title attribute got `.md` appended after the title.
