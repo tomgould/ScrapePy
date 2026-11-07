@@ -259,6 +259,8 @@ class HTMLToMarkdown:
         self.dedupe = True
         self._written_hashes: dict[str, str] = {}
         self.last_duplicate_of: str | None = None
+        # Why the most recent convert_file() call failed, or None
+        self.last_error: str | None = None
 
     def _prepare_html(self, html: str, metadata: dict) -> str:
         """Unwrap block links, read the canonical URL, and in markdown-only
@@ -1259,6 +1261,7 @@ class HTMLToMarkdown:
         self.last_output_path = None
         self.last_output_existed = False
         self.last_duplicate_of = None
+        self.last_error = None
         filepath = Path(filepath)
         explicit_output = output_path is not None
         if output_path:
@@ -1404,6 +1407,7 @@ class HTMLToMarkdown:
         except Exception as e:
             print(f"  Error converting {filepath.name}: {type(e).__name__}: {e}")
             self.failed += 1
+            self.last_error = f"{type(e).__name__}: {e}"
             return False
 
     def copy_assets(self):

@@ -38,6 +38,7 @@ from ..processing.discovery import run_discovery, DiscoveryMap, load_robots_poli
 from ..processing.robots import HostRateLimiter, RobotsPolicy
 from ..processing.navigation import extract_navigation
 from ..processing.outline import build_site_outline, SiteOutline
+from ..convert.html_prep import safe_urljoin
 from ..output.writer import url_to_filepath, write_file
 from ..output.broken_links import BrokenLinkTracker
 from ..output.cache import CrawlCache
@@ -623,6 +624,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
 
             # Inline markdown conversion
             if md_converter:
+                md_converter.last_error = None
                 md_meta = {"url": full_url, "domain": config.domain}
                 if config.has_date_filter:
                     # Metadata already extracted during date filtering
@@ -700,7 +702,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                     thumb_url = section_thumbnails.get(current_batch_section, {}).get(url_path)
                     if config.markdown_only:
                         # No local images: link the live image
-                        thumb_filename = urljoin(full_url, thumb_url) if thumb_url else None
+                        thumb_filename = safe_urljoin(full_url, thumb_url) if thumb_url else None
                     else:
                         thumb_filename = (
                             thumb_url.split("?")[0].split("#")[0].rsplit("/", 1)[-1]
@@ -716,11 +718,16 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                     })
 
             duplicate = md_converter.last_duplicate_of if md_converter else None
-            if not already_written and not duplicate:
+            conversion_error = md_converter.last_error if md_converter else None
+            if conversion_error:
+                # No Markdown was written: report the page as failed, and keep
+                # it out of the cache so the next run converts it again
+                stats.record_failed(full_url, f"conversion failed: {conversion_error}")
+            elif not already_written and not duplicate:
                 stats.record_saved(full_url, existed_before, md_written)
 
             # Update cache
-            if cache:
+            if cache and not conversion_error:
                 resp_headers = page_info.get("headers", {})
                 cache.update_page(
                     url_path, resp_headers, html, links=links,

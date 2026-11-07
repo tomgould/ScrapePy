@@ -26,15 +26,33 @@ def clean_title(text: str | None) -> str:
     return " ".join((text or "").split())
 
 
+def safe_urljoin(base: str, url: str) -> str | None:
+    """urljoin that returns None for a malformed URL instead of raising.
+
+    Page content can hold anything ("http://[::1", "https://[your-server]/"),
+    and one bad address must never stop a page being converted.
+    """
+    try:
+        joined = urljoin(base, url)
+        urlparse(joined).port  # validates the host and port
+        return joined
+    except ValueError:
+        return None
+
+
 def canonical_url(soup: BeautifulSoup, page_url: str) -> str | None:
-    """The page's <link rel="canonical">, made absolute, when it is an http(s) URL."""
+    """The page's <link rel="canonical">, made absolute, when it is an http(s)
+    URL. A malformed canonical is ignored."""
     for link in soup.find_all("link", href=True):
         rels = link.get("rel") or []
         if isinstance(rels, str):
             rels = rels.split()
         if "canonical" in (r.lower() for r in rels):
-            url = urljoin(page_url, link["href"].strip())
-            if urlparse(url).scheme in ("http", "https") and urlparse(url).netloc:
+            url = safe_urljoin(page_url, link["href"].strip())
+            if url is None:
+                return None
+            parsed = urlparse(url)
+            if parsed.scheme in ("http", "https") and parsed.netloc:
                 return url.split("#", 1)[0]
     return None
 
@@ -61,15 +79,20 @@ def same_site(a: str, b: str) -> bool:
 
 
 def absolutize_links(soup: BeautifulSoup, page_url: str) -> None:
-    """Rewrite a[href] and img[src] to absolute URLs, honouring <base href>."""
+    """Rewrite a[href] and img[src] to absolute URLs, honouring <base href>.
+
+    A malformed link is left as written, and a malformed <base href> is ignored.
+    """
     base_tag = soup.find("base", href=True)
-    base = urljoin(page_url, base_tag["href"]) if base_tag else page_url
+    base = (safe_urljoin(page_url, base_tag["href"].strip()) if base_tag else None) or page_url
     for tag, attr in (("a", "href"), ("img", "src")):
         for el in soup.find_all(tag, **{attr: True}):
             value = el[attr].strip()
             if not value or value.startswith(_SKIP_SCHEMES):
                 continue
-            el[attr] = urljoin(base, value)
+            joined = safe_urljoin(base, value)
+            if joined is not None:
+                el[attr] = joined
 
 
 def fix_block_links(soup: BeautifulSoup) -> None:

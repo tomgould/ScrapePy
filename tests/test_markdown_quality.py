@@ -15,6 +15,7 @@ from scrapepy.convert.html_prep import (
     expand_truncated_link_text,
     fix_block_links,
     normalize_headings,
+    safe_urljoin,
     same_site,
 )
 from scrapepy.convert.to_markdown import HTMLToMarkdown
@@ -268,6 +269,22 @@ class TestLinks:
         assert same_site("https://www.example.com/a", "https://example.com/b")
         assert same_site("https://example.com:443/a", "https://example.com/b")
         assert not same_site("https://other.com/a", "https://example.com/b")
+
+    @pytest.mark.parametrize("bad", ["http://[::1", "http://[your-server]:8080/api",
+                                     "https://[ip]/", "http://example.com:99999/"])
+    def test_safe_urljoin_returns_none_for_malformed(self, bad):
+        assert safe_urljoin("https://example.com/a", bad) is None
+
+    def test_safe_urljoin_joins(self):
+        assert safe_urljoin("https://example.com/a/b", "../c") == "https://example.com/c"
+
+    def test_malformed_canonical_and_links_do_not_raise(self):
+        soup = BeautifulSoup('<link rel="canonical" href="http://[::1">'
+                             '<a href="http://[x]/">x</a><a href="/ok">ok</a>', "lxml")
+        assert canonical_url(soup, "https://example.com/p") is None
+        absolutize_links(soup, "https://example.com/p")
+        hrefs = [a["href"] for a in soup.find_all("a")]
+        assert hrefs == ["http://[x]/", "https://example.com/ok"]
 
     def test_same_site_compares_scheme_and_port(self):
         assert not same_site("https://example.com/a", "http://example.com/a")

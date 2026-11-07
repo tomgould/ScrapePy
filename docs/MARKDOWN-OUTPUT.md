@@ -90,7 +90,7 @@ Written to `ScrapedSites/<site>/run_summary.json` at the start of a crawl (with 
 | `counts` | object of integers | `fetched`, `new`, `changed`, `unchanged`, `failed`, `blocked_by_robots`, `duplicates`, `skipped_old` |
 | `new_markdown`, `changed_markdown` | list of strings | Markdown files written for new and changed pages |
 | `unchanged_urls` | list of strings | Pages the server or the cache showed had not changed |
-| `failed` | list of `{url, reason}` | Fetch errors, HTTP 4xx and 5xx, error pages |
+| `failed` | list of `{url, reason}` | Fetch errors, HTTP 4xx and 5xx, error pages, and pages whose conversion to Markdown failed (these are not counted as new or changed and are converted again on the next run) |
 | `blocked_by_robots` | list of strings | URLs robots.txt disallowed |
 | `duplicates` | list of `{url, same_as}` | Pages whose Markdown matched a file already written, and that file |
 | `interrupted`, `interrupted_by` | boolean, string or null | Whether the run stopped early, and the signal (`SIGINT` or `SIGTERM`) |

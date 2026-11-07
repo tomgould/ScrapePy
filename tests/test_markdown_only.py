@@ -208,6 +208,86 @@ class TestDuplicatesAndCanonical:
         assert "canonical_url" not in data
 
 
+def run_default(tmp_path, **kw):
+    kw.setdefault("wait", 0)
+    config = ScrapeConfig(url=BASE + "/", output_root=str(tmp_path), **kw)
+    create_output_dirs(config)
+    return config, asyncio.run(crawl.run_crawl_mode(config))
+
+
+BAD_CANONICAL = '<link rel="canonical" href="http://[::1">'
+BAD_LINKS = ('<p>Call <a href="http://[your-server]:8080/api">your server</a> or '
+             '<a href="https://[ip]/">the box</a>.</p>')
+
+
+class TestMalformedUrls:
+    @pytest.mark.parametrize("runner", [run_md_only, run_default], ids=["md-only", "default"])
+    def test_bad_canonical_is_ignored(self, site, tmp_path, runner):
+        site({"/": page("Home", ["/about"]),
+              "/about": rich_page("About").replace("<head>", "<head>" + BAD_CANONICAL)}, None)
+        config, summary = runner(tmp_path)
+        path = os.path.join(config.markdown_dir, "about.md")
+        assert os.path.exists(path)
+        data, _ = frontmatter(path)
+        assert data["url"] == BASE + "/about"
+        assert "canonical_url" not in data
+        assert BASE + "/about" not in [f["url"] for f in summary["failed"]]
+
+    @pytest.mark.parametrize("runner", [run_md_only, run_default], ids=["md-only", "default"])
+    def test_bad_link_is_left_as_written(self, site, tmp_path, runner):
+        site({"/": page("Home", ["/about"]), "/about": rich_page("About", extra=BAD_LINKS)}, None)
+        config, _ = runner(tmp_path)
+        path = os.path.join(config.markdown_dir, "about.md")
+        assert os.path.exists(path)
+        _, text = frontmatter(path)
+        assert "[your server](http://[your-server]:8080/api)" in text
+        assert "[the box](https://[ip]/)" in text
+
+    def test_bad_base_href_is_ignored(self, site, tmp_path, no_assets):
+        bad_base = '<base href="http://[::1">'
+        site({"/": page("Home", ["/about"]),
+              "/about": rich_page("About").replace("<head>", "<head>" + bad_base)}, None)
+        config, _ = run_md_only(tmp_path)
+        _, text = frontmatter(os.path.join(config.markdown_dir, "about.md"))
+        assert "[about us](https://example.com/about)" in text
+
+
+class TestConversionErrors:
+    def test_page_that_fails_to_convert_is_reported_as_failed(self, site, tmp_path, monkeypatch):
+        site({"/": page("Home", ["/about"]), "/about": rich_page("About")}, None)
+        from scrapepy.convert.to_markdown import HTMLToMarkdown
+        original = HTMLToMarkdown.extract_content
+
+        def explode(self, html, filepath):
+            if "<title>About</title>" in html:
+                raise ValueError("boom")
+            return original(self, html, filepath)
+
+        monkeypatch.setattr(HTMLToMarkdown, "extract_content", explode)
+        config, summary = run_md_only(tmp_path)
+        failed = {f["url"]: f["reason"] for f in summary["failed"]}
+        assert "boom" in failed[BASE + "/about"]
+        assert not any(p.endswith("about.md") for p in summary["new_markdown"])
+        assert summary["counts"]["new"] == 1
+
+    def test_failed_conversion_is_retried_next_run(self, site, tmp_path, monkeypatch):
+        site({"/": page("Home", ["/about"]), "/about": rich_page("About")}, None)
+        from scrapepy.convert.to_markdown import HTMLToMarkdown
+        original = HTMLToMarkdown.extract_content
+
+        def explode(self, html, filepath):
+            if "<title>About</title>" in html:
+                raise ValueError("boom")
+            return original(self, html, filepath)
+
+        with monkeypatch.context() as m:
+            m.setattr(HTMLToMarkdown, "extract_content", explode)
+            run_md_only(tmp_path)
+        config, summary = run_md_only(tmp_path)
+        assert os.path.exists(os.path.join(config.markdown_dir, "about.md"))
+        assert BASE + "/about" not in [f["url"] for f in summary["failed"]]
+
+
 class TestNoAssetDownloads:
     def test_markdown_only_never_downloads_assets(self, site, tmp_path, monkeypatch):
         site(SITE, None)
