@@ -778,8 +778,8 @@ def _find_recipes(html: str) -> list[Recipe]:
 
 _RE_NORM_NUMBERING = re.compile(r"^(?:step\s*\d{1,3}\b\s*[.):\-]?|\d{1,3}[.)])\s+(?!\d)",
                                 re.IGNORECASE)
-_RE_NORM_BULLET = re.compile(r"^[•‣◦▪▫■□▢☐☑"
-                             r"✓✔·▶►*\-–—]\s+")
+_RE_NORM_BULLET = re.compile("^[\u2022\u2023\u25e6\u25aa\u25ab\u25a0\u25a1\u25a2\u2610\u2611"
+                             "\u2713\u2714\u00b7\u25b6\u25ba*\\-\u2013\u2014]\\s+")
 _RE_COMMENT_AREA = re.compile(r"comment|respond|reply", re.IGNORECASE)
 
 
