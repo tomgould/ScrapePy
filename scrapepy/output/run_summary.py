@@ -69,8 +69,9 @@ class RunStats:
 
 
 def options_used(config: ScrapeConfig) -> dict:
-    """The options that shaped this run. Credentials are never included."""
-    return {
+    """The options that shaped this run. Credentials are never included.
+    "feed" is written only when --feed was given."""
+    options = {
         "markdown": config.markdown,
         "stay_in_path": config.stay_in_path,
         "path_wildcard": config.path_wildcard,
@@ -79,7 +80,6 @@ def options_used(config: ScrapeConfig) -> dict:
         "incremental": config.incremental,
         "index_pages": config.index_pages,
         "markdown_only": config.markdown_only,
-        "feed": config.feed,
         "wait_seconds": config.wait_time,
         "concurrent": config.concurrent,
         "user_agent": config.user_agent,
@@ -91,6 +91,9 @@ def options_used(config: ScrapeConfig) -> dict:
         "auth_used": bool(config.auth),
         "proxy_used": bool(config.proxy),
     }
+    if config.feed:
+        options["feed"] = True
+    return options
 
 
 def relative_to_root(path: str, output_root: str) -> str:

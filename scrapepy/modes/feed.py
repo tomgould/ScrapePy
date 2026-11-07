@@ -8,6 +8,7 @@ comes from the feed (content:encoded, Atom content, else the summary).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import posixpath
 import re
@@ -37,6 +38,8 @@ from .crawl import _note_interrupt, _print_robots_status, _write_summary_quietly
 # Entries written when --max-articles is not given
 DEFAULT_FEED_ENTRIES = 50
 NOT_A_FEED = "not an RSS or Atom feed"
+UNREADABLE_ENTRIES = "the feed has entries but none could be read"
+_RE_ENTRY_TAG = re.compile(r"<(?:\w+:)?(?:item|entry)[\s>/]", re.IGNORECASE)
 
 
 def _fetch(url: str, config: ScrapeConfig) -> tuple[int, bytes, str | None, str | None]:
@@ -51,11 +54,11 @@ def _fetch(url: str, config: ScrapeConfig) -> tuple[int, bytes, str | None, str 
         return 0, b"", None, f"{type(e).__name__}: {e}"
 
 
-def entry_output_path(link: str, config: ScrapeConfig, used: set[str]) -> str:
-    """Markdown path for an entry, from its link like a crawled page's file
-    name. A query string is kept in the name (feeds often link ?p=123), an
-    entry on another host goes under a folder named after that host, and a
-    name already used in this run gets -2, -3, ..."""
+def entry_stem(link: str, config: ScrapeConfig) -> str:
+    """Path for an entry without the .md, from its link like a crawled
+    page's file name. A query string is kept in the name (feeds often link
+    ?p=123) and an entry on another host goes under a folder named after
+    that host."""
     parsed = urlparse(link)
     path = posixpath.normpath(parsed.path or "/")
     if not path.startswith("/"):
@@ -69,13 +72,23 @@ def entry_output_path(link: str, config: ScrapeConfig, used: set[str]) -> str:
     host = parsed.netloc.lower().removeprefix("www.")
     if host and host != config.domain.lower().removeprefix("www."):
         stem = os.path.join(host.replace(".", "_"), stem)
-    candidate = os.path.join(config.markdown_dir, stem + ".md")
-    n = 2
-    while candidate in used:
-        candidate = os.path.join(config.markdown_dir, f"{stem}-{n}.md")
-        n += 1
-    used.add(candidate)
-    return candidate
+    return stem
+
+
+def entry_output_paths(links: list[str], config: ScrapeConfig) -> dict[str, str]:
+    """Markdown path for each link. Links whose names would collide all get
+    a suffix from a short hash of the link, so a name never depends on the
+    order of the feed."""
+    stems = {link: entry_stem(link, config) for link in links}
+    counts: dict[str, int] = {}
+    for stem in stems.values():
+        counts[stem] = counts.get(stem, 0) + 1
+    paths = {}
+    for link, stem in stems.items():
+        if counts[stem] > 1:
+            stem += "-" + hashlib.sha256(link.encode("utf-8")).hexdigest()[:8]
+        paths[link] = os.path.join(config.markdown_dir, stem + ".md")
+    return paths
 
 
 def entry_markdown(entry: FeedEntry, converter: HTMLToMarkdown, base_url: str) -> tuple[str, int]:
@@ -159,12 +172,18 @@ async def run_feed_mode(config: ScrapeConfig, explicit: bool = True) -> dict | N
                 stats.record_failed(url, f"HTTP {status}")
                 print(f"  Failed: HTTP {status}")
             else:
-                feed = parse_feed(decode_feed(data, encoding), url)
+                text = decode_feed(data, encoding)
+                feed = parse_feed(text, url)
                 if feed is None:
                     if not explicit:
                         return None
                     stats.record_failed(url, NOT_A_FEED)
                     print(f"  Failed: {NOT_A_FEED}")
+                elif not feed.entries and _RE_ENTRY_TAG.search(text):
+                    info["format"], info["title"] = feed.kind, feed.title or None
+                    info["error"] = UNREADABLE_ENTRIES
+                    stats.record_failed(url, UNREADABLE_ENTRIES)
+                    print(f"  Failed: {UNREADABLE_ENTRIES}")
                 else:
                     _write_entries(config, feed, stats, info)
     except asyncio.CancelledError:
@@ -198,7 +217,7 @@ def _write_entries(config: ScrapeConfig, feed, stats: RunStats, info: dict) -> N
                                absolute_links=True)
     os.makedirs(config.markdown_dir, exist_ok=True)
     seen_links: set[str] = set()
-    used_paths: set[str] = set()
+    chosen = []
     for index, entry in enumerate(feed.entries):
         if index >= cap:
             info["entries_over_cap"] += 1
@@ -211,6 +230,9 @@ def _write_entries(config: ScrapeConfig, feed, stats: RunStats, info: dict) -> N
                                             "reason": "duplicate link"})
             continue
         seen_links.add(entry.link)
+        chosen.append(entry)
+    paths = entry_output_paths([e.link for e in chosen], config)
+    for entry in chosen:
         md, words = entry_markdown(entry, converter, entry.link)
         if is_teaser(entry, words):
             info["teaser_entries"] += 1
@@ -221,8 +243,8 @@ def _write_entries(config: ScrapeConfig, feed, stats: RunStats, info: dict) -> N
             "page_type": "feed_entry",
             "domain": config.domain,
         }
-        if entry.date is not None:
-            metadata["date"] = entry.date.isoformat()
+        if entry.date:
+            metadata["date"] = entry.date
             metadata["date_source"] = "FEED"
             md = re.sub(r"^(# .+\n)", lambda m: m.group(1) + "\n**"
                         + _format_visible_date(metadata["date"]) + "**\n", md, count=1)
@@ -231,7 +253,7 @@ def _write_entries(config: ScrapeConfig, feed, stats: RunStats, info: dict) -> N
         metadata["word_count"] = HTMLToMarkdown._compute_word_count(md)
         metadata["scraped_at"] = utc_now_iso()
         metadata["content_hash"] = content_hash(md)
-        path = entry_output_path(entry.link, config, used_paths)
+        path = paths[entry.link]
         existed = os.path.exists(path)
         if existed and _existing_hash(path) == metadata["content_hash"]:
             stats.unchanged.append(entry.link)

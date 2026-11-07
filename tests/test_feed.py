@@ -190,7 +190,7 @@ def test_rss_with_and_without_content_encoded(server, tmp_path):
 
     assert summary["counts"]["fetched"] == 1
     assert summary["counts"]["new"] == 2
-    assert summary["options"]["feed"] is False   # detected from the URL
+    assert "feed" not in summary["options"]   # detected from the URL, not --feed
     feed = summary["feed"]
     assert feed["format"] == "rss" and feed["title"] == "Little Cooks Blog"
     assert feed["entries_in_feed"] == 2 and feed["entries_written"] == 2

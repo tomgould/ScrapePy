@@ -10,7 +10,8 @@ from __future__ import annotations
 import html as html_lib
 import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
+from email.utils import parsedate_to_datetime
 from html.entities import name2codepoint
 from urllib.parse import urlparse
 
@@ -18,7 +19,6 @@ from bs4 import BeautifulSoup
 
 from ..convert.html_prep import safe_urljoin
 from ..convert.recipe import clean_text
-from .dates import _parse_iso_date, _parse_rfc2822_date
 
 # Entries whose body has fewer words than this, or that end like a cut-off
 # excerpt, are counted as teasers in the run summary.
@@ -44,7 +44,7 @@ _RE_TEASER_END = re.compile(
 class FeedEntry:
     title: str = ""
     link: str = ""          # absolute URL, or "" when the entry has none
-    date: datetime | None = None
+    date: str = ""         # ISO 8601 as precise as published: date only, naive or with offset
     author: str = ""
     body_html: str = ""
     body_source: str = ""   # "content", "summary" or "" (no body)
@@ -90,15 +90,31 @@ def decode_feed(data: bytes, http_encoding: str | None = None) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+_RE_DOCTYPE = re.compile(r"<!DOCTYPE\b[^\[>]*(?:\[.*?\]\s*)?>", re.IGNORECASE | re.DOTALL)
+_RE_ENTITY_DECL = re.compile(r"<!ENTITY\b[^>]*>", re.IGNORECASE)
+
+
+def neutralise_doctype(text: str) -> str:
+    """Remove the DOCTYPE and any internal subset, so no entity is ever
+    declared: nothing is expanded (no billion laughs), no DTD or other URL
+    is fetched and no local file is read. Entities the document then uses
+    stay unresolved and show as written."""
+    text = _RE_DOCTYPE.sub("", text)
+    # A stray declaration outside a DOCTYPE is removed too
+    return _RE_ENTITY_DECL.sub("", text)
+
+
 def _fix_entities(text: str) -> str:
     """HTML named entities (&nbsp;, &eacute;) are not defined in XML and make
-    the parser drop text; turn them into numeric references first."""
+    the parser drop text; turn them into numeric references first. Any other
+    unknown entity is escaped, so it shows as written instead of breaking
+    the parse."""
     def sub(m):
         name = m.group(1)
         if name in _XML_ENTITIES:
             return m.group(0)
         code = name2codepoint.get(name)
-        return f"&#{code};" if code else m.group(0)
+        return f"&#{code};" if code else f"&amp;{name};"
     return _RE_NAMED_ENTITY.sub(sub, text)
 
 
@@ -163,17 +179,26 @@ def _base_of(tag, fallback: str) -> str:
     return result
 
 
-def _date(text: str) -> datetime | None:
+def _date(text: str) -> str:
+    """ISO 8601 for a feed date, no more precise than published: a date
+    stays a date, a time without an offset stays without one. "" when the
+    value cannot be read."""
     text = (text or "").strip()
     if not text:
-        return None
-    dt = _parse_iso_date(text) or _parse_rfc2822_date(text)
-    if dt is None:
+        return ""
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
         try:
-            dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+            return date.fromisoformat(text).isoformat()
         except ValueError:
-            return None
-    return dt
+            return ""
+    try:
+        return datetime.fromisoformat(text).isoformat()
+    except ValueError:
+        pass
+    try:
+        return parsedate_to_datetime(text).isoformat()   # RSS (RFC 822) dates
+    except (TypeError, ValueError, IndexError):
+        return ""
 
 
 def _is_http(url: str) -> bool:
@@ -185,7 +210,7 @@ def parse_feed(text: str, feed_url: str) -> Feed | None:
     kind = feed_kind(text)
     if kind is None:
         return None
-    soup = BeautifulSoup(_fix_entities(text), "lxml-xml")
+    soup = BeautifulSoup(_fix_entities(neutralise_doctype(text)), "lxml-xml")
     if kind == "rss":
         return _parse_rss_entries(soup, feed_url)
     return _parse_atom_entries(soup, feed_url)
