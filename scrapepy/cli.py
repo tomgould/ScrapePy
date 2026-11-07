@@ -1,7 +1,6 @@
 """CLI argument parsing and main entry point."""
 
 import argparse
-import re
 import asyncio
 import signal
 import sys
@@ -90,14 +89,19 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
                              "/rss.xml). --max-articles caps the entries (default 50)")
     target = parser.add_argument_group("Targeted crawling")
     target.add_argument("--include", action="append", default=[], metavar="REGEX",
-                        help="Follow a link only when its path matches (repeatable); links "
-                             "inside the --stay-in-path scope are followed too")
+                        help="Follow a link only when its path matches (repeatable, Python "
+                             "regular expression on the path without query, fragment or "
+                             "trailing slash, case-sensitive); links inside the "
+                             "--stay-in-path scope are followed too")
     target.add_argument("--exclude", action="append", default=[], metavar="REGEX",
-                        help="Never follow a link whose path matches (repeatable)")
+                        help="Never follow a link whose path matches (repeatable, matched "
+                             "like --include)")
     target.add_argument("--max-depth", type=int, default=None, metavar="N",
                         help="Follow links at most N steps from the start URLs (start = 0)")
     target.add_argument("--max-pages", type=int, default=0, metavar="N",
-                        help="Stop after N page requests (default: 0 = no limit)")
+                        help="Stop after N pages fetched (default: 0 = no limit). Retries of "
+                             "one page, robots.txt, reconnaissance and asset requests are not "
+                             "counted")
     target.add_argument("--urls-file", type=str, default=None, metavar="FILE",
                         help="Start URLs, one per line (# comments), all on one site, in one run")
     target.add_argument("--only-recipes", action="store_true",
@@ -106,8 +110,9 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
     target.add_argument("--site-name", type=str, default=None, metavar="NAME",
                         help="Output folder name for the site, so several runs share one folder")
     target.add_argument("--follow-next", action="store_true",
-                        help="Follow pagination (rel=next and /page/N links) without counting "
-                             "it as depth")
+                        help="Follow pagination (rel=next and /page/N links of an in-scope "
+                             "listing) without counting it as depth. Without --max-pages or "
+                             "--max-depth it continues while the site offers another page")
     parser.add_argument("--index-pages", action=argparse.BooleanOptionalAction, default=True,
                         help="Write generated _index.md listing pages for sections (default: on)")
     parser.add_argument("--auth", type=str, default=None,
@@ -195,11 +200,11 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
                          ("--audit", args.audit), ("--feed", args.feed)):
             if on:
                 parser.error(f"targeted-crawl options work with the default crawl and -j, not {flag}")
+    from .processing.targeting import check_pattern
     for pattern in args.include + args.exclude:
-        try:
-            re.compile(pattern)
-        except re.error as e:
-            parser.error(f"invalid regular expression {pattern!r}: {e}")
+        problem = check_pattern(pattern)
+        if problem:
+            parser.error(problem)
     if args.max_depth is not None and args.max_depth < 0:
         parser.error("--max-depth must be 0 or more")
     if args.max_pages < 0:

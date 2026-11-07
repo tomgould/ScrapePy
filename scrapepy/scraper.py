@@ -31,6 +31,11 @@ async def run_scraper(config: ScrapeConfig) -> int:
         if config.feed or (config.markdown and not config.js_render
                            and looks_like_feed_url(config.url)):
             from .modes.feed import run_feed_mode
+            from .processing.targeting import is_active as targeting_active
+            if targeting_active(config) or config.only_recipes or config.max_pages \
+                    or config.site_name or config.start_urls:
+                print("Note: the URL looks like a feed, so feed mode runs and the "
+                      "targeted-crawl options (and any other --urls-file URLs) do not apply.")
             summary = await run_feed_mode(config, explicit=config.feed)
             if summary is not None:
                 return summary["exit_code"]

@@ -111,8 +111,9 @@ def options_used(config: ScrapeConfig) -> dict:
                        ("urls_file", bool(config.urls_file)), ("start_urls", len(config.start_urls)),
                        ("only_recipes", config.only_recipes), ("site_name", config.site_name),
                        ("follow_next", config.follow_next)):
-        if value not in (None, False, 0, []):
-            options[key] = value
+        if value is None or value is False or value == [] or (value == 0 and key != "max_depth"):
+            continue
+        options[key] = value
     return options
 
 
