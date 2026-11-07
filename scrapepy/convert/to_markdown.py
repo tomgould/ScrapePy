@@ -9,6 +9,7 @@ import os
 import re
 from dataclasses import dataclass
 import shutil
+from urllib.parse import urlparse
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from .html_prep import (
     dominant_container,
     expand_truncated_link_text,
     first_h1,
+    title_h1,
     fix_block_links,
     insert_after_h1,
     normalize_headings,
@@ -344,6 +346,81 @@ class _FenceSafeConverter(markdownify.MarkdownConverter):
         return out[:start] + fence + out[start + 3:end] + fence + out[end + 3:]
 
 
+# Class or id words that mark the site's own header, logo or menu
+_SITE_CHROME_RE = re.compile(
+    r"(?:^|[\s_-])(?:site-?header|global-?header|masthead|logo|navbar|nav-?bar|"
+    r"site-?title|site-?name|site-?brand|site-?branding|branding|top-?bar)(?:$|[\s_-])",
+    re.IGNORECASE,
+)
+_CHROME_ROLES = ("banner", "navigation", "contentinfo", "complementary")
+# Separators between a page's name and the site's name in <title>
+_TITLE_SEP_RE = re.compile(r"\s+[|\-\u2013\u2014:\u00b7]\s+")
+
+
+def _is_chrome_h1(h1) -> bool:
+    """Whether an H1 belongs to the site's chrome rather than the page: in a
+    nav, footer or aside, a <header> outside <article> and <main>, a banner
+    or navigation role, or an element whose class or id names a site header,
+    masthead, logo or navbar."""
+    for el in [h1, *h1.parents]:
+        if el.name in ("body", "html", "[document]") or el.name is None:
+            break
+        if el.name in ("nav", "footer", "aside"):
+            return True
+        if el.get("role") in _CHROME_ROLES:
+            return True
+        if el.name == "header" and el.find_parent(["article", "main"]) is None:
+            return True
+        hints = " ".join(el.get("class", []) + [el.get("id", "")])
+        if hints and _SITE_CHROME_RE.search(hints):
+            return True
+    return False
+
+
+def _title_text(soup) -> str:
+    tag = soup.find("title")
+    return clean_title(tag.get_text(" ", strip=True)) if tag else ""
+
+
+def _is_site_name_h1(h1, title: str) -> bool:
+    """Whether an H1 holds the site's name: it links to the home page, or its
+    text is the last part of <title> after a separator ("Page | Site")."""
+    link = h1.find("a", href=True)
+    if link is not None:
+        parsed = urlparse(link["href"].strip())
+        if parsed.path in ("", "/") and not parsed.query and not parsed.fragment:
+            return True
+    parts = [p for p in _TITLE_SEP_RE.split(title) if p.strip()]
+    text = clean_title(h1.get_text(" ", strip=True)).lower()
+    return len(parts) >= 2 and bool(text) and text == parts[-1].strip().lower()
+
+
+def _remove_site_h1s(soup) -> set[str]:
+    """Remove H1s that are site chrome or the site's name; return their
+    texts, lowercased, so <title> can drop the site's name."""
+    title = _title_text(soup)
+    names = set()
+    for h1 in soup.find_all("h1"):
+        if _is_chrome_h1(h1) or _is_site_name_h1(h1, title):
+            names.add(clean_title(h1.get_text(" ", strip=True)).lower())
+            h1.decompose()
+    return names
+
+
+def _page_title(soup, site_names: set[str]) -> str:
+    """The page's <title>, without the site's name when that name is a
+    separated part at either end ("Page | Site" or "Site - Page")."""
+    title = _title_text(soup)
+    seps = list(_TITLE_SEP_RE.finditer(title))
+    if seps and site_names:
+        last, first = seps[-1], seps[0]
+        if title[last.end():].strip().lower() in site_names:
+            return title[:last.start()].strip()
+        if title[:first.start()].strip().lower() in site_names:
+            return title[first.end():].strip()
+    return title
+
+
 @dataclass
 class PreparedPage:
     """A page's Markdown file contents, ready to be written."""
@@ -531,7 +608,7 @@ class HTMLToMarkdown:
                         md_parts.append(f"{response_section.get_text(strip=True)}\n")
             else:
                 md = self._md(str(main_content))
-                if title and first_h1(md) is None:
+                if title and title_h1(md) is None:
                     md = f"# {clean_title(title)}\n\n{md}"
                 return md
 
@@ -701,7 +778,7 @@ class HTMLToMarkdown:
 
         md = self._md(str(body), strip=["img"])
 
-        if title and first_h1(md) is None:
+        if title and title_h1(md) is None:
             md = f"# {clean_title(title)}\n\n{md}"
 
         return md
@@ -741,9 +818,14 @@ class HTMLToMarkdown:
 
     def extract_standard_content(self, soup):
         """Extract content from standard sites (WordPress, blogs, general CMS)."""
-        # The page's H1 can sit in a <header>, which is removed as junk
-        page_h1 = soup.find("h1")
-        page_h1 = page_h1.get_text(" ", strip=True) if page_h1 else ""
+        # A logo or menu H1 in the site's chrome is never the title
+        page_title = _page_title(soup, _remove_site_h1s(soup))
+        # An article's own <header> is removed with the other headers, so
+        # its H1 (the story's title) is moved out first
+        for h1 in soup.find_all("h1"):
+            header = h1.find_parent("header")
+            if header is not None and header.find_parent(["article", "main"]) is not None:
+                header.insert_before(h1.extract())
         self._remove_junk_elements(soup)
 
         # Try precise content selectors (most specific first)
@@ -774,21 +856,16 @@ class HTMLToMarkdown:
             if content is None or len(content.get_text(strip=True).split()) <= 50:
                 return None
 
-        # Extract title
-        title = ""
-        h1 = content.find("h1") or soup.find("h1")
-        if h1:
-            title = h1.get_text(strip=True)
-        elif page_h1:
-            title = page_h1
-        elif soup.find("title"):
-            title = soup.find("title").get_text(strip=True)
-
         # Convert to markdown
         md = self._md(str(content))
 
-        if title and first_h1(md) is None:
-            md = f"# {clean_title(title)}\n\n{md}"
+        # Title: the content's H1 when it is the title (title_h1), else an
+        # H1 left outside the content, else the page's <title>
+        if title_h1(md) is None:
+            outside = soup.find("h1") if content.find("h1") is None else None
+            title = outside.get_text(strip=True) if outside else page_title
+            if title:
+                md = f"# {clean_title(title)}\n\n{md}"
 
         return md
 
@@ -879,7 +956,7 @@ class HTMLToMarkdown:
                     title = soup.find("h1").get_text().strip()
 
                 md = self._md(str(main_content))
-                if title and first_h1(md) is None:
+                if title and title_h1(md) is None:
                     md = f"# {clean_title(title)}\n\n{md}"
 
                 if len(md.strip()) > 100:
@@ -1492,14 +1569,17 @@ class HTMLToMarkdown:
                 return None
 
             # Ensure page title is always present as # Heading
-            if first_h1(md) is None:
+            if title_h1(md) is None:
                 title_soup = BeautifulSoup(html[:5000], "lxml")
+                site_names = _remove_site_h1s(title_soup)
                 title = ""
                 h1 = title_soup.find("h1")
-                if h1:
+                if h1 and first_h1(md) is None:
+                    # The H1 did not reach the Markdown: it is the title
                     title = h1.get_text(" ", strip=True)
-                elif title_soup.find("title"):
-                    title = title_soup.find("title").get_text(" ", strip=True)
+                else:
+                    # No H1, or one that is not the title (a late heading)
+                    title = _page_title(title_soup, site_names)
                 if title:
                     md = f"# {clean_title(title)}\n\n{md}"
 

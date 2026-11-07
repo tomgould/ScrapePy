@@ -45,7 +45,7 @@ Every file starts with YAML frontmatter between `---` lines, then a blank line, 
 
 | Key | Type | Present | Meaning |
 |-----|------|---------|---------|
-| `title` | string | almost always | The page title: the first heading, else the H1, else `<title>`, with whitespace collapsed |
+| `title` | string | almost always | The text of the body's H1 (see Body): the page's own H1 when it is the title, else `<title>` without a separated site name, else the first heading; whitespace collapsed |
 | `url` | string | always | The absolute address requested for the page (after a redirect it is still the address requested, not the target). Use it as the document ID and the citation link; see Limitations for when two addresses share one file |
 | `canonical_url` | string | when the page declares a different canonical on the same site | The page's `<link rel="canonical">`, made absolute. Written only when it differs from `url` and has the same scheme, host (ignoring `www.`) and port |
 | `date` | string | when a publication date was found | ISO 8601, for example `2026-02-20` or `2026-02-20T10:30:00+00:00` |
@@ -71,7 +71,10 @@ Every file starts with YAML frontmatter between `---` lines, then a blank line, 
 
 ## Body
 
-- The page's first H1 is the title and the only H1 (`# Title`); every later heading is H2 or deeper, and the frontmatter `title` is its text. Headings above it on the page, such as a kicker or site tagline, are kept as plain paragraphs before it, so the body usually starts with `# Title` but can start with that text. A page with no H1 gets its `<title>` (or, failing that, its first heading) as the H1. An H1 inside a removed `<header>` still becomes the title.
+- The body has one H1 (`# Title`), and every other heading is H2 or deeper. The title is chosen like this:
+  - The page's first H1 is the title when it is the first heading, or when the headings above it look like a kicker or site tagline: at most two, each of at most ten words, with at most 30 words of other text above the H1. Those headings are kept as plain paragraphs before the H1, so the body can start with their text.
+  - Otherwise (for example real sections above a late "Newsletter" H1) that H1 is an ordinary heading, and the title is the page's `<title>`, or its first heading when it has no `<title>`.
+  - An H1 in the site's chrome never counts: in a `<nav>`, `<footer>` or `<aside>`, a `<header>` that is not inside `<article>` or `<main>`, a banner or navigation role, or an element whose class or id names a site header, masthead, logo or navbar. Nor does an H1 that links to the home page or matches the site name at the end of `<title>` ("Page | Site"). When such an H1 matches a separated part of `<title>`, that part is dropped from the title. An H1 in an article's own `<header>` counts.
 - Heading levels never skip and keep the page's outline. Headings that were siblings on the page stay siblings (three H4 cards under the title are all H2), a deeper heading becomes a child one level down, and a shallower one closes the deeper headings before it. Levels stop at H6. This applies to headings that start a list item (`- ## Card title`), headings in blockquotes (`> ## Quoted`) and any mix of the two (`- > ## Quoted`), but not to `#` lines inside code blocks, which are left alone.
 - Article pages with a date have a line `**20 Feb 2026, 10:30**` after the title. Section pages do not.
 - Navigation, headers, footers, sidebars, cookie and newsletter boxes, share buttons and form furniture (inputs, "Submit", "Menu", "Close" and similar buttons) are removed. Accordion and FAQ questions on buttons are kept (as headings when the button sits in a heading), a `<select>` becomes a list of its options unless it is a long picker, a sort, filter or language switcher, or a quantity picker, and `<textarea>` text is kept. See Limitations below. Removal is heuristic; some boilerplate can remain on unusual layouts.

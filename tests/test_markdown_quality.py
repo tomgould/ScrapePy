@@ -157,6 +157,9 @@ class TestNormalizeHeadings:
         assert "> ## Quoted title" in lines(md)
 
 
+LONG = " ".join(["Words in a real opening section of the page."] * 6)
+
+
 class TestTitleIsTheFirstH1:
     def test_heading_above_h1_becomes_a_paragraph(self):
         md = "## Site tagline\n\n# Real title\n\n## Section\n\n### sub"
@@ -168,8 +171,27 @@ class TestTitleIsTheFirstH1:
     def test_no_h1_first_heading_becomes_h1(self):
         assert normalize_headings("### Kicker\n\n#### Sub") == "# Kicker\n\n## Sub"
 
-    def test_h1_last(self):
+    def test_two_short_kickers_above_h1(self):
         assert normalize_headings("## A\n\ntext\n\n### B\n\n# Last") == "A\n\ntext\n\nB\n\n# Last"
+
+    def test_late_h1_keeps_the_tree(self):
+        md = (f"## Intro\n\n{LONG}\n\n## Details\n\ntext\n\n### More\n\ntext\n\n"
+              "# Newsletter\n\nSign up.")
+        assert normalize_headings(md) == (
+            f"# Intro\n\n{LONG}\n\n## Details\n\ntext\n\n### More\n\ntext\n\n"
+            "## Newsletter\n\nSign up.")
+
+    def test_three_short_headings_above_h1_are_not_kickers(self):
+        assert levels_out(2, 2, 3, 1) == [1, 2, 3, 2]
+
+    def test_h1_after_a_long_first_section(self):
+        md = f"## Section one\n\n{LONG}\n\n# Title\n\n## Next"
+        assert normalize_headings(md) == f"# Section one\n\n{LONG}\n\n## Title\n\n### Next"
+
+    def test_long_heading_above_h1_is_not_a_kicker(self):
+        long_heading = " ".join(["word"] * 14)
+        md = f"## {long_heading}\n\n# Title"
+        assert normalize_headings(md) == f"# {long_heading}\n\n## Title"
 
     def test_prefixed_heading_above_h1_keeps_prefix(self):
         assert normalize_headings("- ### Kicker\n\n# Title") == "- Kicker\n\n# Title"
@@ -212,19 +234,66 @@ class TestTitleThroughConversion:
         assert front["title"] == "Doc"
         assert lines(body)[0] == "# Doc"
 
-    def test_h1_inside_header(self, tmp_path):
+    def test_h1_in_site_header_is_not_the_title(self, tmp_path):
         front, body = convert_page(tmp_path, "<header><h1>Header title</h1></header>"
                                    f"<main><h2>Intro</h2><p>{FILLER}</p><h3>Deep</h3><p>q</p></main>")
-        assert front["title"] == "Header title"
-        assert lines(body)[0] == "# Header title"
+        assert front["title"] == "Doc"
+        assert lines(body)[0] == "# Doc"
         assert "## Intro" in lines(body)
 
+    def test_logo_h1_with_article_title_in_h2(self, tmp_path):
+        front, body = convert_page(
+            tmp_path, '<div class="site-header"><h1 class="logo"><a href="/">Acme News</a></h1></div>'
+            f"<main><h2>Council approves new bridge</h2><p>{FILLER}</p></main>",
+            title="Council approves new bridge | Acme News")
+        assert front["title"] == "Council approves new bridge"
+        assert "Acme News" not in lines(body)[0]
+
+    def test_nav_h1_is_not_the_title(self, tmp_path):
+        front, _ = convert_page(tmp_path, "<nav><h1>Menu</h1><a href='/a'>A</a></nav>"
+                                f"<main><h2>Opening times</h2><p>{FILLER}</p></main>",
+                                title="Opening times")
+        assert front["title"] == "Opening times"
+
+    def test_h1_in_article_header_is_the_title(self, tmp_path):
+        front, body = convert_page(tmp_path, "<article><header><h1>Story title</h1></header>"
+                                   f"<p>{FILLER}</p><h2>Part</h2><p>x</p></article>",
+                                   title="Story title | Acme")
+        assert front["title"] == "Story title"
+        assert lines(body)[0] == "# Story title"
+
+    def test_content_h1_beats_site_header_h1(self, tmp_path):
+        front, body = convert_page(tmp_path, '<header class="masthead"><h1>Acme</h1></header>'
+                                   f"<main><h1>Real story</h1><p>{FILLER}</p></main>",
+                                   title="Real story - Acme")
+        assert front["title"] == "Real story"
+        assert body.count("# ") == 1 or headings(body) == [1]
+
+    def test_only_a_site_header_h1(self, tmp_path):
+        front, _ = convert_page(tmp_path, '<header role="banner"><h1>Acme</h1></header>'
+                                f"<main><p>{FILLER}</p></main>", title="Prices | Acme")
+        assert front["title"] in ("Prices", "Prices | Acme")
+        assert front["title"] != "Acme"
+
+    def test_site_name_h1_in_content_uses_page_part_of_title(self, tmp_path):
+        front, _ = convert_page(tmp_path, '<main><h1><a href="/">Acme</a></h1>'
+                                f"<h2>Prices</h2><p>{FILLER}</p></main>", title="Prices | Acme")
+        assert front["title"] == "Prices"
+
     def test_h1_last(self, tmp_path):
+        # Real sections above a late H1: the tree is kept and <title> is the title
         front, body = convert_page(tmp_path, f"<main><h2>A</h2><p>{FILLER}</p><h3>B</h3><p>z</p>"
                                    "<h1>Last title</h1><p>end words here</p></main>")
-        assert front["title"] == "Last title"
-        assert headings(body) == [1]
-        assert "A" in lines(body) and "B" in lines(body)
+        assert front["title"] == "Doc"
+        assert "## A" in lines(body) and "### B" in lines(body)
+        assert "## Last title" in lines(body)
+
+    def test_late_newsletter_h1(self, tmp_path):
+        front, body = convert_page(tmp_path, f"<main><h2>Intro</h2><p>{FILLER}</p>"
+                                   "<h2>Details</h2><p>Some detail.</p><h3>More</h3><p>More.</p>"
+                                   "<h1>Newsletter</h1><p>Sign up.</p></main>")
+        assert front["title"] == "Doc"
+        assert headings(body) == [1, 2, 2, 3, 2]
 
     def test_visible_date_follows_the_h1(self, tmp_path):
         html_body = (f"<main><h2>Kicker</h2><h1>Dated</h1><p>{FILLER}</p></main>")

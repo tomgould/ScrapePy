@@ -183,6 +183,40 @@ def first_h1(md: str) -> str | None:
     return None
 
 
+# Headings above the first H1 are a kicker or tagline (and the H1 is the
+# title) only when there are at most this many, each this short, with at
+# most this much other text above the H1
+_MAX_KICKERS = 2
+_MAX_KICKER_WORDS = 10
+_MAX_TEXT_ABOVE_TITLE = 30
+
+
+def title_h1(md: str) -> str | None:
+    """Text of the H1 that is the page's title, or None.
+
+    The first H1 is the title when it is the first heading, or when the
+    headings above it look like a kicker or site tagline: at most two, each
+    of at most ten words, with at most 30 words of other text above the H1.
+    Otherwise (real sections above a late H1, such as a newsletter box) the
+    page has no title H1 and that H1 is an ordinary heading.
+    """
+    above = []
+    words = 0
+    for line, m in _scan(md):
+        if m and len(m.group(2)) == 1:
+            ok = (not above) or (
+                len(above) <= _MAX_KICKERS
+                and all(n <= _MAX_KICKER_WORDS for n in above)
+                and words <= _MAX_TEXT_ABOVE_TITLE
+            )
+            return m.group(3).strip() if ok else None
+        if m:
+            above.append(len(m.group(3).split()))
+        else:
+            words += len(line.split())
+    return None
+
+
 def insert_after_h1(md: str, text: str) -> str:
     """Put text on its own paragraph after the first H1 line outside code
     (unchanged when there is no H1)."""
@@ -199,9 +233,10 @@ def insert_after_h1(md: str, text: str) -> str:
 def normalize_headings(md: str) -> str:
     """One H1 and no skipped levels, outside code fences.
 
-    The title is the first H1. Headings above it (a kicker or a site
-    tagline) become plain paragraphs, keeping their text. A page with no H1
-    gets its first heading as the H1. Every later heading sits below the
+    The title is the first H1 when title_h1() accepts it, and headings above
+    it (a kicker or a site tagline) become plain paragraphs, keeping their
+    text. Otherwise the first heading becomes the H1 and any H1 is an
+    ordinary heading below it. Every later heading sits below the
     title, from H2 down, and keeps its place in the page's outline:
 
     - a heading at the same original level as an open one is its sibling and
@@ -214,7 +249,7 @@ def normalize_headings(md: str) -> str:
     a list item ("- #### Card") or sit in a blockquote ("> #### Quote") count,
     keeping their prefix. Code fences follow CommonMark (see _scan).
     """
-    has_h1 = first_h1(md) is not None
+    has_h1 = title_h1(md) is not None
     out = []
     seen_title = False
     stack = []               # open headings below the title: (original, output)
