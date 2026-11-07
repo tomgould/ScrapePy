@@ -498,7 +498,8 @@ class PreparedPage:
 class HTMLToMarkdown:
     def __init__(self, input_dir, output_dir=None, flatten=False, base_url=None, domain=None,
                  absolute_links=False):
-        self.input_dir = Path(input_dir)
+        # Absolute, so it compares with the absolute page paths a crawl passes
+        self.input_dir = Path(os.path.abspath(input_dir))
         self.flatten = flatten
         self.base_url = base_url
         self.domain = domain
@@ -506,7 +507,7 @@ class HTMLToMarkdown:
         self.absolute_links = absolute_links
 
         if output_dir:
-            self.output_dir = Path(output_dir)
+            self.output_dir = Path(os.path.abspath(output_dir))
         else:
             # Standalone use: <root>/ScrapedSites/<site> -> <root>/MarkdownSites/<site>
             from ..config import derive_output_dirs

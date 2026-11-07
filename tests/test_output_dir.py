@@ -36,9 +36,10 @@ class TestDeriveOutputDirs:
 
 class TestConfigOutputDirs:
     def test_default_config_paths_unchanged(self):
+        # The default -o is the current directory, resolved to an absolute path
         config = ScrapeConfig(url="https://www.example.com")
-        assert config.output_dir == "./ScrapedSites/example_com"
-        assert config.markdown_dir == "./MarkdownSites/example_com"
+        assert config.output_dir == os.path.join(os.getcwd(), "ScrapedSites", "example_com")
+        assert config.markdown_dir == os.path.join(os.getcwd(), "MarkdownSites", "example_com")
 
     def test_output_root(self, tmp_path):
         config = ScrapeConfig(url="https://example.com/docs", stay_in_path=True,
@@ -60,7 +61,7 @@ class TestConfigOutputDirs:
         assert config.output_root == str(tmp_path)
 
     def test_cli_default(self):
-        assert parse_args(["https://example.com"]).output_root == "."
+        assert parse_args(["https://example.com"]).output_root == os.getcwd()
 
 
 class TestWriterUsesMarkdownDir:

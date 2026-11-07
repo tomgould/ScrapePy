@@ -154,6 +154,9 @@ class ScrapeConfig:
                 if path_suffix:
                     dir_name += "_" + path_suffix
         self.output_dir_name = dir_name
+        # Resolved once, here: every path the run builds, compares or stores
+        # is then absolute, whatever form -o took ("data", "./data", "~/data")
+        self.output_root = os.path.abspath(os.path.expanduser(self.output_root or "."))
         self.output_dir, self.markdown_dir = derive_output_dirs(self.output_root, dir_name)
 
     @property
