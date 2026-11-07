@@ -12,6 +12,7 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup
 
+from .recipe import find_recipes, merge_recipe_markdown, recipe_frontmatter, strip_recipe_text
 from .html_prep import (
     absolutize_links,
     canonical_url,
@@ -226,6 +227,7 @@ def _replace_form_controls(soup) -> None:
 # Frontmatter keys in output order. Every Markdown file uses this set.
 FRONTMATTER_FIELDS = (
     "title", "url", "canonical_url", "date", "date_source", "page_type",
+    "author", "recipe_category", "recipe_cuisine", "servings", "total_time", "keywords",
     "word_count", "description", "domain",
     "articles", "sub_sections",
     "scraped_at", "content_hash",
@@ -247,6 +249,11 @@ def build_frontmatter(metadata: dict) -> str:
     for key in FRONTMATTER_FIELDS:
         value = metadata.get(key)
         if value is None:
+            continue
+        if isinstance(value, (list, tuple)):
+            value = [clean_text_value(str(v)) for v in value if v is not None]
+            if value:
+                data[key] = value
             continue
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             value = clean_text_value(str(value))
@@ -1367,18 +1374,23 @@ class HTMLToMarkdown:
                 output_path = output_path.parent / stem / "_index.md"
 
             html = self._prepare_html(html, metadata)
+            # schema.org Recipe data becomes a structured block (convert/recipe.py)
+            recipes = find_recipes(html)
+            if recipes:
+                html = strip_recipe_text(html, recipes)
+                metadata.update(recipe_frontmatter(recipes))
             md = self.extract_content(html, filepath)
-            if not md:
+            if not md and not recipes:
                 print(f"  Skipped (no content/error page): {filepath.name}")
                 self.skipped += 1
                 return False
 
             # Promote bold lines to headings first so junk section patterns
             # (which match ## headings) can catch promoted junk headings
-            md = self.promote_bold_headings(md)
+            md = self.promote_bold_headings(md or "")
 
-            md = self.clean_markdown(md)
-            if not md:
+            md = self.clean_markdown(md) or ("" if recipes else None)
+            if md is None:
                 print(f"  Skipped (content too short): {filepath.name}")
                 self.skipped += 1
                 return False
@@ -1397,6 +1409,8 @@ class HTMLToMarkdown:
 
             # One H1, no skipped heading levels
             md = normalize_headings(md)
+            if recipes:
+                md = normalize_headings(merge_recipe_markdown(md, recipes))
 
             # Capture title from first # Heading for metadata
             title_match = re.match(r'^# (.+)$', md.lstrip(), re.MULTILINE)
@@ -1407,7 +1421,7 @@ class HTMLToMarkdown:
 
             # Compute word count, skip list/section pages with no real content
             word_count = self._compute_word_count(md)
-            if word_count < 50:
+            if word_count < 50 and not recipes:
                 print(f"  Skipped (list/section page, {word_count} words): {filepath.name}")
                 self.skipped += 1
                 return False
