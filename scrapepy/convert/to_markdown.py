@@ -103,19 +103,30 @@ _CHROME_BUTTON_LABELS = frozenset({
     "menü", "menú", "menù", "schließen", "schliessen", "fermer", "cerrar",
     "chiudi", "sluiten",
 })
-# Furniture labels by pattern: share, load or show more, pagers, slide
-# counters ("Slide 1 of 3", "3 / 5"), cookie settings and search toggles
+# Furniture labels by pattern, matched against the whole label so that
+# content such as "Next steps after your application" or "Our cookie
+# recipes" is kept: share, load or show more, next and previous, slide and
+# page counters ("Slide 1 of 3", "3 / 5"), cookie settings and search
 _CHROME_BUTTON_RE = re.compile(
-    r"^(?:share\b|load\s+more\b|(?:show|see|view)\s+(?:\d+\s+)?(?:more|less|all)\b"
-    r"|next\b|previous\b|prev\b|page\s*\d+\b|\d+$)"
-    r"|\b\d+\s*(?:of|/)\s*\d+\b|\bcookies?\b|\bsearch\b",
+    r"(?:share(?:\s+(?:on\s+\w+|this(?:\s+(?:article|page|post|story))?|via\s+\w+))?"
+    r"|load\s+more(?:\s+\w+)?"
+    r"|(?:show|see|view)\s+(?:\d+\s+)?(?:more|less|all)(?:\s+\w+)?"
+    r"|(?:go\s+to\s+)?(?:the\s+)?(?:next|previous|prev)(?:\s+(?:page|slide|item))?"
+    r"|(?:page|slide|item|image|photo)\s+\d+(?:\s*(?:of|/)\s*\d+)?"
+    r"|\d+\s*(?:of|/)\s*\d+"
+    r"|(?:manage\s+)?cookies?(?:\s+(?:settings|preferences|consent|policy))?"
+    r"|(?:advanced\s+|open\s+|close\s+|toggle\s+)?search)",
     re.IGNORECASE,
 )
+_PAGER_CONTAINER_HINT = "pag"
 # A <select> with more options than this is a picker (countries, years),
 # not a list worth indexing
 _MAX_SELECT_OPTIONS = 50
 _PICKER_SELECT_HINTS = ("sort", "filter", "lang", "locale", "country", "currency",
                         "per-page", "perpage", "per_page", "search", "jump")
+# A select of only numbers is a quantity picker when its name, id or class
+# says so; otherwise its numbers can be content (sizes 8, 10, 12, or years)
+_QUANTITY_SELECT_HINTS = ("qty", "quantity", "amount", "count")
 _PLACEHOLDER_OPTION_RE = re.compile(r"^(?:-+|select|choose|please|pick)\b", re.I)
 
 
@@ -139,9 +150,24 @@ def _button_label_is_content(btn, text: str) -> bool:
         btn.get(attr) == "collapse" for attr in ("data-toggle", "data-bs-toggle"))
     if not toggles:
         return False
-    if text.lower().rstrip(".:") in _CHROME_BUTTON_LABELS or _CHROME_BUTTON_RE.search(text):
+    label = text.rstrip(".:")
+    if label.lower() in _CHROME_BUTTON_LABELS or _CHROME_BUTTON_RE.fullmatch(label):
+        return False
+    if label.isdigit() and _in_pager(btn):
         return False
     return not _opens_link_menu(btn)
+
+
+def _in_pager(btn) -> bool:
+    """Whether a button sits in navigation or pagination: a nav element,
+    role="navigation", or a class or aria-label containing "pag"."""
+    for parent in btn.parents:
+        if parent.name == "nav" or parent.get("role") == "navigation":
+            return True
+        hints = " ".join(parent.get("class", []) + [parent.get("aria-label", "")]).lower()
+        if _PAGER_CONTAINER_HINT in hints:
+            return True
+    return False
 
 
 def _opens_link_menu(btn) -> bool:
@@ -164,7 +190,24 @@ def _opens_link_menu(btn) -> bool:
         return False
     total = len(panel.get_text(" ", strip=True).split())
     linked = sum(len(a.get_text(" ", strip=True).split()) for a in links)
-    return total > 0 and linked >= 0.6 * total
+    if total == 0 or linked < 0.6 * total:
+        return False
+    # An answer that says something in its own words ("We ship to these
+    # countries.") is content even when a list of links follows
+    return not _has_sentence(panel, links)
+
+
+_RE_SENTENCE = re.compile(r"[^.!?]+[.!?]")
+
+
+def _has_sentence(panel, links) -> bool:
+    """Whether the panel's text outside its links holds a sentence of four or
+    more words ending in a full stop, question or exclamation mark."""
+    linked_text = {id(s) for a in links for s in a.find_all(string=True)}
+    own = " ".join(
+        str(t) for t in panel.find_all(string=True) if id(t) not in linked_text
+    )
+    return any(len(m.group().split()) >= 4 for m in _RE_SENTENCE.finditer(own))
 
 
 def _replace_form_controls(soup) -> None:
@@ -174,8 +217,9 @@ def _replace_form_controls(soup) -> None:
     Other buttons keep their text as a paragraph when it is content (see
     _button_label_is_content). A <select> becomes a list of its options,
     without placeholders, unless it is a long picker, a sort, filter or
-    language switcher, or only numbers (a quantity picker). A <textarea> with text becomes a paragraph. Inputs and
-    iframes are removed.
+    language switcher, or a quantity picker (only numbers, and named qty,
+    quantity, amount or count). A <textarea> with text becomes a paragraph.
+    Inputs and iframes are removed.
     """
     for tag in soup.find_all(["input", "iframe"]):
         tag.decompose()
@@ -205,7 +249,8 @@ def _replace_form_controls(soup) -> None:
             options.append(label)
         if not options or len(options) > _MAX_SELECT_OPTIONS \
                 or any(h in hints for h in _PICKER_SELECT_HINTS) \
-                or all(label.isdigit() for label in options):
+                or (all(label.isdigit() for label in options)
+                    and any(h in hints for h in _QUANTITY_SELECT_HINTS)):
             sel.decompose()
             continue
         ul = soup.new_tag("ul")

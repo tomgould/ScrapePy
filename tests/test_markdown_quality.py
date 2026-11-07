@@ -249,7 +249,7 @@ class TestButtonsAndFormText:
 
 NOISE_LABELS = [
     "Share on Facebook", "Share this article", "Load more articles", "Show 10 more",
-    "Next page", "Previous", "1", "2", "Slide 1 of 3", "3 / 5",
+    "Next page", "Previous", "Go to next page", "Slide 1 of 3", "3 / 5",
     "Manage cookie preferences", "Cookie settings", "Advanced search",
     "Menü", "Schließen", "Fermer", "Menú", "Cerrar", "Chiudi", "Sluiten",
 ]
@@ -295,6 +295,58 @@ class TestButtonNoise:
                          + "".join(f"<option>{i}</option>" for i in range(1, 6)) + "</select>")
         md, _ = convert(html)
         assert "- 1" not in lines(md) and "- 5" not in lines(md)
+
+
+LOOKALIKE_LABELS = [
+    "Next Generation Planner", "Search engine optimisation services", "Our cookie recipes",
+    "Previous winners", "Next steps after your application", "2024", "Chapter 3 of 12",
+    "Share options for employees", "Page layout tips",
+]
+
+
+class TestButtonLookalikes:
+    @pytest.mark.parametrize("label", LOOKALIKE_LABELS)
+    def test_accordion_label_that_looks_like_chrome_is_kept(self, label):
+        html = form_page(f'<button type="button" aria-expanded="false" aria-controls="p">'
+                         f'{label}</button><div id="p"><p>The answer to this one.</p></div>')
+        md, _ = convert(html)
+        assert label in lines(md)
+
+    def test_pager_digits_in_pagination_are_dropped(self):
+        html = form_page('<div class="pagination" aria-label="Pages">'
+                         '<button aria-controls="list" aria-expanded="false">1</button>'
+                         '<button aria-controls="list" aria-expanded="false">2</button></div>'
+                         '<div id="list"><p>Results here.</p></div>')
+        md, _ = convert(html)
+        assert "1" not in lines(md) and "2" not in lines(md)
+
+    def test_label_kept_when_answer_has_sentences_and_links(self):
+        links = "".join(f'<li><a href="/c{i}">Country {i}</a></li>' for i in range(5))
+        html = form_page(
+            '<button aria-expanded="false" aria-controls="ship">Shipping</button>'
+            f'<div id="ship"><p>We ship to these countries.</p><ul>{links}</ul></div>'
+        )
+        md, _ = convert(html)
+        assert "Shipping" in lines(md)
+
+    def test_size_select_of_numbers_is_kept(self):
+        html = form_page('<label>Sizes</label><select name="size">'
+                         + "".join(f"<option>{n}</option>" for n in (8, 10, 12, 14)) + "</select>")
+        md, _ = convert(html)
+        assert "- 10" in lines(md) and "- 14" in lines(md)
+
+    def test_year_select_is_kept(self):
+        html = form_page('<select id="edition">'
+                         + "".join(f"<option>{y}</option>" for y in (2022, 2023, 2024)) + "</select>")
+        md, _ = convert(html)
+        assert "- 2023" in lines(md)
+
+    @pytest.mark.parametrize("attr", ['name="quantity"', 'id="amount"', 'class="item-count"'])
+    def test_quantity_select_is_dropped(self, attr):
+        html = form_page(f'<select {attr}>'
+                         + "".join(f"<option>{i}</option>" for i in range(1, 6)) + "</select>")
+        md, _ = convert(html)
+        assert "- 3" not in lines(md)
 
 
 class TestBlockLinks:
