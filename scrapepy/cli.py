@@ -91,8 +91,9 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
     target.add_argument("--include", action="append", default=[], metavar="REGEX",
                         help="Follow a link only when its path matches (repeatable, Python "
                              "regular expression on the path without query, fragment or "
-                             "trailing slash, case-sensitive); links inside the "
-                             "--stay-in-path scope are followed too")
+                             "trailing slash, case-sensitive, first 2048 characters; not "
+                             "time-limited, so a pathological pattern can stall a run); "
+                             "links inside the --stay-in-path scope are followed too")
     target.add_argument("--exclude", action="append", default=[], metavar="REGEX",
                         help="Never follow a link whose path matches (repeatable, matched "
                              "like --include)")
@@ -111,8 +112,8 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
                         help="Output folder name for the site, so several runs share one folder")
     target.add_argument("--follow-next", action="store_true",
                         help="Follow pagination (rel=next and /page/N links of an in-scope "
-                             "listing) without counting it as depth. Without --max-pages or "
-                             "--max-depth it continues while the site offers another page")
+                             "listing) without counting it as depth. Only --max-pages bounds "
+                             "it: without it, it continues while the site offers another page")
     parser.add_argument("--index-pages", action=argparse.BooleanOptionalAction, default=True,
                         help="Write generated _index.md listing pages for sections (default: on)")
     parser.add_argument("--auth", type=str, default=None,

@@ -45,24 +45,19 @@ def is_active(config: ScrapeConfig) -> bool:
                 or config.urls_file or config.follow_next)
 
 
-# Patterns are matched against at most this many characters of a path:
-# Python regular expressions have no time limit, so this bounds the input
+# Patterns are matched against at most this many characters of a path.
+# Python regular expressions have no time limit: a pathological pattern can
+# still stall a run, and patterns are the operator's own.
 MAX_MATCH_CHARS = 2048
-# A group with a quantifier inside that is itself repeated, such as (a+)+ or
-# (\w*)*, can take exponential time on a path that almost matches
-_RE_NESTED_QUANTIFIER = re.compile(r"\((?:[^()\\]|\\.)*[+*}](?:[^()\\]|\\.)*\)\s*[+*{]")
 
 
 def check_pattern(pattern: str) -> str | None:
-    """Why a --include or --exclude pattern is refused, or None."""
+    """Why a --include or --exclude pattern is refused (it does not
+    compile), or None."""
     try:
         re.compile(pattern)
     except re.error as e:
         return f"invalid regular expression {pattern!r}: {e}"
-    if _RE_NESTED_QUANTIFIER.search(pattern):
-        return (f"regular expression {pattern!r} repeats a group that has its own "
-                "quantifier, which can take exponential time; rewrite it without "
-                "nested repetition")
     return None
 
 
@@ -208,8 +203,8 @@ def read_urls_file(path: str, site_url: str | None) -> list[str]:
             line = raw.strip()
             if not line or line.startswith("#"):
                 continue
-            parts = urlsplit(line)
             try:
+                parts = urlsplit(line)
                 label = _site_label(parts)
             except ValueError:
                 raise ValueError(f"--urls-file line {number}: not a valid URL") from None
