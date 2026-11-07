@@ -208,6 +208,26 @@ class TestDuplicatesAndCanonical:
         assert "canonical_url" not in data
 
 
+class TestNoAssetDownloads:
+    def test_markdown_only_never_downloads_assets(self, site, tmp_path, monkeypatch):
+        site(SITE, None)
+        calls = []
+
+        async def recording(*args, **kwargs):
+            calls.append("download")
+
+        def recording_client(*args, **kwargs):
+            calls.append("client")
+            raise AssertionError("markdown-only must not open an asset client")
+
+        # Patched after site(), which installs its own no-op downloader
+        monkeypatch.setattr(crawl, "discover_and_download_assets", recording)
+        monkeypatch.setattr(crawl, "create_asset_client", recording_client)
+        config, summary = run_md_only(tmp_path)
+        assert summary["counts"]["new"] >= 1
+        assert calls == []
+
+
 class TestCli:
     def test_flag(self):
         config = parse_args(["https://example.com", "--markdown-only"])
