@@ -184,7 +184,7 @@ python main.py --instagram --accounts accounts.txt --ig-max-posts 5 --update-met
 
 ## Output
 
-Output goes under the current directory, or under `--output-dir` when given. [docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md) describes the Markdown, its frontmatter and the summary file exactly. With `--markdown-only` the `ScrapedSites/<site>/` folder holds only the run state (`run_summary.json`, `.scrapepy_cache.json`, `site_outline.json` and, if needed, `broken_links.txt`) and nothing is downloaded but pages. Otherwise scraped sites are saved to `ScrapedSites/` with this structure:
+Output goes under the current directory, or under `--output-dir` when given. [docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md) describes the Markdown, its frontmatter and the summary file exactly. With `--markdown-only` the `ScrapedSites/<site>/` folder holds only the run state (`run_summary.json`, `.scrapepy_cache.json` unless `--no-incremental`, and when there is something to record `site_outline.json` and `broken_links.txt`) and nothing is downloaded but pages. Otherwise scraped sites are saved to `ScrapedSites/` with this structure:
 
 ```
 ScrapedSites/example_com/

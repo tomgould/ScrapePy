@@ -11,14 +11,14 @@ OUT/
   MarkdownSites/example_com/     the Markdown, one file per page
   ScrapedSites/example_com/      run state; also the HTML mirror unless --markdown-only
     run_summary.json             what this run did (below)
-    .scrapepy_cache.json         incremental cache (internal format)
-    site_outline.json            navigation and sitemap summary
+    .scrapepy_cache.json         incremental cache (internal format), unless --no-incremental
+    site_outline.json            navigation and sitemap summary, when any was found
     broken_links.txt             only when some URLs failed
 ```
 
 The site folder name is the host with `www.` removed and dots replaced by underscores. With `--stay-in-path` the starting path is appended (`docs_example_com_api_v2`).
 
-With `--markdown-only` the Markdown folder contains only `.md` files and the `ScrapedSites` folder contains only the four state files above. Nothing else is downloaded: images stay as links to the live site.
+With `--markdown-only` the Markdown folder contains only `.md` files and the `ScrapedSites` folder contains only state files: `run_summary.json` always, `.scrapepy_cache.json` unless `--no-incremental` is given, `site_outline.json` only when the home page has navigation links or a sitemap lists URLs, and `broken_links.txt` only when some URLs failed. Nothing else is downloaded: images stay as links to the live site.
 
 ## File names
 
@@ -44,7 +44,7 @@ Every file starts with YAML frontmatter between `---` lines, then a blank line, 
 | Key | Type | Present | Meaning |
 |-----|------|---------|---------|
 | `title` | string | almost always | The page title: the first heading, else the H1, else `<title>`, with whitespace collapsed |
-| `url` | string | always | The absolute URL the page was fetched from. Unique per file, so use it as the document ID and the citation link |
+| `url` | string | always | The absolute address requested for the page (after a redirect it is still the address requested, not the target). Use it as the document ID and the citation link; see Limitations for when two addresses share one file |
 | `canonical_url` | string | when the page declares a different canonical on the same site | The page's `<link rel="canonical">`, made absolute. Written only when it differs from `url` and has the same scheme, host (ignoring `www.`) and port |
 | `date` | string | when a publication date was found | ISO 8601, for example `2026-02-20` or `2026-02-20T10:30:00+00:00` |
 | `date_source` | string | with `date` | Where the date came from, most to least reliable: `META_TAG`, `JSON_LD`, `URL_PATTERN`, `TIME_ELEMENT`, `HTTP_HEADER` (the server's Last-Modified) |
@@ -74,6 +74,9 @@ Every file starts with YAML frontmatter between `---` lines, then a blank line, 
 ## Limitations
 
 - Button text is kept only for questions and for toggles that open a panel (accordion and FAQ buttons with `aria-expanded` or `aria-controls`). A custom FAQ button with neither and no question mark ("Returns policy"), or a plan button ("Starter plan"), is dropped with its label. Toggles whose label looks like page furniture (share, load more, pagers, slide counters, cookie settings, search, Menu and Close in a few languages) or whose panel is mostly links are dropped too.
+
+- Different addresses can map to the same file: `/about`, `/about.html` and `/about/` all become `about.md`, and `/news/123/slug` and `/news/slug-123` both become `news/slug-123.md`. When their bodies differ, the page converted later overwrites the earlier file, so only one of them is kept, with the later `url`. Key documents on `url` and expect at most one file per name.
+- A page that redirects is written under the address requested, so a redirecting address and its target can both appear, and the later one is listed as a duplicate when their bodies match.
 
 ## Generated `_index.md` listing pages
 
