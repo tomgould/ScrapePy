@@ -418,7 +418,7 @@ python main.py "https://recipes.example.com/?s=baby+led+weaning" \
 python main.py --urls-file recipe-urls.txt --max-depth 0 --site-name recipes_example_com
 ```
 
-A start URL with a query string, such as a site search, is fetched exactly as given (with or without targeting options) and the links on it are followed; the page itself is not written or cached, because its query cannot be part of a file name. Query strings on discovered links are dropped, as in every crawl, so pagination such as `?page=2` is not followed; `/page/2/` style pagination is. `run_summary.json` gets a `targeting` object with the skipped counts (see [docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md)).
+A start URL with a query string, such as a site search, is fetched exactly as given when any targeting option is set, and the links on it are followed; the page itself is not written or cached, because its query cannot be part of a file name. Without a targeting option the query is dropped and the crawl starts from the path, as in every crawl. Query strings on discovered links are dropped, as in every crawl, so pagination such as `?page=2` is not followed; `/page/2/` style pagination is. `run_summary.json` gets a `targeting` object with the skipped counts (see [docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md)).
 
 ### Feeds (`--feed`)
 

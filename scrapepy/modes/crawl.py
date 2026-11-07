@@ -88,6 +88,10 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
     query_starts: set[str] = set()      # start URLs with a query: fetched for links only
     not_recipe: list[str] = []          # --only-recipes: pages fetched but not written
     stopped_by_limit = False
+    # Any targeting option keeps a start URL's query; without one the crawl
+    # treats the start URL as it always has
+    keep_query = bool(targeting is not None or config.only_recipes or config.max_pages
+                      or config.site_name)
     # Replace any summary from an earlier run straight away, so a reader never
     # mistakes it for this run's. It is rewritten when the crawl ends.
     _warn_shared_site_name(config)
@@ -260,8 +264,9 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                 to_visit.append(path)
                 targeting.add_start(path)
     elif outline and outline.nav_sections and not hash_based_site:
-        # Always include the start URL (fetched as given when it has a query)
-        _queue_start(config.url, to_visit, query_starts)
+        # Always include the start URL (fetched as given when it has a query
+        # and a targeting option is set)
+        _queue_start(config.url, to_visit, query_starts, keep_query)
         # Seed from navigation structure (recursively includes sub-sections)
         def _collect_section_paths(sections):
             for section in sections:
@@ -282,7 +287,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
     elif hash_based_site:
         to_visit.append(config.url)
     else:
-        _queue_start(config.url, to_visit, query_starts)
+        _queue_start(config.url, to_visit, query_starts, keep_query)
     if targeting is not None and not seed_only:
         # --exclude or --follow-next alone: the start URL is still always fetched
         if config.url in query_starts:
@@ -1231,11 +1236,12 @@ def _warn_shared_site_name(config: ScrapeConfig) -> None:
               "use one --site-name per site, or each run rewrites the other's files")
 
 
-def _queue_start(url: str, to_visit, query_starts: set[str]) -> None:
-    """Queue the start URL. One with a query (a site search) is queued as
-    given and fetched for its links only; otherwise its path is queued."""
+def _queue_start(url: str, to_visit, query_starts: set[str], keep_query: bool) -> None:
+    """Queue the start URL. With a targeting option, one with a query (a site
+    search) is queued as given and fetched for its links only; otherwise its
+    path is queued (the query is dropped, as in every untargeted crawl)."""
     parsed = urlparse(url)
-    if parsed.query:
+    if parsed.query and keep_query:
         query_starts.add(url)
         to_visit.append(url)
     else:

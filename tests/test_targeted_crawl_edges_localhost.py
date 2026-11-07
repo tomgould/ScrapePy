@@ -214,14 +214,22 @@ def test_max_depth_zero_is_in_the_options(site, tmp_path):
 # 8. A start URL with a query is fetched as given with any option, or none
 
 @pytest.mark.parametrize("extra", [
-    {}, {"exclude": ["^/blog"]}, {"max_pages": 3}, {"only_recipes": True},
-    {"follow_next": True, "max_pages": 3},
-], ids=["none", "exclude", "max-pages", "only-recipes", "follow-next"])
+    {"exclude": ["^/blog"]}, {"max_pages": 3}, {"only_recipes": True},
+    {"follow_next": True, "max_pages": 3}, {"site_name": "search"},
+], ids=["exclude", "max-pages", "only-recipes", "follow-next", "site-name"])
 def test_query_start_url_is_kept(site, tmp_path, extra):
     _, code, _, pages = crawl(site, tmp_path, "/?s=oats", **extra)
     assert code == 0
     assert pages[0] == "/?s=oats"
     assert RECIPES[3] in pages
+
+
+def test_query_start_url_without_options_is_crawled_as_before(site, tmp_path):
+    # No targeting option: the query is dropped and the crawl starts at the path
+    _, code, _, _ = crawl(site, tmp_path, "/?s=oats")
+    assert code == 0
+    assert not any("?" in p for p in Handler.log)
+    assert Handler.log.count("/") >= 1
 
 
 # 9. Tests that fail when the rules are weakened
