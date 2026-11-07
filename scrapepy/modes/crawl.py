@@ -1393,8 +1393,8 @@ def _single_page_target(url: str, config: ScrapeConfig) -> tuple[str, str, str, 
     address, or None for an address on another host or not http(s). The
     full URL keeps the path as given (trailing slash included), the query
     and the fragment, so it names the page in the frontmatter and in the
-    file assignments. The normalised path names the file, and the cache key
-    is that path plus any query and fragment."""
+    file assignments, and so does the cache key: /docs/ and /docs are two
+    addresses with two cache entries. The normalised path names the file."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         return None
@@ -1406,7 +1406,7 @@ def _single_page_target(url: str, config: ScrapeConfig) -> tuple[str, str, str, 
     path = posixpath.normpath(parsed.path or "/")
     path = path if path.startswith("/") else "/" + path
     full_url = f"{parsed.scheme}://{config.domain}{parsed.path or '/'}"
-    cache_key = path
+    cache_key = parsed.path or "/"
     if parsed.query:
         full_url += f"?{parsed.query}"
         cache_key += f"?{parsed.query}"
