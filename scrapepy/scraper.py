@@ -66,8 +66,10 @@ async def run_scraper(config: ScrapeConfig) -> int:
         from .modes.docs import run_docs_mode
         pages = await run_docs_mode(config, robots=robots)
     else:
+        # Saved and converted like a crawled page, with its own run summary
         from .modes.single_page import run_single_page_mode
-        pages = await run_single_page_mode(config)
+        summary = await run_single_page_mode(config, robots=robots)
+        return summary["exit_code"]
 
     # Markdown conversion for non-crawl modes (if requested)
     if config.markdown and pages:

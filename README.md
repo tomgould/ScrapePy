@@ -82,7 +82,7 @@ python main.py <url> [options]
 | `-s`, `--stay-in-path` | Only crawl URLs under the starting path |
 | `-w`, `--path-wildcard` | Match URLs containing the path (use with `-s`) |
 | `-j`, `--js-render` | Fetch each page with the stealth browser, then find links by regular expression as in the default crawl. The page is not scrolled and `--wait` is only the gap between requests |
-| `-1`, `--single-page` | Single page SPA mode (no crawling) |
+| `-1`, `--single-page` | Fetch one page with the stealth browser, let it render and scroll it, then save it like a crawled page (no crawling). Combines with `--site-name`, not with the other targeted-crawl options or `--markdown-only` |
 | `--swagger`, `--openapi` | Swagger/OpenAPI documentation mode |
 | `-d`, `--docs` | Documentation site mode |
 | `-a`, `--include-assets` / `--no-include-assets` | Include CSS/JS/font files (default: on, images always included) |
@@ -99,7 +99,7 @@ python main.py <url> [options]
 | `--max-pages N` | Stop after N pages fetched (default: 0 = no limit); `run_summary.json` records `stopped_by_limit`. Each page counts once however many times a failing request is retried, and robots.txt, reconnaissance and asset requests are not counted |
 | `--urls-file FILE` | Start URLs, one per line (`#` comments, http or https, one site and one scheme), all at depth 0 in one run; the positional URL is optional |
 | `--only-recipes` | Write only pages with schema.org Recipe data; other pages are fetched to find links but not written |
-| `--site-name NAME` | Output folder name for the site (instead of the host and `-s` path), so several runs share one folder |
+| `--site-name NAME` | Output folder name for the site (instead of the host and `-s` path), so several runs share one folder. Works with the default crawl, `-j` and `-1` |
 | `--follow-next` | Follow pagination (`rel="next"` and `/page/N` links) of in-scope listings without counting it as depth. Only `--max-pages` bounds it (pagination does not count as depth): without it, it continues as long as the site offers another page |
 | `--index-pages` / `--no-index-pages` | Write the generated `_index.md` section listing pages (default: on) |
 | `--feed` | Read the URL as an RSS or Atom feed: one Markdown file per entry from one request. Automatic for URLs such as `/feed` or `/rss.xml`. `--max-articles` caps the entries (default 50) |
@@ -272,7 +272,7 @@ The frontmatter is written with `yaml.safe_dump`, so `yaml.safe_load` gives back
 
 ### Run summary (`run_summary.json`)
 
-The default crawl, `-j` and feed mode write `run_summary.json` into the site's `ScrapedSites/<site>/` folder and print its path at the end. `-1`, `--swagger`, `-d`, `--audit` and `--instagram` do not write one. Paths in it are relative to the output directory (`--output-dir`, or the current directory).
+The default crawl, `-j`, `-1` and feed mode write `run_summary.json` into the site's `ScrapedSites/<site>/` folder and print its path at the end. `--swagger`, `-d`, `--audit` and `--instagram` do not write one. Paths in it are relative to the output directory (`--output-dir`, or the current directory).
 
 The file is replaced as soon as a crawl starts with a placeholder whose `status` is `running`, so a summary left by an earlier run is never mistaken for the current one. If the process dies without finishing, the file still says `running`. Each write goes to a temporary file that is then renamed, so a reader never sees half a file. On Ctrl+C or SIGTERM (from cron, systemd or `kill`) the crawl stops, saves the incremental cache so the next run carries on from there, and writes the summary with `status` set to `interrupted`, `interrupted_by` set to `SIGINT` or `SIGTERM`, and exit code 130 or 143. Requests still in flight are abandoned rather than waited for, so the process exits within a moment even when the site has stopped answering. If a second Ctrl+C arrives while it is still saving, it stops at once and the summary may be left at `running`.
 
@@ -369,7 +369,11 @@ This ensures the scraper understands the site's organizational structure before 
 
 ### Single Page (`-1`)
 
-For single-page applications. Launches a stealth browser, waits for JavaScript to render, scrolls the entire page to trigger lazy loading, then saves the fully rendered HTML.
+For single-page applications and for one page at a time. Launches a stealth browser, waits `--wait` seconds for JavaScript to render, scrolls the entire page to trigger lazy loading, then saves the rendered page exactly as a crawl saves a page: the HTML copy and assets, the Markdown file, the incremental cache and `run_summary.json`. No links are followed.
+
+The page is recorded under the address the browser ended on: after a redirect to another page on the same host, that address is the frontmatter `url` and names the file (a redirect to another host keeps the requested address). The query string stays in `url`, and the file is named from the path, so `/search?q=apples` is `search.md` and a second query on the same path gets the hash-suffixed name described in [docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md). Each page keeps its own file, so several `-1` runs on one host fill one site folder, and running the same page again updates its file or reports it unchanged. `canonical_url` is whatever the page declares.
+
+A `MarkdownSites/<site>/index/_index.md` whose `url` is the site's root but whose text is another page, next to a `ScrapedSites/<site>/index.html`, is `-1` output from an earlier release. ScrapePy leaves those files alone and never writes another page into them, but the Markdown file claims the root address, so delete both by hand.
 
 ### JS Render (`-j`)
 

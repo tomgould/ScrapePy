@@ -194,13 +194,19 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
             if on:
                 parser.error(f"--feed cannot be combined with {flag}")
     start_urls: list[str] = []
-    if args.include or args.exclude or args.max_depth is not None or args.max_pages \
-            or args.urls_file or args.only_recipes or args.site_name or args.follow_next:
-        for flag, on in (("-1/--single-page", args.single_page), ("--swagger", args.swagger),
+    targeted = (args.include or args.exclude or args.max_depth is not None or args.max_pages
+                or args.urls_file or args.only_recipes or args.follow_next)
+    if targeted or args.site_name:
+        # --site-name names the output folder, which -1 shares with the crawl
+        for flag, on in (("-1/--single-page", args.single_page and targeted),
+                         ("--swagger", args.swagger),
                          ("-d/--docs", args.docs), ("--instagram", args.instagram),
                          ("--audit", args.audit), ("--feed", args.feed)):
             if on:
-                parser.error(f"targeted-crawl options work with the default crawl and -j, not {flag}")
+                if targeted:
+                    parser.error(f"targeted-crawl options work with the default crawl and -j, "
+                                 f"not {flag}")
+                parser.error(f"--site-name works with the default crawl, -j and -1, not {flag}")
     from .processing.targeting import check_pattern
     for pattern in args.include + args.exclude:
         problem = check_pattern(pattern)

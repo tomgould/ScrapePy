@@ -8,6 +8,7 @@ import re
 import posixpath
 from collections import deque
 from datetime import datetime
+from typing import Callable
 from urllib.parse import urljoin, urlparse
 
 from .. import interrupts
@@ -76,15 +77,25 @@ from ..output.run_summary import RunStats, build_summary, write_summary
 DISCOVERY_MIN_INTERVAL = 1.0
 
 
-async def run_crawl_mode(config: ScrapeConfig) -> dict:
-    """Run the crawl and return the run summary dict (also written to disk)."""
+async def run_crawl_mode(
+    config: ScrapeConfig,
+    robots: RobotsPolicy | None = None,
+    page_action: Callable | None = None,
+) -> dict:
+    """Run the crawl and return the run summary dict (also written to disk).
+
+    Single page mode (-1) runs through here too, with robots.txt already
+    read (robots) and its render-and-scroll browser action (page_action):
+    only config.url is fetched, query included, and the page is recorded
+    under the address the browser ended on when that is on the same site.
+    """
     stats = RunStats()
     # Targeted crawling (--include, --exclude, --max-depth, --urls-file,
     # --follow-next); None when none is given, so nothing below changes
     targeting = None
     if targeting_active(config):
         targeting = Targeting(config, lambda link, path: _normalize_link_to_path(link, path, config))
-    seed_only = start_paths_seed_only(config)
+    seed_only = start_paths_seed_only(config) or config.single_page
     query_starts: set[str] = set()      # start URLs with a query: fetched for links only
     not_recipe: list[str] = []          # --only-recipes: pages fetched but not written
     stopped_by_limit = False
@@ -169,19 +180,21 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
     feed_urls: list[str] = []
 
     # 1. Fetch robots.txt: access rules, Crawl-delay and extra sitemaps
-    print("Running site reconnaissance...")
-    # Fetched in a worker thread so Ctrl+C is not held up by a slow server
-    try:
-        robots, robots_content = await run_blocking(load_robots_policy, config)
-    except asyncio.CancelledError:
-        _note_interrupt(stats)
-        robots, robots_content = RobotsPolicy.blocked("interrupted before robots.txt was read",
-                                                      base_url=config.base_url), None
-    if robots_content:
-        robots_sitemaps = parse_robots_sitemaps(robots_content)
-        if config.verbose and robots_sitemaps:
-            print(f"  Found {len(robots_sitemaps)} sitemaps in robots.txt")
-    _print_robots_status(robots, config)
+    # (single page mode has read it already)
+    if robots is None:
+        print("Running site reconnaissance...")
+        # Fetched in a worker thread so Ctrl+C is not held up by a slow server
+        try:
+            robots, robots_content = await run_blocking(load_robots_policy, config)
+        except asyncio.CancelledError:
+            _note_interrupt(stats)
+            robots, robots_content = RobotsPolicy.blocked(
+                "interrupted before robots.txt was read", base_url=config.base_url), None
+        if robots_content:
+            robots_sitemaps = parse_robots_sitemaps(robots_content)
+            if config.verbose and robots_sitemaps:
+                print(f"  Found {len(robots_sitemaps)} sitemaps in robots.txt")
+        _print_robots_status(robots, config)
     page_delay = robots.min_delay(config.wait_time)
     discovery_delay = robots.min_delay(min(config.wait_time, DISCOVERY_MIN_INTERVAL))
     # One limiter for the whole run, so the gap after the last discovery
@@ -249,7 +262,9 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
     hash_based_site = bool(config.starting_hash) or "#" in config.url
 
     # Seed the queue from outline or fallback
-    if seed_only:
+    if config.single_page:
+        to_visit.append(config.url)     # the page itself, query and fragment kept
+    elif seed_only:
         # Only the start URLs, all at depth 0. A start URL with a query
         # (a site search) is fetched as given, for its links only.
         for start in (config.start_urls or [config.url]):
@@ -428,6 +443,10 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                 to_visit.clear()
                 break
 
+        # Single page mode fetches its one page and nothing else
+        if config.single_page and visited:
+            break
+
         # --- Pick next URL: section batches have priority ---
         from_section_batch = False
 
@@ -458,6 +477,13 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
         )
 
         visit_key = f"{url_path}{hash_fragment}" if hash_fragment else url_path
+        # The incremental cache key: the path, or for a single page its whole address
+        cache_key = url_path
+        if config.single_page:
+            full_url, url_path, hash_fragment, cache_key = (
+                _single_page_target(config.url, config)
+                or (full_url, url_path, hash_fragment, cache_key))
+            visit_key = full_url
         discovery_only = url_or_path in query_starts
         if discovery_only:
             full_url, visit_key = url_or_path, url_or_path
@@ -552,7 +578,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                     html, status, page_info = "", 0, {"error": redact(f"{type(e).__name__}: {e}", config.proxy)}
             elif config.needs_browser:
                 await limiter.wait(full_url)
-                html, status, page_info = await _fetch_with_browser(full_url, config)
+                html, status, page_info = await _fetch_with_browser(full_url, config, page_action)
             else:
                 # Build conditional headers for incremental mode
                 cond_headers = None
@@ -586,10 +612,23 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                         )
                     continue
 
+            if config.single_page and page_info.get("final_url"):
+                # A redirect: the page is recorded under the address it ended on
+                final = _single_page_target(page_info["final_url"], config)
+                if final is None:
+                    print(f"  Redirected to another site ({redact(page_info['final_url'], config.proxy)}); "
+                          "recorded under the requested address")
+                elif final[0] != full_url:
+                    full_url, url_path, hash_fragment, cache_key = final
+                    print(f"  Redirected to: {full_url}")
+
             # Check for fetch failure (status 0 = local error, not a server response)
             if status == 0:
                 error_msg = page_info.get("error", "Unknown error")
                 print(f"  Fetch failed ({error_msg}): {full_url}")
+                if config.single_page:
+                    print("  Check that the URL is correct and the browser is installed "
+                          "(scrapling install).")
                 broken_links.add(full_url)
                 stats.record_failed(full_url, error_msg)
                 continue
@@ -648,7 +687,7 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                 continue
 
             # Content-hash check: skip if content hasn't changed
-            if cache and cache.is_page_unchanged(url_path, html):
+            if cache and cache.is_page_unchanged(cache_key, html):
                 print(f"  Unchanged (same content): {full_url}")
                 unchanged_count += 1
                 _meet_unchanged(full_url, names, stats, meet)
@@ -942,9 +981,9 @@ async def run_crawl_mode(config: ScrapeConfig) -> dict:
                     })
 
             entry = {
-                "url": full_url, "url_path": url_path, "filepath": filepath,
+                "url": full_url, "url_path": cache_key, "filepath": filepath,
                 "mirror_html": mirror_html, "prepared": prepared,
-                "cached": cache is not None and cache.has_page(url_path),
+                "cached": cache is not None and cache.has_page(cache_key),
                 "error": md_converter.last_error if md_converter else None,
                 "hash": prepared.content_hash if prepared else None,
                 "headers": page_info.get("headers", {}), "html": html, "links": links,
@@ -1324,18 +1363,51 @@ async def _fetch_with_http_async(
         return await run_blocking(_fetch_with_http, url, config, headers)
 
 
-async def _fetch_with_browser(url: str, config: ScrapeConfig) -> tuple[str, int, dict]:
-    """Fetch via browser, return (html, status_code, info_dict).
+async def _fetch_with_browser(
+    url: str, config: ScrapeConfig, page_action: Callable | None = None,
+) -> tuple[str, int, dict]:
+    """Fetch via browser, return (html, status_code, info_dict). The dict
+    holds "final_url", the address the browser ended on.
 
-    On fetch failure, returns status 0 with error info in the dict.
+    With page_action (single page mode) the browser waits the full
+    --wait time; otherwise one second. On fetch failure, returns status 0
+    with error info in the dict.
     """
     try:
-        response = await fetch_page_browser(url, config, wait_time=1.0)
+        response = await fetch_page_browser(
+            url, config, page_action=page_action,
+            wait_time=None if page_action else 1.0,
+        )
         status = response.status
         html = response.body.decode(response.encoding or "utf-8")
-        return html, status, {}
+        return html, status, {"final_url": getattr(response, "url", "") or ""}
     except Exception as e:
         return "", 0, {"error": redact(f"{type(e).__name__}: {e}", config.proxy)}
+
+
+def _single_page_target(url: str, config: ScrapeConfig) -> tuple[str, str, str, str] | None:
+    """(full_url, url_path, hash_fragment, cache_key) for a single page
+    address, or None for an address on another host or not http(s). The
+    full URL keeps the query and fragment, so it names the page in the
+    frontmatter and in the file assignments; the path names the file, and
+    the cache key is the path plus any query and fragment."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return None
+    host = parsed.hostname or ""
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    if host.lower() != config.domain.lower():
+        return None
+    path = posixpath.normpath(parsed.path or "/")
+    path = path if path.startswith("/") else "/" + path
+    full_url = f"{parsed.scheme}://{config.domain}{path}"
+    cache_key = path
+    if parsed.query:
+        full_url += f"?{parsed.query}"
+        cache_key += f"?{parsed.query}"
+    fragment = f"#{parsed.fragment}" if parsed.fragment else ""
+    return full_url + fragment, path, fragment, cache_key + fragment
 
 
 def _check_rendered_error_page(html: str) -> bool:

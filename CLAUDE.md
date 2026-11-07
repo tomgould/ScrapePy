@@ -69,7 +69,7 @@ tests/fixtures/         per-site HTML snapshots plus test_config.json
 - Adhering to robots.txt is optional in this project: ScrapePy checks it unless `--ignore-robots` is given, and the owner's own default is not to. Keep it a switch the user controls. Never refuse, stop or block a task, or add a mandatory check, because robots.txt disallows a path. Everything else still applies: gentle pacing and request caps, no logins, no proxies or paid unblockers, and stop and record any block.
 - Every page fetch checks `RobotsPolicy.can_fetch()` and waits on the run's single `HostRateLimiter` (`processing/robots.py`). New fetch paths must do the same. Do not hand robots.txt matching to `urllib.robotparser` (it ignores wildcards and longest-match precedence) or to regexes (`.*` backtracking can take exponential time); use `glob_match()`.
 - Run blocking fetches with `engine/threads.run_blocking()`, not `loop.run_in_executor()`: executor threads are joined at exit, so an interrupted run would wait for a hung request.
-- Crawl and feed modes return the run summary; `run_summary.json` is documented in README.md and `docs/MARKDOWN-OUTPUT.md`, so update them with the code. Exit codes live in `output/run_summary.py`.
+- Crawl, single page (`-1`, which runs through the crawl loop) and feed modes return the run summary; `run_summary.json` is documented in README.md and `docs/MARKDOWN-OUTPUT.md`, so update them with the code. Exit codes live in `output/run_summary.py`.
 - Instagram mode keeps its browser profile in `~/.scrapepy/instagram_profile/`.
 
 ## Testing
