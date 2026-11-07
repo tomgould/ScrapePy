@@ -628,7 +628,7 @@ Scrolls the full profile grid (may take a while for accounts with thousands of p
 python main.py https://example.com --proxy http://user:pass@proxy:8080
 ```
 
-Routes browser-mode requests (`StealthyFetcher.async_fetch()`) and asset downloads (`httpx.AsyncClient`) through the proxy. HTTP page requests (`Fetcher.get()`: the default crawl, reconnaissance, robots.txt and feed mode) do not use it.
+Routes every request through the proxy: page fetches (`Fetcher.get()`), reconnaissance, robots.txt, feeds, browser modes (`StealthyFetcher.async_fetch()`) and asset downloads (`httpx.AsyncClient`). The password is never printed or written.
 
 ### Headless browser
 

@@ -12,6 +12,7 @@ cli.py            argparse -> ScrapeConfig, validation, exit code
 interrupts.py     run_async(): asyncio.run() with SIGTERM handled like Ctrl+C
    |
 scraper.py        picks the mode
+proxy.py          --proxy validation and credential masking
    |
    +-- modes/crawl.py        default crawl and -j (the main path)
    +-- modes/feed.py         an RSS or Atom feed URL, or --feed
@@ -90,7 +91,7 @@ Runs the reconnaissance steps, fetches the homepage, up to three section pages a
 | `fetch_page_browser()` | Scrapling `StealthyFetcher.async_fetch()` (Patchright) | `-j`, `-1`, `--swagger`, `-d`, `--instagram` |
 | `create_asset_client()`, `download_asset()` | `httpx.AsyncClient` | asset downloads |
 
-Scrapling's fetchers are classmethods: call them on the class. `--proxy` is passed to the browser and to the `httpx` asset client; `fetch_page_http()` does not pass it, so HTTP page requests do not use the proxy. Blocking fetches run in daemon threads through `engine/threads.run_blocking()`, so an interrupted run never waits for a hung request.
+Scrapling's fetchers are classmethods: call them on the class. `--proxy` is passed to all three; `scrapepy/proxy.py` validates it (http, https and socks schemes) and masks its credentials: error texts that may quote it go through `redact()`, and Scrapling's logger gets a redacting filter. Blocking fetches run in daemon threads through `engine/threads.run_blocking()`, so an interrupted run never waits for a hung request.
 
 ## Incremental cache (`output/cache.py`)
 
@@ -98,4 +99,4 @@ Scrapling's fetchers are classmethods: call them on the class. `--proxy` is pass
 
 ## Tests
 
-`python -m pytest tests/` runs the suite with no internet access and no browser. Most modules have a test file of their own (`test_<module>.py`). `test_crawl_run.py` drives the crawl loop against in-memory pages, the `*_localhost.py`, recipe and feed tests crawl a server bound to 127.0.0.1, and `test_audit_fixtures.py` checks navigation, classification, dates and robots.txt against the committed fixtures in `tests/fixtures/`.
+`python -m pytest tests/` runs the suite with no internet access, and starts a browser only for the opt-in `-j` proxy test (`SCRAPEPY_BROWSER_TESTS=1`). Most modules have a test file of their own (`test_<module>.py`). `test_crawl_run.py` drives the crawl loop against in-memory pages, the `*_localhost.py`, recipe and feed tests crawl a server bound to 127.0.0.1, and `test_audit_fixtures.py` checks navigation, classification, dates and robots.txt against the committed fixtures in `tests/fixtures/`.
