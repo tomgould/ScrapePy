@@ -8,7 +8,7 @@ All notable changes to ScrapePy are listed here. The format follows [Keep a Chan
 
 - `--markdown-only`: Markdown and run state only, with no HTML mirror and no image or asset downloads. Links and images stay absolute URLs, and every request is a page or reconnaissance request checked against robots.txt and paced.
 - `docs/MARKDOWN-OUTPUT.md`, the output contract for tools that read the Markdown.
-- `fetched_url` in frontmatter when `url` comes from the page's canonical link, and `duplicates` in `run_summary.json`.
+- `canonical_url` in frontmatter when the page declares a different same-site canonical (`url` stays the fetched address), and `duplicates` in `run_summary.json`.
 
 ### Changed
 

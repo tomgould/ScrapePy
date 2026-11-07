@@ -38,11 +38,25 @@ def canonical_url(soup: BeautifulSoup, page_url: str) -> str | None:
     return None
 
 
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
 def same_site(a: str, b: str) -> bool:
-    """Same host, ignoring a leading www. and the scheme."""
-    def host(u):
-        return (urlparse(u).hostname or "").lower().removeprefix("www.")
-    return bool(host(a)) and host(a) == host(b)
+    """Same scheme, host and port (a default port matches no port).
+
+    A leading www. on the host is ignored.
+    """
+    def origin(u):
+        parsed = urlparse(u)
+        scheme = parsed.scheme.lower()
+        host = (parsed.hostname or "").lower().removeprefix("www.")
+        try:
+            port = parsed.port or _DEFAULT_PORTS.get(scheme)
+        except ValueError:
+            return None
+        return (scheme, host, port) if host else None
+    oa = origin(a)
+    return oa is not None and oa == origin(b)
 
 
 def absolutize_links(soup: BeautifulSoup, page_url: str) -> None:

@@ -54,6 +54,15 @@ def frontmatter(path):
     return yaml.safe_load(text.split("\n---\n", 1)[0].removeprefix("---\n")), text
 
 
+def all_frontmatter(config):
+    """Frontmatter of every Markdown file the run wrote."""
+    out = []
+    for d, _, files in os.walk(config.markdown_dir):
+        for f in files:
+            out.append(frontmatter(os.path.join(d, f))[0])
+    return out
+
+
 class TestOutputLayout:
     def test_only_markdown_and_state_files(self, site, tmp_path, no_assets):
         site(SITE, "User-agent: *\nDisallow: /private/\n")
@@ -134,14 +143,60 @@ class TestDuplicatesAndCanonical:
         ]
         assert BASE + "/a-copy" not in summary["new_markdown"]
 
-    def test_canonical_sets_url_and_keeps_fetched_url(self, site, tmp_path, no_assets):
+    def test_canonical_is_recorded_but_url_stays_fetched(self, site, tmp_path, no_assets):
         canon = '<link rel="canonical" href="/about-us">'
         site({"/": page("Home", ["/about"]),
               "/about": rich_page("About").replace("<head>", "<head>" + canon)}, None)
         config, _ = run_md_only(tmp_path)
         data, _ = frontmatter(os.path.join(config.markdown_dir, "about.md"))
-        assert data["url"] == BASE + "/about-us"
-        assert data["fetched_url"] == BASE + "/about"
+        assert data["url"] == BASE + "/about"
+        assert data["canonical_url"] == BASE + "/about-us"
+        assert "fetched_url" not in data
+
+    def test_canonical_pointing_at_another_page_keeps_own_url(self, site, tmp_path, no_assets):
+        canon = '<link rel="canonical" href="/">'
+        site({"/": rich_page("Home", ["/about"]),
+              "/about": rich_page("About").replace("<head>", "<head>" + canon)}, None)
+        config, _ = run_md_only(tmp_path)
+        home, _ = frontmatter(os.path.join(config.markdown_dir, "_index.md"))
+        about, _ = frontmatter(os.path.join(config.markdown_dir, "about.md"))
+        assert home["url"] == BASE + "/"
+        assert about["url"] == BASE + "/about"
+        assert about["canonical_url"] == BASE + "/"
+
+    def test_pages_sharing_a_canonical_keep_distinct_urls(self, site, tmp_path, no_assets):
+        canon = '<link rel="canonical" href="https://example.com/guide">'
+        site({"/": page("Home", ["/guide-a", "/guide-b"]),
+              "/guide-a": rich_page("Guide A").replace("<head>", "<head>" + canon),
+              "/guide-b": rich_page("Guide B").replace("<head>", "<head>" + canon)}, None)
+        config, _ = run_md_only(tmp_path)
+        pages = {d["title"]: d for d in all_frontmatter(config)}
+        assert pages["Guide A"]["url"] == BASE + "/guide-a"
+        assert pages["Guide B"]["url"] == BASE + "/guide-b"
+        assert pages["Guide A"]["canonical_url"] == BASE + "/guide"
+        assert pages["Guide B"]["canonical_url"] == BASE + "/guide"
+
+    def test_pagination_pages_keep_their_own_urls(self, site, tmp_path, no_assets):
+        canon = '<link rel="canonical" href="/news/page/1">'
+        site({"/": page("Home", ["/news/page/1", "/news/page/2", "/news/page/3"]),
+              "/news/page/1": rich_page("News 1").replace("<head>", "<head>" + canon),
+              "/news/page/2": rich_page("News 2").replace("<head>", "<head>" + canon),
+              "/news/page/3": rich_page("News 3").replace("<head>", "<head>" + canon)}, None)
+        config, _ = run_md_only(tmp_path)
+        urls = [d["url"] for d in all_frontmatter(config)]
+        assert len(urls) == len(set(urls))
+        assert {BASE + "/news/page/1", BASE + "/news/page/2", BASE + "/news/page/3"} <= set(urls)
+
+    def test_canonical_on_another_scheme_is_ignored(self, site, tmp_path, no_assets):
+        # The crawl is over https; an http canonical is a different site
+        canon = '<link rel="canonical" href="http://example.com/about-us">'
+        site({"/": page("Home", ["/about"]),
+              "/about": rich_page("About").replace("<head>", "<head>" + canon)}, None)
+        config, _ = run_md_only(tmp_path)
+        data, _ = frontmatter(os.path.join(config.markdown_dir, "about.md"))
+        assert BASE.startswith("https://")
+        assert data["url"] == BASE + "/about"
+        assert "canonical_url" not in data
 
     def test_cross_site_canonical_is_ignored(self, site, tmp_path, no_assets):
         canon = '<link rel="canonical" href="https://other.example.org/x">'
@@ -150,7 +205,7 @@ class TestDuplicatesAndCanonical:
         config, _ = run_md_only(tmp_path)
         data, _ = frontmatter(os.path.join(config.markdown_dir, "about.md"))
         assert data["url"] == BASE + "/about"
-        assert "fetched_url" not in data
+        assert "canonical_url" not in data
 
 
 class TestCli:

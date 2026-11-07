@@ -145,8 +145,15 @@ class TestLinks:
                              "https://example.com/") is None
 
     def test_same_site(self):
-        assert same_site("https://www.example.com/a", "http://example.com/b")
+        assert same_site("https://www.example.com/a", "https://example.com/b")
+        assert same_site("https://example.com:443/a", "https://example.com/b")
         assert not same_site("https://other.com/a", "https://example.com/b")
+
+    def test_same_site_compares_scheme_and_port(self):
+        assert not same_site("https://example.com/a", "http://example.com/a")
+        assert not same_site("http://example.com:8080/a", "http://example.com/a")
+        assert not same_site("http://example.com:8080/a", "http://example.com:9090/a")
+        assert same_site("http://example.com:8080/a", "http://example.com:8080/b")
 
 
 class TestTitles:

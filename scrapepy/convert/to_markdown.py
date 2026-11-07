@@ -88,7 +88,7 @@ _JUNK_CLASS_KEYWORDS = (
 
 # Frontmatter keys in output order. Every Markdown file uses this set.
 FRONTMATTER_FIELDS = (
-    "title", "url", "fetched_url", "date", "date_source", "page_type",
+    "title", "url", "canonical_url", "date", "date_source", "page_type",
     "word_count", "description", "domain",
     "articles", "sub_sections",
     "scraped_at", "content_hash",
@@ -166,7 +166,11 @@ class HTMLToMarkdown:
 
     def _prepare_html(self, html: str, metadata: dict) -> str:
         """Unwrap block links, read the canonical URL, and in markdown-only
-        mode make links absolute. Updates metadata["url"] from the canonical."""
+        mode make links absolute.
+
+        metadata["url"] stays the address the page was fetched from, so two
+        pages never share a document ID. A same-site canonical that differs
+        from it is recorded in metadata["canonical_url"]."""
         soup = BeautifulSoup(html, "lxml")
         fix_block_links(soup)
         expand_truncated_link_text(soup)
@@ -174,8 +178,7 @@ class HTMLToMarkdown:
         if page_url:
             canonical = canonical_url(soup, page_url)
             if canonical and canonical != page_url and same_site(canonical, page_url):
-                metadata["fetched_url"] = page_url
-                metadata["url"] = canonical
+                metadata["canonical_url"] = canonical
             if self.absolute_links:
                 absolutize_links(soup, page_url)
         return str(soup)

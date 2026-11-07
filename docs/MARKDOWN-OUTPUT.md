@@ -44,8 +44,8 @@ Every file starts with YAML frontmatter between `---` lines, then a blank line, 
 | Key | Type | Present | Meaning |
 |-----|------|---------|---------|
 | `title` | string | almost always | The page title: the first heading, else the H1, else `<title>`, with whitespace collapsed |
-| `url` | string | always | Absolute URL to cite. The page's `<link rel="canonical">` when it points to the same host, else the URL fetched |
-| `fetched_url` | string | when `url` came from the canonical link | The URL that was actually fetched |
+| `url` | string | always | The absolute URL the page was fetched from. Unique per file, so use it as the document ID and the citation link |
+| `canonical_url` | string | when the page declares a different canonical on the same site | The page's `<link rel="canonical">`, made absolute. Written only when it differs from `url` and has the same scheme, host (ignoring `www.`) and port |
 | `date` | string | when a publication date was found | ISO 8601, for example `2026-02-20` or `2026-02-20T10:30:00+00:00` |
 | `date_source` | string | with `date` | Where the date came from, most to least reliable: `META_TAG`, `JSON_LD`, `URL_PATTERN`, `TIME_ELEMENT`, `HTTP_HEADER` (the server's Last-Modified) |
 | `page_type` | string | always | `article`, `section` or `unknown` |
@@ -58,6 +58,8 @@ Every file starts with YAML frontmatter between `---` lines, then a blank line, 
 | `content_hash` | string | always | `sha256:` plus the hex sha256 of the body (everything after the blank line that follows the closing `---`) |
 
 `content_hash` changes only when the body does, so an indexer can skip files whose hash it has already stored. `scraped_at` changes on every write.
+
+`canonical_url` is a hint, not an identity. Pages often point their canonical at another page (every page of a paginated list at page 1, print or filtered views at the main view, near copies at one of them), so keying documents on it would let one page replace another in an index. Use it to group or rank such pages, or to prefer the canonical address when showing a link, but keep `url` as the key.
 
 ## Body
 
@@ -109,7 +111,7 @@ Written to `ScrapedSites/<site>/run_summary.json` at the start of a crawl (with 
 1. Crawl with `--markdown-only --no-index-pages -o OUT`, adding `--user-agent` to identify yourself.
 2. Read `OUT/ScrapedSites/<site>/run_summary.json`. Go on only if `status` is `complete` and `exit_code` is 0.
 3. On the first run, index every `*.md` under `OUT/<markdown_dir>`. On later runs, index the files in `new_markdown` and `changed_markdown`; files for `unchanged_urls` are untouched.
-4. For each file, split off the frontmatter, load it with `yaml.safe_load`, and index the body. Use `url` as the document ID and the citation link, `title` as the title, and `content_hash` to skip a document you already hold.
+4. For each file, split off the frontmatter, load it with `yaml.safe_load`, and index the body. Use `url` as the document ID and the citation link (never `canonical_url`, which several pages can share), `title` as the title, and `content_hash` to skip a document you already hold.
 5. Pages that disappear from the site are not deleted from `MarkdownSites`. Remove documents from your index yourself when their `url` stops appearing in crawls.
 
 ```python
