@@ -56,7 +56,7 @@ Requires Python 3.11 or later; the tests run on 3.11, 3.12 and 3.13. `pip instal
 ## Testing
 
 ```bash
-# Run all tests (no internet access needed, under a minute)
+# Run all tests (no internet access needed, a minute or two)
 python -m pytest tests/ -v
 
 # Run a specific test file
