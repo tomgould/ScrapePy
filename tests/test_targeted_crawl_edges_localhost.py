@@ -59,6 +59,12 @@ SITE = {
     "/d/aaa-first-article-here": page("A", ["/d/xxx-shared-article-here"]),
     "/d/page/2": page("D2", ["/d/xxx-shared-article-here"]),
     "/d/xxx-shared-article-here": page("X"),
+    # Exact skipped counts: P is skipped two steps away, then reached one step away
+    "/e": page("E", ["/e/aaa-article-one-here", "/e/page/2/"]),
+    "/e/aaa-article-one-here": page("A", ["/e/ppp-target-article-here"]),
+    "/e/page/2": page("E2", ["/e/page/3/"]),
+    "/e/page/3": page("E3", ["/e/ppp-target-article-here"]),
+    "/e/ppp-target-article-here": page("P"),
     # Date filter, for the prefetch test
     "/news": page("News", [f"/news/story-number-{i}-about-baking" for i in range(5)]),
     **{f"/news/story-number-{i}-about-baking": dated(f"Story {i}") for i in range(5)},
@@ -152,13 +158,24 @@ def test_pagination_outside_stay_in_path_is_not_followed(site, tmp_path):
 
 # 3. Patterns
 
-@pytest.mark.parametrize("pattern", ["(a+)+$", r"(\w*)*x", "(ab*)+"])
-def test_nested_quantifiers_are_refused(pattern, capsys):
-    assert check_pattern(pattern)
+@pytest.mark.parametrize("pattern,path,expected", [
+    (r"^/category/([a-z-]+/)*$", "/category/baby/finger-food/", True),
+    (r"^/recipes(/[^/]+)+$", "/recipes/baby/oat-bites", True),
+    (r"^/recipes(/[^/]+)+$", "/recipes", False),
+    (r"^/(\d+-)+recipe$", "/12-34-recipe", True),
+])
+def test_ordinary_patterns_with_repeated_groups_are_accepted(pattern, path, expected):
+    assert check_pattern(pattern) is None
+    config = parse_args(["https://site.test/", "--include", pattern])
+    t = Targeting(config, lambda link, p: link)
+    assert (t.allow(path) is None) is expected
+
+
+def test_invalid_pattern_is_refused(capsys):
     with pytest.raises(SystemExit) as exc:
-        parse_args(["https://site.test/", "--exclude", pattern])
+        parse_args(["https://site.test/", "--include", "("])
     assert exc.value.code == 2
-    assert "exponential" in capsys.readouterr().err
+    assert "invalid regular expression" in capsys.readouterr().err
 
 
 def test_patterns_see_at_most_the_first_2048_characters():
@@ -170,9 +187,9 @@ def test_patterns_see_at_most_the_first_2048_characters():
 
 # 4. Unbounded pagination notice
 
-def test_follow_next_without_limits_prints_a_notice(site, tmp_path, capsys):
-    crawl(site, tmp_path, "/list", follow_next=True, include=["^/nomatch"])
-    assert "--follow-next without --max-pages or --max-depth" in capsys.readouterr().out
+def test_follow_next_notice_unless_max_pages(site, tmp_path, capsys):
+    crawl(site, tmp_path, "/list", follow_next=True, include=["^/nomatch"], max_depth=2)
+    assert "--follow-next without --max-pages" in capsys.readouterr().out
     crawl(site, tmp_path / "b", "/list", follow_next=True, include=["^/nomatch"], max_pages=5)
     assert "--follow-next without" not in capsys.readouterr().out
 
@@ -255,3 +272,61 @@ def test_site_name_keeps_the_starting_path_in_file_names(site, tmp_path):
     md = Path(config.markdown_dir)
     assert (md / "docs" / "how-to-bake-sourdough-bread.md").is_file()
     assert not (md / "how-to-bake-sourdough-bread.md").exists()
+
+
+def test_cache_without_next_paths_is_refetched_once(site, tmp_path):
+    kw = dict(follow_next=True, include=["^/nomatch"])
+    config, _, _, first = crawl(site, tmp_path, "/list", **kw)
+    cache_path = Path(config.output_dir) / ".scrapepy_cache.json"
+    data = json.loads(cache_path.read_text())
+    for entry in data["pages"].values():
+        entry.pop("next", None)          # as a cache from before rel="next" was recorded
+    cache_path.write_text(json.dumps(data))
+    _, _, summary, second = crawl(site, tmp_path, "/list", **kw)
+    assert sorted(second) == sorted(first)
+    rewritten = json.loads(cache_path.read_text())["pages"]
+    assert rewritten["/list"]["next"] == ["/list-two"]
+    assert all("next" in e for e in rewritten.values())
+    _, _, summary, third = crawl(site, tmp_path, "/list", **kw)
+    assert sorted(third) == sorted(first)
+    assert summary["counts"]["unchanged"] == len(first)
+
+
+def test_max_pages_four_with_four_connections_is_exact(site, tmp_path):
+    _, _, summary, pages = crawl(site, tmp_path, "/news", recent="4w", max_pages=4,
+                                 concurrent=4)
+    assert summary["counts"]["fetched"] == 4
+    assert len(pages) == 4, pages
+
+
+def test_skipped_count_leaves_out_paths_fetched_later(site, tmp_path):
+    _, _, summary, pages = crawl(site, tmp_path, "/e", max_depth=1, follow_next=True,
+                                 include=["^/e/"])
+    assert "/e/ppp-target-article-here" in pages
+    assert summary["targeting"]["skipped_by_depth"] == 0
+
+
+def test_site_name_on_another_host_warns(site, tmp_path, capsys):
+    crawl(site, tmp_path, "/docs/", max_depth=0, site_name="shared")
+    capsys.readouterr()
+    other = site.replace("127.0.0.1", "localhost")
+    crawl(other, tmp_path, "/docs/", max_depth=0, site_name="shared")
+    assert "--site-name shared last held a crawl of another host" in capsys.readouterr().out
+    crawl(other, tmp_path, "/docs/", max_depth=0, site_name="shared")
+    assert "another host" not in capsys.readouterr().out
+
+
+def test_feed_url_with_targeting_options_prints_a_notice(site, tmp_path, capsys):
+    config = ScrapeConfig(url=site + "/feed.xml", output_root=str(tmp_path), wait=0,
+                          max_pages=3)
+    asyncio.run(run_scraper(config))
+    assert "the targeted-crawl options" in capsys.readouterr().out
+
+
+def test_urls_file_malformed_line_is_named(tmp_path, capsys):
+    urls = tmp_path / "urls.txt"
+    urls.write_text("https://site.test/a\nhttp://[::1\n")
+    with pytest.raises(SystemExit) as exc:
+        parse_args(["--urls-file", str(urls)])
+    assert exc.value.code == 2
+    assert "line 2" in capsys.readouterr().err
