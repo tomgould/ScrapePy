@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Python 3.11 or higher
+- Python 3.11 or later (the tests run on 3.11, 3.12 and 3.13)
 - pip
 
 ## Quick Start
@@ -29,17 +29,17 @@ python -m pytest tests/ -v
 pip install -r requirements.txt
 ```
 
-This installs 7 packages:
+This installs the 7 packages listed in `requirements.txt` (the same list as `pyproject.toml`):
 
-| Package | Version | Size | Purpose |
-|---------|---------|------|---------|
-| scrapling[fetchers] | >=0.4.0 | ~50MB | Core framework (includes patchright, curl_cffi, browserforge) |
-| beautifulsoup4 | >=4.12.0 | ~500KB | HTML parsing (used with lxml parser) |
-| lxml | >=5.0.0 | ~15MB | Fast XML/HTML parser (sitemap parsing, BeautifulSoup backend) |
-| markdownify | >=0.13.0 | ~50KB | HTML-to-Markdown conversion |
-| pyyaml | >=6.0 | ~600KB | YAML parsing (OpenAPI specs) |
-| trafilatura | >=1.12.0 | ~5MB | Content extraction fallback (optional but recommended) |
-| httpx | >=0.27.0 | ~1MB | Async HTTP client (asset downloads) |
+| Package | Version | Purpose |
+|---------|---------|---------|
+| scrapling[fetchers] | >=0.4.0 | HTTP and stealth-browser fetchers (brings patchright and curl_cffi) |
+| beautifulsoup4 | >=4.12.0 | HTML parsing |
+| lxml | >=5.0.0 | HTML and XML parser behind BeautifulSoup (pages, sitemaps, feeds) |
+| markdownify | >=0.13.0 | HTML-to-Markdown conversion |
+| pyyaml | >=6.0 | YAML frontmatter and OpenAPI YAML specs |
+| trafilatura | >=1.12.0 | Content extraction fallback (the converter still works without it) |
+| httpx | >=0.27.0 | Async HTTP client for asset downloads |
 
 ### Step 2: Browser Installation
 
@@ -49,9 +49,9 @@ Browser modes (`-j`, `-1`, `--swagger`, `-d`, `--instagram`) require a Chromium 
 scrapling install
 ```
 
-This downloads and installs Patchright's Chromium build (~200MB). The browser is stored in a platform-specific location managed by Patchright.
+This downloads Patchright's Chromium build into a platform-specific location managed by Patchright.
 
-If you only need HTTP-only crawling (default mode without any browser flags), you can skip this step. The default crawl mode uses `Fetcher.get()` (curl_cffi) which doesn't need a browser.
+The default crawl, `--markdown-only` and feed mode use `Fetcher.get()` (curl_cffi) and need no browser, so you can skip this step if you only use them.
 
 ### Step 3: Verify Installation
 
@@ -65,7 +65,7 @@ python main.py https://example.com
 # Test browser mode (requires Step 2)
 python main.py https://example.com -1
 
-# Run the tests (pure logic, no network, a few seconds)
+# Run the tests (no internet access needed, a minute or two)
 python -m pytest tests/ -q
 ```
 
@@ -83,7 +83,7 @@ This registers the `scrapepy` command via the `[project.scripts]` entry in `pypr
 scrapepy https://example.com -m
 ```
 
-Package metadata: version 0.2.0, requires-python >=3.11. For development, install the test dependencies too:
+`scrapepy --version` prints the installed version. For development, install the test dependencies too:
 
 ```bash
 pip install -e ".[dev]"
@@ -100,10 +100,11 @@ python main.py https://example.com --proxy http://proxy.corp:8080
 python main.py https://example.com --proxy http://user:pass@proxy.corp:8080
 ```
 
-The proxy is used for all request types:
-- HTTP fetching: `Fetcher.get()` (via `config.proxy`)
-- Browser modes: `StealthyFetcher.async_fetch()` (via `proxy` kwarg)
-- Asset downloads: `httpx.AsyncClient()` (via `proxy` kwarg)
+The proxy is used by:
+- Browser modes: `StealthyFetcher.async_fetch()` (`proxy` argument)
+- Asset downloads: the `httpx.AsyncClient` (`proxy` argument)
+
+HTTP page requests made with `Fetcher.get()` (the default crawl, reconnaissance, robots.txt and feed mode) do not use the proxy.
 
 ## Instagram Login Setup
 
@@ -130,9 +131,9 @@ ScrapePy creates these directories in the current working directory, or under th
 
 | Directory | Mode | Contents |
 |-----------|------|----------|
-| `ScrapedSites/<domain>/` | All web modes | HTML + assets (images/, css/, js/, fonts/, media/), plus `run_summary.json` after a crawl |
-| `ScrapedSites/instagram/<username>/` | `--instagram` | Profile + post data + media |
-| `MarkdownSites/<domain>/` | Default (use `--no-markdown` to skip) | Markdown files + images/ + media/ (copied) |
+| `ScrapedSites/<domain>/` | Default crawl, `-j`, `-1`, `--swagger`, `-d` | HTML and assets (images/, css/, js/, fonts/, media/); `run_summary.json` and the cache after a crawl. With `--markdown-only`, and in feed mode, only the run state |
+| `ScrapedSites/instagram/<username>/` | `--instagram` | Profile, post data and media |
+| `MarkdownSites/<domain>/` | Default (use `--no-markdown` to skip) | Markdown files, plus images/ and media/ copied from `ScrapedSites` (not with `--markdown-only`) |
 | `tests/fixtures/<domain>/` | `--audit` | Test fixtures (HTML snapshots + expected values) |
 
 The `<domain>` directory name is derived from the URL: `www.` prefix stripped, dots replaced with underscores. With `--stay-in-path`, the path is appended (e.g., `docs_example_com_api_v2`).
@@ -147,11 +148,7 @@ pip install "scrapling[fetchers]"
 
 ### Browser not installed
 
-```
-Error: Browser not installed
-```
-
-Run `scrapling install` to download Chromium (~200MB).
+A browser mode that cannot start the browser prints `Error: Failed to load page (...)` with a reminder to run `scrapling install`. Run it to download Chromium.
 
 ### Cloudflare blocking
 
@@ -161,7 +158,7 @@ ScrapePy handles Cloudflare automatically via `solve_cloudflare=True` in `Stealt
 2. Increase wait time: `--wait 10`
 3. Use a proxy: `--proxy http://...`
 
-The crawl mode also detects Cloudflare challenges via `is_cloudflare_challenge()` and sleeps 5 seconds before retrying.
+The crawl also detects a Cloudflare challenge page with `is_cloudflare_challenge()`, pauses 5 seconds and then processes the page as fetched; it does not fetch it again.
 
 ### Timeout errors
 
@@ -171,15 +168,15 @@ Increase the wait time:
 python main.py https://slow-site.com -j --wait 15
 ```
 
-The browser navigation timeout is 120 seconds (2 minutes). The `--wait` flag controls the additional wait after page load.
+The browser navigation timeout is 120 seconds. In `-1`, `--swagger` and `-d`, `--wait` is also the time the browser waits after the page loads; in `-j` that wait is one second and `--wait` is only the gap between requests.
 
 ### Permission errors on output
 
-Make sure the current directory is writable. ScrapePy creates `ScrapedSites/` and `MarkdownSites/` in the working directory.
+Make sure the output folder is writable. ScrapePy creates `ScrapedSites/` and `MarkdownSites/` in the working directory, or under the folder given with `-o`.
 
 ### Missing trafilatura (optional)
 
-trafilatura is used as a fallback content extractor for Markdown conversion (step 6 in the extraction chain). If it fails to install, ScrapePy will still work: it falls back to markdownify for generic HTML-to-Markdown conversion (step 7).
+trafilatura is the fallback content extractor when none of the built-in extractors finds the content. Without it, ScrapePy uses its generic extractor instead.
 
 ### Scrapling deprecation warnings
 
@@ -210,8 +207,8 @@ await StealthyFetcher.async_fetch(url, wait=int(config.wait_time))
 
 ### Instagram: "Sorry, this page isn't available"
 
-The profile may not exist or may have been deleted. The scraper detects this and skips to the next account.
+The profile does not exist or is not accessible. The scraper prints that and moves on to the next account.
 
 ### Instagram: private profile
 
-If the profile is private and you're not logged in, the scraper will detect "This account is private" and prompt you to use `--ig-login`. Cookies persist at `~/.scrapepy/instagram_profile/`.
+If the profile is private and you are not logged in, the scraper detects "This account is private", prints a hint to use `--ig-login` and moves on. Cookies persist at `~/.scrapepy/instagram_profile/`.
