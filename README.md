@@ -93,14 +93,14 @@ python main.py <url> [options]
 | `--ignore-robots` | Do not apply robots.txt rules or `Crawl-delay`. Prints a warning; only use with permission |
 | `-o`, `--output-dir DIR` | Folder under which `ScrapedSites/` and `MarkdownSites/` are created (default: current directory) |
 | `--markdown-only` | Write only Markdown: no HTML mirror, no image or asset downloads, links and images stay absolute URLs. Default crawl and `-j` only |
-| `--include REGEX` | Follow a discovered link only when its path matches (repeatable). With `-s`, links inside the starting path are followed too. Start URLs are always fetched |
-| `--exclude REGEX` | Never follow a link whose path matches (repeatable) |
+| `--include REGEX` | Follow a discovered link only when its path matches (repeatable). With `-s`, links inside the starting path are followed too. Start URLs are always fetched. See Targeted crawls for how patterns are matched |
+| `--exclude REGEX` | Never follow a link whose path matches (repeatable, matched like `--include`) |
 | `--max-depth N` | Follow links at most N steps from the start URLs (start = 0; default: no limit) |
-| `--max-pages N` | Stop after N page requests (default: 0 = no limit); `run_summary.json` records `stopped_by_limit` |
-| `--urls-file FILE` | Start URLs, one per line (`#` comments, http and https, one site), all at depth 0 in one run; the positional URL is optional |
+| `--max-pages N` | Stop after N pages fetched (default: 0 = no limit); `run_summary.json` records `stopped_by_limit`. Each page counts once however many times a failing request is retried, and robots.txt, reconnaissance and asset requests are not counted |
+| `--urls-file FILE` | Start URLs, one per line (`#` comments, http or https, one site and one scheme), all at depth 0 in one run; the positional URL is optional |
 | `--only-recipes` | Write only pages with schema.org Recipe data; other pages are fetched to find links but not written |
 | `--site-name NAME` | Output folder name for the site (instead of the host and `-s` path), so several runs share one folder |
-| `--follow-next` | Follow pagination (`rel="next"` and `/page/N` links) without counting it as depth or testing it against `--include` |
+| `--follow-next` | Follow pagination (`rel="next"` and `/page/N` links) of in-scope listings without counting it as depth. Without `--max-pages` or `--max-depth` it continues as long as the site offers another page |
 | `--index-pages` / `--no-index-pages` | Write the generated `_index.md` section listing pages (default: on) |
 | `--feed` | Read the URL as an RSS or Atom feed: one Markdown file per entry from one request. Automatic for URLs such as `/feed` or `/rss.xml`. `--max-articles` caps the entries (default 50) |
 | `--auth USER:PASS` | HTTP Basic Auth credentials |
@@ -397,7 +397,11 @@ python main.py https://recipes.example.com/recipes/ --markdown-only --no-index-p
 
 ### Targeted crawls
 
-Without targeting options a crawl follows every in-scope link from the start page and the site's navigation. With `--include`, `--max-depth` or `--urls-file`, only the start URLs seed the queue, and without `--recent` or `--since` no sitemap, feed or homepage requests are made: robots.txt and the pages are the only requests. A discovered link is followed when it is on the same site, inside the `-s` scope (when `-s` is given) or matching an `--include`, matching no `--exclude`, and within `--max-depth`.
+Without targeting options a crawl follows every in-scope link from the start page and the site's navigation. With `--include`, `--max-depth` or `--urls-file`, only the start URLs seed the queue, and without `--recent` or `--since` no sitemap, feed or homepage requests are made: the run requests robots.txt, the pages and, outside `--markdown-only`, their assets. Otherwise reconnaissance makes its usual requests (robots.txt, sitemaps, up to seven feed paths and the homepage) before the pages, and `--max-pages` does not count them. A discovered link is followed when it is on the same site, inside the `-s` scope (when `-s` is given) or matching an `--include`, matching no `--exclude`, and within `--max-depth`.
+
+`--include` and `--exclude` are Python regular expressions searched in the link's path: no query string, no fragment and no trailing slash (`/recipes/r3`, so `^/recipes/r3/$` never matches), case-sensitive, with percent-encoding as the site wrote it. They are your own patterns and Python's regular expressions have no time limit, so a pattern can be slow on long paths; at most the first 2,048 characters of a path are matched, and a pattern that repeats a group with its own quantifier (such as `(a+)+`) is refused. This is unlike the robots.txt matcher, whose cost is bounded.
+
+With `--follow-next`, a pagination link is followed as pagination, at the page's depth, when it matches no `--exclude` and, with `-s`, is inside the scope or matches an `--include`; without `-s`, when it matches an `--include`, is the page's `rel="next"` or is a `/page/N` page of the same listing (`/category/baby/page/2` from `/category/baby`). Any other pagination link is treated as an ordinary link. A run answered 304 reads the `rel="next"` links from the cache, so it follows the same pages as the first run.
 
 ```bash
 # Recipes from one category listing and its later pages, into one folder per site
@@ -414,7 +418,7 @@ python main.py "https://recipes.example.com/?s=baby+led+weaning" \
 python main.py --urls-file recipe-urls.txt --max-depth 0 --site-name recipes_example_com
 ```
 
-A start URL with a query string, such as a site search, is fetched exactly as given and the links on it are followed; the page itself is not written, because its query cannot be part of a file name. Query strings on discovered links are dropped, as in every crawl, so pagination such as `?page=2` is not followed; `/page/2/` style pagination is. `run_summary.json` gets a `targeting` object with the skipped counts (see [docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md)).
+A start URL with a query string, such as a site search, is fetched exactly as given (with or without targeting options) and the links on it are followed; the page itself is not written or cached, because its query cannot be part of a file name. Query strings on discovered links are dropped, as in every crawl, so pagination such as `?page=2` is not followed; `/page/2/` style pagination is. `run_summary.json` gets a `targeting` object with the skipped counts (see [docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md)).
 
 ### Feeds (`--feed`)
 
@@ -494,6 +498,8 @@ Section-ordered traversal processes article links in DOM order (newest first). W
 - `-j`, `-1`, `--swagger`, `-d` and `--instagram` need the browser installed (`scrapling install`).
 - Pages whose path, relative to the crawl's start, contains `/category/`, `/tag/` or `/author/` are not written, so a category listing used as a start URL with `--site-name` is read for its links only.
 - With `--urls-file` and `-s`, the scope is the first start URL's path.
+- `--site-name` is meant for one site. Using one name for two hosts overwrites nothing (each URL keeps its own file), but each run treats the other host's pages as changed and rewrites the cache; ScrapePy prints a warning when the folder's last run was on another host.
+- A start URL that looks like a feed runs feed mode, where the targeted-crawl options and any other `--urls-file` URLs do not apply; ScrapePy prints a notice.
 - `--follow-next` follows only path-based pagination (`/page/2/`) and `rel="next"` links whose path differs; pagination that changes only the query string (`?page=2`) leads back to the same page and stops.
 
 [docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md) lists more limits of the Markdown output.

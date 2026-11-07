@@ -6,7 +6,7 @@ All notable changes to ScrapePy are listed here. The format follows [Keep a Chan
 
 ### Added
 
-- Targeted crawls: `--include` and `--exclude` path patterns, `--max-depth`, `--max-pages` (with `stopped_by_limit`), `--urls-file` for many start URLs in one run, `--only-recipes`, `--site-name` for a shared output folder, and `--follow-next` for pagination. A start URL with a query string (a site search) is fetched as given. `run_summary.json` gets a `targeting` object. Without these options a crawl is unchanged.
+- Targeted crawls: `--include` and `--exclude` path patterns, `--max-depth`, `--max-pages` (with `stopped_by_limit`), `--urls-file` for many start URLs in one run, `--only-recipes`, `--site-name` for a shared output folder, and `--follow-next` for pagination. A start URL with a query string (a site search) is fetched as given. `run_summary.json` gets a `targeting` object. A start URL with a query string is fetched as given in every crawl, for its links. Without the other options a crawl is unchanged.
 - `--markdown-only`: Markdown and run state only, with no HTML mirror and no image or asset downloads. Links and images stay absolute URLs, and every request is a page or reconnaissance request checked against robots.txt and paced.
 - `docs/MARKDOWN-OUTPUT.md`, the output contract for tools that read the Markdown.
 - `canonical_url` in frontmatter when the page declares a different same-site canonical (`url` stays the fetched address), and `duplicates` in `run_summary.json`.
