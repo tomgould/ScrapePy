@@ -153,7 +153,7 @@ Starts page requests at least 10 seconds apart instead of the default 5 in brows
 python main.py https://www.example.com --obey-robots
 ```
 
-Skips every URL robots.txt disallows (they are counted in `run_summary.json` as `blocked_by_robots`) and waits at least its `Crawl-delay` between requests when that is longer than `--wait`. Without `--obey-robots`, ScrapePy applies neither, and requests robots.txt only to read its `Sitemap:` lines. `--ignore-robots` is still accepted and does nothing.
+Skips every URL robots.txt disallows (they are counted in `run_summary.json` as `blocked_by_robots`) and waits at least its `Crawl-delay` between requests when that is longer than `--wait`. Without `--obey-robots`, ScrapePy applies neither, and requests robots.txt only to read its `Sitemap:` lines. `--ignore-robots` is accepted and does nothing.
 
 ## Single Page Applications
 

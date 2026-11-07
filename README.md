@@ -12,8 +12,8 @@ You are responsible for how you use ScrapePy. Follow the terms of service of the
 
 What ScrapePy does to keep a crawl polite:
 
-- robots.txt is optional, and ScrapePy does not apply it unless you pass `--obey-robots`. By default no URL is skipped because robots.txt disallows it, no `Crawl-delay` is waited out, and a robots.txt that cannot be read stops nothing. It is still requested once, only to read its `Sitemap:` lines, by the default crawl, `-j` and `--audit` when reconnaissance runs (`--audit` also saves it as a fixture). No other mode requests it, and neither does a targeted crawl that skips reconnaissance (see Targeted crawls). `run_summary.json` records the choice as `options.obey_robots`.
-- `--obey-robots` applies robots.txt as described below. `--ignore-robots`, which used to switch it off, is accepted and does nothing, so existing scripts keep working. Passing both flags is an error and exits 2.
+- robots.txt is optional, and ScrapePy does not apply it unless you pass `--obey-robots`. By default no URL is skipped because robots.txt disallows it, no `Crawl-delay` is waited out, and a robots.txt that cannot be read stops nothing. It is requested once, only to read its `Sitemap:` lines, by the default crawl, `-j` and `--audit` when reconnaissance runs (`--audit` also saves it as a fixture). No other mode requests it, and neither does a targeted crawl that skips reconnaissance (see Targeted crawls). `run_summary.json` records the choice as `options.obey_robots`.
+- `--obey-robots` applies robots.txt as described below. `--ignore-robots` is accepted and does nothing, so scripts that pass it keep working. Passing both flags is an error and exits 2.
 - Pacing is not part of robots.txt and always applies. Page requests to a site start at least `--wait` seconds apart (3 seconds by default, 5 in browser modes). Prefetching does not get around the gap: it overlaps waiting, not requests. Reconnaissance and page requests share one limiter, so the gap also holds between the last reconnaissance request and the first page.
 - At most 4 requests run at once by default (`-c` changes this).
 - Reconnaissance requests (sitemaps, feeds, homepage) are spaced by one second or `--wait`, whichever is shorter.
@@ -39,8 +39,6 @@ Which modes use robots.txt:
 | `--instagram` | Not requested | Not checked. Instagram's robots.txt does not allow general crawling, so read its terms before using this mode |
 
 Asset downloads (images, CSS, JS) linked from an allowed page are not checked against robots.txt and are not paced, though they share the `-c` concurrency limit.
-
-Only crawl sites you own or have permission to crawl when you leave robots.txt off.
 
 The stealth browser and proxy features exist because some sites block ordinary clients even for content they publish openly. They do not give you permission to access anything.
 
@@ -319,7 +317,7 @@ The file is replaced as soon as a crawl starts with a placeholder whose `status`
 | `interrupted`, `interrupted_by` | Whether the run was stopped early, and by which signal (`SIGINT` or `SIGTERM`, otherwise `null`) |
 | `start_url`, `started_at`, `ended_at` | The URL given and the run's start and end times (UTC, ISO 8601) |
 | `output_dir` | Absolute path of the output directory. `html_dir` and `markdown_dir` are relative to it; `markdown_dir` is `null` with `--no-markdown` |
-| `options` | The settings that shaped the run. Credentials are never written: `auth_used` and `proxy_used` only say whether they were set. `obey_robots` is `true` only with `--obey-robots`; `ignore_robots` is its opposite, kept for readers written before the default changed, and means robots.txt rules and `Crawl-delay` were not applied |
+| `options` | The settings that shaped the run. Credentials are never written: `auth_used` and `proxy_used` only say whether they were set. `obey_robots` is `true` only with `--obey-robots`; `ignore_robots` is its opposite: `true` when robots.txt rules and `Crawl-delay` were not applied, which is the default |
 | `counts.fetched` | Page requests that completed, with a response or a network error, including ones answered 304 Not Modified. A request still waiting for its turn when the run is interrupted is not counted |
 | `counts.new`, `counts.changed` | Pages saved this run. A page is changed when an earlier run saved it (it is in the incremental cache or its HTML file already exists). A page whose Markdown body matches a file already written or unchanged in the run is a duplicate and gets no file |
 | `counts.unchanged` | Pages skipped because the server said 304 or the HTML matched the cache. Their URLs are in `unchanged_urls` |

@@ -76,8 +76,8 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
                              "Crawl-delay (default: robots.txt rules and Crawl-delay are not "
                              "applied)")
     parser.add_argument("--ignore-robots", action="store_true",
-                        help="Accepted and ignored: robots.txt is not applied by default. "
-                             "Kept so existing scripts keep working")
+                        help="Accepted and ignored: robots.txt is not applied unless "
+                             "--obey-robots is given")
     parser.add_argument("-o", "--output-dir", type=str, default=".",
                         help="Folder under which ScrapedSites/ and MarkdownSites/ are created "
                              "(default: current directory)")
