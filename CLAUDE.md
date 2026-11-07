@@ -23,15 +23,16 @@ scrapepy/
   cli.py                argparse, builds ScrapeConfig
   config.py             ScrapeConfig dataclass and derived values
   scraper.py            dispatches to a mode, runs Markdown conversion
-  modes/                crawl, single_page, swagger, docs, instagram, audit
+  modes/                crawl, single_page, swagger, docs, instagram, audit, feed
   engine/               fetcher.py (HTTP/browser/asset fetching),
                         browser_actions.py and instagram_actions.py (page JS)
   processing/           urls, errors, assets, rewriter, dates, classifier,
-                        discovery (sitemaps/RSS), robots (rules + pacing),
-                        navigation, outline
+                        discovery (sitemaps/RSS), feeds (feed entries),
+                        robots (rules + pacing), navigation, outline
   output/               writer (file I/O, path mapping), cache, broken_links,
                         run_summary (run_summary.json, exit codes)
-  convert/              to_markdown, openapi_to_markdown, instagram_to_markdown
+  convert/              to_markdown, recipe (schema.org Recipe block),
+                        openapi_to_markdown, instagram_to_markdown
 tests/                  one test module per processing/output/convert area
 tests/fixtures/         per-site HTML snapshots plus test_config.json
 ```
@@ -59,7 +60,7 @@ tests/fixtures/         per-site HTML snapshots plus test_config.json
 - `docs/MARKDOWN-OUTPUT.md` is the output contract for third-party readers; change it with any change to file layout, frontmatter, the body conventions or run_summary.json.
 - Frontmatter is built only by `build_frontmatter()` (yaml.safe_dump); never format YAML by hand.
 - In `--markdown-only` mode nothing but pages is fetched and no HTML is written: the converter gets the HTML through `convert_file(..., html=...)`.
-- Markdown output always carries YAML frontmatter from `FRONTMATTER_FIELDS` in `convert/to_markdown.py` (title, url, canonical_url, date, date_source, page_type, word_count, description, domain, scraped_at, content_hash). Only non-null values are written; keys and values like `page_type` are lowercase.
+- Markdown output always carries YAML frontmatter from `FRONTMATTER_FIELDS` in `convert/to_markdown.py` (title, url, canonical_url, date, date_source, page_type, author, recipe_category, recipe_cuisine, servings, total_time, keywords, word_count, description, domain, scraped_at, content_hash). `keywords` is the only list. Only non-null values are written; keys and values like `page_type` are lowercase.
 - Output paths come from `config.output_dir` and `config.markdown_dir`, both built by `derive_output_dirs()`. Never derive one from the other by string replacement.
 - Every page fetch checks `RobotsPolicy.can_fetch()` and waits on the run's single `HostRateLimiter` (`processing/robots.py`). New fetch paths must do the same. Do not hand robots.txt matching to `urllib.robotparser` (it ignores wildcards and longest-match precedence) or to regexes (`.*` backtracking can take exponential time); use `glob_match()`.
 - Run blocking fetches with `engine/threads.run_blocking()`, not `loop.run_in_executor()`: executor threads are joined at exit, so an interrupted run would wait for a hung request.
@@ -68,7 +69,7 @@ tests/fixtures/         per-site HTML snapshots plus test_config.json
 
 ## Testing
 
-- Tests are pure logic; do not add tests that need the network or a browser. The one exception is `tests/test_interrupt_localhost.py`, which crawls a server on 127.0.0.1 to send a real Ctrl+C.
+- Tests are pure logic; do not add tests that need the network or a browser. The exceptions crawl a server bound to 127.0.0.1: `tests/test_interrupt_localhost.py` (a real Ctrl+C), `tests/test_recipe_crawl.py` and `tests/test_feed.py`. Recipe and feed fixtures are invented, never copied from real sites.
 - `tests/test_audit_fixtures.py` discovers every `tests/fixtures/*/test_config.json` and checks navigation, page classification, dates and robots.txt parsing against the saved HTML. Missing fixture files cause a skip.
 - Committed fixtures come from sites made for scraping practice. To add one, run `python main.py --audit <url>`, review the generated `test_config.json`, and allow the `pages/` directory in `.gitignore`.
 - Add or update tests with every change to parsing, path mapping or conversion.

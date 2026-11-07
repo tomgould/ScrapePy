@@ -28,6 +28,7 @@ Which modes check robots.txt:
 | Default crawl, `-j` | Every page URL, including prefetched ones, and the sitemap, feed and homepage requests made during reconnaissance |
 | `-d` docs | The start URL and every sidebar link |
 | `-1` single page, `--swagger` | The start URL |
+| `--feed` (or a feed URL) | The feed URL, the only page request |
 | `--audit` | Reconnaissance requests and the sample pages. Audit writes into `tests/fixtures/` and ignores `-o` |
 | `--instagram` | Not checked. Instagram's robots.txt does not allow general crawling, so read its terms before using this mode |
 
@@ -62,7 +63,7 @@ python -m pytest tests/ -v
 python -m pytest tests/test_navigation.py -v
 ```
 
-Tests cover date extraction, error detection, URL normalization, page classification, URL rewriting, config and CLI parsing, exit codes, robots.txt rules and request pacing, cache operations, sitemap/RSS/Atom parsing, navigation parsing (including mega-menu/dropdown), outline building, article detection, section splitting, path mapping, YAML frontmatter, section index generation, the run summary, and fixture-driven validation. A few tests run the whole crawl loop against in-memory pages, and one sends a real Ctrl+C to a crawl of a test server on 127.0.0.1. None of them reach the internet.
+Tests cover date extraction, error detection, URL normalization, page classification, URL rewriting, config and CLI parsing, exit codes, robots.txt rules and request pacing, cache operations, sitemap/RSS/Atom parsing, navigation parsing (including mega-menu/dropdown), outline building, article detection, section splitting, path mapping, YAML frontmatter, section index generation, the run summary, and fixture-driven validation. A few tests run the whole crawl loop against in-memory pages. The recipe and feed tests and one that sends a real Ctrl+C crawl a test server on 127.0.0.1. None of them reach the internet.
 
 ## Usage
 
@@ -93,6 +94,7 @@ python main.py <url> [options]
 | `-o`, `--output-dir DIR` | Folder under which `ScrapedSites/` and `MarkdownSites/` are created (default: current directory) |
 | `--markdown-only` | Write only Markdown: no HTML mirror, no image or asset downloads, links and images stay absolute URLs. Default crawl and `-j` only |
 | `--index-pages` / `--no-index-pages` | Write the generated `_index.md` section listing pages (default: on) |
+| `--feed` | Read the URL as an RSS or Atom feed: one Markdown file per entry from one request. Automatic for URLs such as `/feed` or `/rss.xml`. `--max-articles` caps the entries (default 50) |
 | `--auth USER:PASS` | HTTP Basic Auth credentials |
 | `--proxy URL` | Proxy URL for requests |
 | `--headless` | Run browser headless (default: visible) |
@@ -100,7 +102,7 @@ python main.py <url> [options]
 | `--recent DURATION` | Only keep articles from last N period: `2w`, `1d`, `6h` |
 | `--since DATE` | Only keep articles published after date: `YYYY-MM-DD` |
 | `--min-articles N` | Keep at least N articles per section even if old (use with `--recent`/`--since`) |
-| `--max-articles N` | Max articles per section (newest N, default: 0 = no limit) |
+| `--max-articles N` | Max articles per section (newest N, default: 0 = no limit). In feed mode, max entries (default 50) |
 | `--audit` | Reconnaissance only: analyze site structure and save test fixtures in `tests/fixtures/` (no crawl, ignores `-o`) |
 | `--instagram` | Instagram profile scraping mode |
 | `--accounts FILE` | File with Instagram usernames/URLs (one per line) |
@@ -310,6 +312,7 @@ The file is replaced as soon as a crawl starts with a placeholder whose `status`
 | `counts.skipped_old` | Articles dropped by `--recent`/`--since` after fetching |
 | `new_markdown`, `changed_markdown` | Markdown files written for new and changed pages. A page too short to convert is counted but has no file here. Generated `_index.md` listing pages are not included |
 | `exit_code` | The exit code the run finished with |
+| `feed` | Feed mode only: the feed's format and title and its written, unchanged, over-cap, skipped and teaser entries. See [docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md) |
 
 New, changed and unchanged are decided on the page HTML, so a page whose HTML changed but whose Markdown did not still counts as changed. Compare `content_hash` if you need the stricter test.
 
@@ -365,6 +368,30 @@ Loads Swagger UI in a stealth browser, expands all endpoint sections and model s
 ### Docs (`-d`)
 
 For documentation platforms (Readme.io, Stoplight, GitBook, etc.). Finds sidebar navigation links, visits each page, expands collapsed sections, and saves individual pages plus a combined document.
+
+### Recipes
+
+Pages with schema.org Recipe data (JSON-LD or microdata) need no flag. Their Markdown gets fixed `## Recipe details`, `## Ingredients`, `## Method` and `## Nutrition` sections, with ingredients and nutrition values exactly as published and missing nutrition marked "not stated", followed by the rest of the page under `## Page text`. The frontmatter says `page_type: recipe` and adds `servings`, `total_time`, `recipe_category`, `recipe_cuisine` and `keywords` when the page gives them. The exact shape is in [docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md).
+
+```bash
+# One recipe page
+python main.py https://recipes.example.com/recipes/oat-bites --markdown-only -s
+
+# A recipe section of a site
+python main.py https://recipes.example.com/recipes/ --markdown-only --no-index-pages -s
+```
+
+### Feeds (`--feed`)
+
+An RSS 2.0 or Atom feed is fetched once, after checking robots.txt, and each entry becomes its own Markdown file (`page_type: feed_entry`) with the body from the feed. Entry links are not followed. `run_summary.json` gets a `feed` object; `teaser_urls` lists entries whose feed body is only a short excerpt, so you can crawl those pages yourself.
+
+```bash
+# Detected from the URL
+python main.py https://blog.example.com/feed/ -o /data/crawls
+
+# Any feed URL, newest 20 entries
+python main.py "https://blog.example.com/?type=latest" --feed --max-articles 20
+```
 
 ### Audit (`--audit`)
 

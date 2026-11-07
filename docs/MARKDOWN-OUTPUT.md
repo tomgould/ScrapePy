@@ -1,6 +1,6 @@
 # Markdown output contract
 
-This page describes what a ScrapePy crawl writes, for tools that read it: search indexers, RAG pipelines, archivers. It covers the default crawl and `-j`, with or without `--markdown-only`. Fields and files not listed here may appear in later versions; anything listed here keeps its meaning until the schema version changes.
+This page describes what a ScrapePy crawl writes, for tools that read it: search indexers, RAG pipelines, archivers. It covers the default crawl and `-j`, with or without `--markdown-only`, and feed mode (see Feeds below). Fields and files not listed here may appear in later versions; anything listed here keeps its meaning until the schema version changes.
 
 ## Folders
 
@@ -35,7 +35,7 @@ Pages are classified as sections (listing pages: home, categories, tags) or arti
 
 One page is one file. When a page's Markdown body is identical to a file already written in the same run (for example `/` and `/index.html`), it is not written again and `run_summary.json` lists it under `duplicates`. Query strings never reach file names, because links are queued without them.
 
-Some pages produce no file: error pages, RSS and Atom feeds, pages with fewer than 50 words of content, and paths containing `/feed`, `/author/`, `/category/`, `/tag/`, `/wp-includes/` or `/wp-json/` relative to the crawl's start. They are still fetched and counted in the summary.
+Some pages produce no file: error pages, RSS and Atom feeds met during a crawl (a feed given as the start URL is read in feed mode, below), pages with fewer than 50 words of content (recipe pages excepted), and paths containing `/feed`, `/author/`, `/category/`, `/tag/`, `/wp-includes/` or `/wp-json/` relative to the crawl's start. They are still fetched and counted in the summary.
 
 ## Frontmatter
 
@@ -47,8 +47,14 @@ Every file starts with YAML frontmatter between `---` lines, then a blank line, 
 | `url` | string | always | The absolute address requested for the page (after a redirect it is still the address requested, not the target). Use it as the document ID and the citation link; see Limitations for when two addresses share one file |
 | `canonical_url` | string | when the page declares a different canonical on the same site | The page's `<link rel="canonical">`, made absolute. Written only when it differs from `url` and has the same scheme, host (ignoring `www.`) and port |
 | `date` | string | when a publication date was found | ISO 8601, for example `2026-02-20` or `2026-02-20T10:30:00+00:00` |
-| `date_source` | string | with `date` | Where the date came from, most to least reliable: `META_TAG`, `JSON_LD`, `URL_PATTERN`, `TIME_ELEMENT`, `HTTP_HEADER` (the server's Last-Modified) |
-| `page_type` | string | always | `article`, `section` or `unknown` |
+| `date_source` | string | with `date` | Where the date came from, most to least reliable: `META_TAG`, `JSON_LD`, `URL_PATTERN`, `TIME_ELEMENT`, `HTTP_HEADER` (the server's Last-Modified). Feed entries use `FEED` |
+| `page_type` | string | always | `article`, `section` or `unknown`; `recipe` for a page with schema.org Recipe data; `feed_entry` for a feed entry |
+| `author` | string | feed entries, when the entry or feed names one | The entry's author name |
+| `recipe_category` | string | recipe pages, when stated | The first recipe's `recipeCategory`, several joined with `, ` |
+| `recipe_cuisine` | string | recipe pages, when stated | The first recipe's `recipeCuisine`, several joined with `, ` |
+| `servings` | string | recipe pages, when stated | The first recipe's `recipeYield` as text, always a string (`'4'`, `12 muffins`). When the yield is a list, its first value |
+| `total_time` | string | recipe pages, when stated | The first recipe's `totalTime` in words (`1 hour 30 minutes`); the raw value is in the body |
+| `keywords` | list of strings | recipe pages, when stated | The first recipe's `keywords`, split on commas, duplicates removed |
 | `word_count` | integer | on pages | Words in the body, ignoring Markdown syntax |
 | `description` | string | when the page has one | Its meta description or `og:description` |
 | `domain` | string | always | Host of the crawled site, with port if any |
@@ -70,6 +76,85 @@ Every file starts with YAML frontmatter between `---` lines, then a blank line, 
 - Tables are GitHub-style Markdown tables. Code blocks are fenced with three backticks and carry the language when the HTML names one (`language-python`, `lang-js`, `data-lang`).
 - Lists are `-` bullets or numbered lists. Images are `![alt](url)`.
 - With `--markdown-only`, every link and image is an absolute URL on the live site. In the default mode, links to other crawled pages are rewritten to relative `.md` paths on a best-effort basis and images point at copies in the Markdown folder's `images/`.
+
+## Recipe pages
+
+A page that carries schema.org Recipe data, as JSON-LD (`<script type="application/ld+json">`, including `@graph` arrays and several blocks) or as microdata (`itemtype="https://schema.org/Recipe"`, used only when there is no JSON-LD recipe), gets `page_type: recipe` and this body:
+
+```
+# Page title
+
+**14 Mar 2026**                 (the date line, as on other pages)
+
+## Recipe details
+
+The recipe's description.
+
+- Name: Rainbow Oat Bites
+- Servings: 16 bites            (every recipeYield value, joined with "; ")
+- Prep time: 20 minutes (PT20M)
+- Cook time: 0 minutes (PT0M)
+- Total time: 1 hour 20 minutes (PT1H20M)
+- Author: Pat Example
+- Category: Snack
+- Cuisine: British
+- Diet: Vegetarian, Gluten free
+- Keywords: oats, no bake, lunchbox
+- Published: 2026-03-14
+
+## Ingredients
+
+- 150 g rolled oats
+- 3 tbsp smooth peanut butter
+
+## Method
+
+1. Tip the oats into a large bowl.
+2. Stir in the peanut butter.
+
+### For the topping              (one per HowToSection, numbered from 1)
+
+1. Drizzle with honey.
+
+## Nutrition
+
+Serving size: 1 bite
+
+- Calories: 95 kcal
+- Fat: 4.1 g
+- Saturated fat: 0.8 g
+- Unsaturated fat: not stated
+- Trans fat: not stated
+- Carbohydrate: 12 g
+- Sugar: 5.2 g
+- Fibre: 1.3 g
+- Protein: 2.6 g
+- Sodium: 25 mg
+- Cholesterol: not stated
+
+## Page text
+
+The rest of the page (introduction, tips, notes), with its headings one level down.
+```
+
+- The four headings are always present, in this order. A recipe with no ingredients or no method says `Not stated.` under that heading, and one with no nutrition data says `Not stated.` under `## Nutrition`. When some nutrition is given, all eleven lines are written and the missing ones say `not stated`. `Serving size` says `not stated` when `servingSize` is absent.
+- Lines under `## Recipe details` appear only when the field is present. Times show the words and then the raw ISO 8601 value; a time that is not ISO 8601 (`30 mins`) is shown as written. Diets are named from their schema.org value (`https://schema.org/GlutenFreeDiet` is `Gluten free`).
+- Each ingredient is one bullet, with the text as published: HTML entities decoded, tags removed and runs of whitespace collapsed, nothing else changed. A list given as one string is split on line breaks.
+- Method steps come from HowToStep (its `text`, else its `name`), HowToSection (a `###` heading with its steps, nested sections flattened into it; an unnamed one is called `Part N`), HowToTip (a step starting `Tip: `), plain strings, a string holding an HTML list, or a single string, which is split on line breaks and, when it has none, into sentences. Leading step numbers such as `1.` or `Step 2:` are removed, because the list numbers them.
+- Nutrition values keep the number and unit exactly as published (`95 kcal`, `12.5`, `20.0g`). Nothing is converted, added up or estimated. A bare number stays a bare number, because the unit was not given.
+- Several recipes on one page: one `## <recipe name>` section each, in page order, with the headings above one level deeper (`### Recipe details`, `### Ingredients`, ...). `## Page text` follows the last recipe. Frontmatter fields come from the first recipe.
+- No duplication: before the page text is converted, list items and paragraphs whose text matches an ingredient or a step are removed, so are microdata recipe properties and the JSON-LD itself, and so are label headings (`Ingredients`, `Method`, `Instructions`, `Nutrition` and similar) left with nothing under them. Introductions, tips and notes stay. When nothing is left, `## Page text` is not written. Times, servings and nutrition text from a recipe card can still appear in the page text.
+- An ItemList of recipes (a listing page) is not a recipe page and is converted as usual. A JSON-LD block that cannot be read, even after allowing comments, trailing commas and raw line breaks in strings, is skipped and the page is converted as usual. Recipe pages are written even when they have fewer than 50 words. RDFa is not read.
+
+## Feeds
+
+When the start URL is an RSS 2.0 or Atom feed, ScrapePy reads it as content instead of crawling. A URL is treated as a feed when its path ends in `/feed`, `/rss`, `/atom`, `/feeds`, `rss.xml`, `atom.xml`, `feed.xml`, `index.xml`, `.rss` or `.atom`, or its query says `feed=rss2`, `format=atom` and similar; `--feed` forces it for any URL. A detected URL whose response is not a feed is crawled as a site; with `--feed` it is recorded as a failure instead.
+
+- robots.txt is checked for the feed URL, and the feed is fetched once, after the usual pacing gap. Entry links are not followed and nothing else is downloaded.
+- Each entry, in feed order, up to `--max-articles` entries (50 when not given), becomes one Markdown file named from its link like a crawled page. A query string in the link is kept in the name (`/?p=101` is `index-p-101.md`), an entry on another host goes under a folder named after that host (`feeds_example/...`), and a name already used in the run gets `-2`, `-3`.
+- Frontmatter: `title`, `url` (the entry link, made absolute against `xml:base` or the feed URL), `date` (RSS `pubDate` or `dc:date`, Atom `published` else `updated`, as ISO 8601) with `date_source: FEED`, `page_type: feed_entry`, `author` when present, `word_count`, `domain` (the feed's host), `scraped_at` and `content_hash`. A date that cannot be read is left out.
+- Body: `# Title`, the date line, then the entry's HTML converted to Markdown: RSS `content:encoded`, else `description`; Atom `content` (`html`, `xhtml` or `text`), else `summary`. Links and images are absolute.
+- An entry with no link (no `link`, no permalink `guid`, no `http` Atom `id`) and a second entry with the same link are not written; both are listed in `run_summary.json`. An entry whose file already holds the same body is left alone and counted as unchanged.
 
 ## Limitations
 
@@ -103,6 +188,19 @@ Written to `ScrapedSites/<site>/run_summary.json` at the start of a crawl (with 
 | `duplicates` | list of `{url, same_as}` | Pages whose Markdown matched a file already written, and that file |
 | `interrupted`, `interrupted_by` | boolean, string or null | Whether the run stopped early, and the signal (`SIGINT` or `SIGTERM`) |
 | `exit_code` | integer or null | The process exit code; null while running |
+| `feed` | object | Feed mode only (below) |
+
+In feed mode `counts.fetched` is 1 (the feed), `new_markdown` and `changed_markdown` list the entry files, `unchanged_urls` the entries whose file did not change, and `feed` holds:
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `feed_url` | string | The feed fetched |
+| `format`, `title` | string or null | `rss` or `atom`, and the feed's title; null when no feed was read |
+| `entries_in_feed` | integer | Entries in the feed |
+| `entries_written`, `entries_unchanged` | integer | Entry files written, and entries whose file already held the same body |
+| `entries_over_cap` | integer | Entries after the first `--max-articles` (default 50), not written |
+| `entries_skipped` | list of `{title, url?, reason}` | Entries not written: `no link` or `duplicate link` |
+| `teaser_entries`, `teaser_urls` | integer, list of strings | Entries whose body looks like an excerpt only: no body, fewer than 100 words, or ending in an ellipsis or "Read more". Crawl these links yourself if you need the full text |
 
 ## Exit codes
 
