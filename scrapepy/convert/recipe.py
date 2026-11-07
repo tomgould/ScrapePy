@@ -776,19 +776,35 @@ def _find_recipes(html: str) -> list[Recipe]:
     return recipes
 
 
-_RE_NORM_NUMBERING = re.compile(r"^(?:step\s*\d{1,3}\b\s*[.):\-]?|\d{1,3}[.)])\s+(?!\d)")
+_RE_NORM_NUMBERING = re.compile(r"^(?:step\s*\d{1,3}\b\s*[.):\-]?|\d{1,3}[.)])\s+(?!\d)",
+                                re.IGNORECASE)
+_RE_NORM_BULLET = re.compile(r"^[•‣◦▪▫■□▢☐☑"
+                             r"✓✔·▶►*\-–—]\s+")
 _RE_COMMENT_AREA = re.compile(r"comment|respond|reply", re.IGNORECASE)
 
 
+# Principle: when the page and the JSON-LD disagree, keep the page text. A
+# duplicate line is acceptable; an altered or lost fact is not. So _norm
+# changes only what cannot carry a fact: Unicode compatibility forms (NFKC,
+# so "½" compares equal to "1/2" and a non-breaking space to a space),
+# runs of whitespace, a space before closing punctuation (left by joining
+# spans), a leading bullet, a leading step number and a full stop or colon
+# ending the whole item. Case and every other character ("~", "<", "*",
+# "-", "t" versus "T") are kept, so "~200 g" never matches "200 g".
 def _norm(text: str) -> str:
-    """Text for comparing a page element with a recipe item: Unicode
-    fractions and compatibility forms folded, case and punctuation ignored,
-    whitespace collapsed (so spans that split "150 g oats" still compare),
-    leading bullets and step numbering ignored."""
-    text = unicodedata.normalize("NFKC", text).replace("⁄", "/").lower()
-    text = re.sub(r"^[^\w]+", "", text.strip())
+    """Text for comparing a page element with a recipe item (see above)."""
+    text = unicodedata.normalize("NFKC", text).replace("⁄", "/")
+    text = " ".join(text.split())
+    text = re.sub(r"\s+([,.;:!?)\]])", r"\1", text)
+    text = re.sub(r"([(\[])\s+", r"\1", text)
+    text = _RE_NORM_BULLET.sub("", text)
     text = _RE_NORM_NUMBERING.sub("", text)
-    return " ".join(re.sub(r"[^\w]+", " ", text).split())
+    return re.sub(r"[.:]$", "", text).strip()
+
+
+def _loose(text: str) -> str:
+    """Case- and punctuation-free text, only for recognising label headings."""
+    return " ".join(re.sub(r"[^\w]+", " ", text.lower()).split())
 
 
 def strip_recipe_text(html: str, recipes: list[Recipe]) -> str:
@@ -860,8 +876,8 @@ def _strip_recipe_text(html: str, recipes: list[Recipe]) -> str:
     for h in list(body.find_all(headings)):
         if h.decomposed:
             continue
-        text = _norm(h.get_text(" "))
-        if text not in _LABEL_HEADINGS and text not in titles:
+        text = h.get_text(" ")
+        if _loose(text) not in _LABEL_HEADINGS and _norm(text) not in titles:
             continue
         nxt = h.find_next_sibling()
         while nxt is not None and not nxt.get_text(strip=True) and nxt.name not in headings:

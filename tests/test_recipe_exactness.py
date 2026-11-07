@@ -54,13 +54,13 @@ def test_equal_items_still_removed_with_spans_fractions_and_numbering(tmp_path):
         recipeInstructions=["Warm the milk gently.", "Stir in the oats."],
     )
     visible = (
-        "<ul><li><span>&#9634;</span> <span>1/2</span> <span>cup</span> <span>Milk</span></li>"
+        "<ul><li><span>&#9634;</span> <span>1/2</span> <span>cup</span> <span>milk</span></li>"
         "<li><span>150</span><span> g </span><span>rolled oats</span></li></ul>"
         "<ol><li>1. Warm the milk gently</li><li>Step 2: Stir in the oats.</li></ol>"
     )
     front, body = convert(tmp_path, page(ld(data), f"<p>{STORY}</p>{visible}"))
     assert body.count("rolled oats") == 1
-    assert "cup Milk" not in body and "1/2 cup" not in body
+    assert "1/2 cup" not in body
     assert body.count("Stir in the oats") == 1
 
 
@@ -176,3 +176,41 @@ def test_numbers_keep_their_text(tmp_path):
 
 def test_loads_lenient_keeps_number_text():
     assert loads_lenient('{"a": 1.0, "b": 0.10, "c": 7}') == {"a": "1.0", "b": "0.10", "c": "7"}
+
+
+# Re-review: normalising must never hide a difference in the facts
+
+def _stripped(ingredients, visible_items):
+    data = recipe(recipeIngredient=ingredients)
+    html = page(ld(data), f"<p>{STORY}</p><ul>" + "".join(f"<li>{v}</li>" for v in visible_items)
+                + "</ul>")
+    return strip_recipe_text(html, find_recipes(html))
+
+
+@pytest.mark.parametrize("json_item,visible,kept", [
+    ("200 g sugar", "~200 g sugar", "~200 g sugar"),
+    ("1 T sugar", "1 t sugar", "1 t sugar"),
+    ("1/2 cup milk", "1-2 cup milk", "1-2 cup milk"),
+    ("2 eggs", "*2 eggs", "*2 eggs"),
+    ("5 g salt", "&lt;5 g salt", "&lt;5 g salt"),
+])
+def test_visible_item_that_differs_is_kept(json_item, visible, kept):
+    assert f"<li>{kept}</li>" in _stripped([json_item], [visible])
+
+
+@pytest.mark.parametrize("json_item,visible", [
+    ("1/2 cup milk", "½ cup milk"),
+    ("½ cup milk", "1/2 cup milk"),
+    ("200 g sugar", "200 g sugar"),
+    ("200 g sugar", "  200   g  sugar "),
+    ("2 eggs", "• 2 eggs"),
+    ("2 eggs", "2 eggs."),
+])
+def test_same_item_is_still_removed(json_item, visible):
+    out = _stripped([json_item], [visible])
+    assert "<li>" not in out
+
+
+def test_unit_spacing_difference_is_left_as_a_duplicate():
+    # "200g" and "200 g" are not treated as equal: a duplicate line is acceptable
+    assert "<li>200g sugar</li>" in _stripped(["200 g sugar"], ["200g sugar"])
