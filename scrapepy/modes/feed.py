@@ -29,6 +29,7 @@ from ..convert.to_markdown import (
 from ..engine.fetcher import fetch_page_http
 from ..engine.threads import run_blocking
 from ..output.run_summary import RunStats, build_summary
+from ..output.naming import FileNames, assignments_from_disk
 from ..output.writer import url_to_filepath, write_file
 from ..processing.discovery import load_robots_policy
 from ..processing.feeds import FeedEntry, decode_feed, is_teaser, parse_feed
@@ -238,7 +239,17 @@ def _write_entries(config: ScrapeConfig, feed, stats: RunStats, info: dict) -> N
         seen_links.add(entry.link)
         chosen.append(entry)
     paths = entry_output_paths([e.link for e in chosen], config)
+    # No entry replaces another URL's file: an entry keeps the file it has
+    # from an earlier run (read back from the files' url), and a name held
+    # by another URL gets the same link-hash suffix (see output/naming.py)
+    names = FileNames(assignments_from_disk(config.markdown_dir))
     for entry in chosen:
+        plain = os.path.abspath(os.path.join(config.markdown_dir,
+                                             entry_stem(entry.link, config) + ".md"))
+        assigned = names.assign(entry.link, {"md": os.path.abspath(paths[entry.link])})["md"]
+        paths[entry.link] = assigned
+        if assigned != plain:
+            stats.record_renamed(entry.link, assigned, plain)
         md, words = entry_markdown(entry, converter, entry.link)
         if is_teaser(entry, words):
             info["teaser_entries"] += 1
