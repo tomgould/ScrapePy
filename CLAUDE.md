@@ -29,6 +29,8 @@ scrapepy/
                         browser_actions.py and instagram_actions.py (page JS)
   processing/           urls, errors, assets, rewriter, dates, classifier,
                         discovery (sitemaps/RSS), feeds (feed entries),
+                        targeting (--include, --max-depth and the other
+                        targeted-crawl rules),
                         robots (rules + pacing), navigation, outline
   output/               writer (file I/O, path mapping), naming (which file
                         each URL gets), cache, broken_links,
