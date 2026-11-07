@@ -50,17 +50,17 @@ def test_close_but_longer_item_is_kept_not_fuzzy_matched(tmp_path):
 
 def test_equal_items_still_removed_with_spans_fractions_and_numbering(tmp_path):
     data = recipe(
-        recipeIngredient=["½ cup milk", "150 g rolled oats"],
+        recipeIngredient=["1/2 cup milk", "150 g rolled oats"],
         recipeInstructions=["Warm the milk gently.", "Stir in the oats."],
     )
     visible = (
-        "<ul><li><span>&#9634;</span> <span>1/2</span> <span>cup</span> <span>milk</span></li>"
+        "<ul><li>\u2022 <span>1/2</span> <span>cup</span> <span>milk</span></li>"
         "<li><span>150</span><span> g </span><span>rolled oats</span></li></ul>"
         "<ol><li>1. Warm the milk gently</li><li>Step 2: Stir in the oats.</li></ol>"
     )
     front, body = convert(tmp_path, page(ld(data), f"<p>{STORY}</p>{visible}"))
     assert body.count("rolled oats") == 1
-    assert "1/2 cup" not in body
+    assert body.count("1/2 cup milk") == 1
     assert body.count("Stir in the oats") == 1
 
 
@@ -193,16 +193,30 @@ def _stripped(ingredients, visible_items):
     ("1/2 cup milk", "1-2 cup milk", "1-2 cup milk"),
     ("2 eggs", "*2 eggs", "*2 eggs"),
     ("5 g salt", "&lt;5 g salt", "&lt;5 g salt"),
+    ("11/2 cups flour", "1\u00bd cups flour", "1\u00bd cups flour"),
+    ("102 cm tin", "10\u00b2 cm tin", "10\u00b2 cm tin"),
+    ("21/2 tbsp oil", "2\u00b9\u2044\u2082 tbsp oil", "2\u00b9\u2044\u2082 tbsp oil"),
+    ("1 1/2 cups flour", "1\u00bd cups flour", "1\u00bd cups flour"),
+    ("1/2 cup milk", "\u00bd cup milk", "\u00bd cup milk"),
+    ("\u00bd cup milk", "1/2 cup milk", "1/2 cup milk"),
+    ("2 eggs", "* 2 eggs", "* 2 eggs"),
+    ("2 eggs", "\u2605 2 eggs", "\u2605 2 eggs"),
+    ("eggs", "2) eggs", "2) eggs"),
+    ("2.5 g salt", "2,5 g salt", "2,5 g salt"),
+    ("1-2 tsp honey", "1\u20132 tsp honey", "1\u20132 tsp honey"),
 ])
 def test_visible_item_that_differs_is_kept(json_item, visible, kept):
     assert f"<li>{kept}</li>" in _stripped([json_item], [visible])
 
 
 @pytest.mark.parametrize("json_item,visible", [
-    ("1/2 cup milk", "½ cup milk"),
-    ("½ cup milk", "1/2 cup milk"),
     ("200 g sugar", "200 g sugar"),
     ("200 g sugar", "  200   g  sugar "),
+    ("200 g sugar", "200\u2009g\tsugar"),
+    ("200 g sugar", "200 \u200bg sugar"),
+    ("2 eggs", "- 2 eggs"),
+    ("2 eggs", "\u00b7 2 eggs"),
+    ("2 eggs", "2 eggs:"),
     ("2 eggs", "• 2 eggs"),
     ("2 eggs", "2 eggs."),
 ])

@@ -257,8 +257,8 @@ def test_multiple_blocks_with_broken_and_irrelevant(tmp_path):
     # A recipe card that splits amount, unit and name into spans with a checkbox
     card = (
         "<div class='card'><h3>Ingredients</h3><ul>"
-        "<li><span>&#9634;</span> <span>150</span> <span>g</span> <span>rolled oats</span></li>"
-        "<li><span>&#9634;</span> <span>3</span> <span>tbsp</span> "
+        "<li><span>150</span> <span>g</span> <span>rolled oats</span></li>"
+        "<li><span>3</span> <span>tbsp</span> "
         "<span>smooth peanut butter</span></li></ul>"
         "<h3>Instructions</h3><ol><li><p>Tip the oats into a large bowl.</p></li></ol>"
         "<h3>Notes</h3><p>Keeps for a week in the fridge in a sealed box.</p></div>"

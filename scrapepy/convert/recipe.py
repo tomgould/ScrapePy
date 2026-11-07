@@ -24,7 +24,6 @@ import html as html_lib
 import json
 import logging
 import re
-import unicodedata
 from dataclasses import dataclass, field
 
 from bs4 import BeautifulSoup, Tag
@@ -776,30 +775,44 @@ def _find_recipes(html: str) -> list[Recipe]:
     return recipes
 
 
-_RE_NORM_NUMBERING = re.compile(r"^(?:step\s*\d{1,3}\b\s*[.):\-]?|\d{1,3}[.)])\s+(?!\d)",
-                                re.IGNORECASE)
-_RE_NORM_BULLET = re.compile("^[\u2022\u2023\u25e6\u25aa\u25ab\u25a0\u25a1\u25a2\u2610\u2611"
-                             "\u2713\u2714\u00b7\u25b6\u25ba*\\-\u2013\u2014]\\s+")
+# Whitespace that _norm collapses: every Unicode space (str.split) plus the
+# zero-width characters, which str.split does not treat as space
+_RE_ZERO_WIDTH = re.compile("[\u200b\u200c\u200d\u2060\ufeff]")
+# One leading bullet: a bullet sign, or an ASCII hyphen, then a space. Not
+# an asterisk or a star, which mark footnotes.
+_RE_NORM_BULLET = re.compile("^(?:[\u2022\u00b7\u25aa\u25e6\u2023\u2043]|-) ")
+# Step numbering, ignored only when comparing steps: "Step N" always, a
+# plain "N. " or "N) " only when N is that step's position
+_RE_NORM_STEP_WORD = re.compile(r"^step\s*\d{1,3}\b\s*[.):\-]?\s+", re.IGNORECASE)
+_RE_NORM_PLAIN_NUMBER = re.compile(r"^(\d{1,3})[.)] (?!\d)")
 _RE_COMMENT_AREA = re.compile(r"comment|respond|reply", re.IGNORECASE)
 
 
-# Principle: when the page and the JSON-LD disagree, keep the page text. A
-# duplicate line is acceptable; an altered or lost fact is not. So _norm
-# changes only what cannot carry a fact: Unicode compatibility forms (NFKC,
-# so "½" compares equal to "1/2" and a non-breaking space to a space),
-# runs of whitespace, a space before closing punctuation (left by joining
-# spans), a leading bullet, a leading step number and a full stop or colon
-# ending the whole item. Case and every other character ("~", "<", "*",
-# "-", "t" versus "T") are kept, so "~200 g" never matches "200 g".
+# Principle: when the page and the recipe data disagree, keep the page text.
+# A duplicate line is acceptable; an altered or lost fact is not. So _norm
+# is minimal: it collapses whitespace (including non-breaking, thin and
+# zero-width spaces) and strips the ends, ignores one leading bullet and a
+# full stop or colon ending the whole item. Everything else is compared
+# exactly, case included: "1/2" and its fraction sign, "200g" and "200 g",
+# an en dash and a hyphen, "2,5" and "2.5" all stay as different text.
 def _norm(text: str) -> str:
     """Text for comparing a page element with a recipe item (see above)."""
-    text = unicodedata.normalize("NFKC", text).replace("⁄", "/")
-    text = " ".join(text.split())
-    text = re.sub(r"\s+([,.;:!?)\]])", r"\1", text)
-    text = re.sub(r"([(\[])\s+", r"\1", text)
-    text = _RE_NORM_BULLET.sub("", text)
-    text = _RE_NORM_NUMBERING.sub("", text)
-    return re.sub(r"[.:]$", "", text).strip()
+    text = " ".join(_RE_ZERO_WIDTH.sub(" ", text).split())
+    text = _RE_NORM_BULLET.sub("", text, count=1)
+    return re.sub(r"[.:]$", "", text)
+
+
+def _step_candidates(key: str) -> list[tuple[str, int | None]]:
+    """(text, required position) pairs a page element may match as a step:
+    as written, without "Step N", or without "N. " / "N) " at position N."""
+    out: list[tuple[str, int | None]] = [(key, None)]
+    m = _RE_NORM_STEP_WORD.match(key)
+    if m:
+        out.append((key[m.end():], None))
+    m = _RE_NORM_PLAIN_NUMBER.match(key)
+    if m:
+        out.append((key[m.end():], int(m.group(1))))
+    return out
 
 
 def _loose(text: str) -> str:
@@ -835,15 +848,21 @@ def _strip_recipe_text(html: str, recipes: list[Recipe]) -> str:
     # equals it (after _norm). An element that adds anything, even one word
     # ("optional", "never", "160C fan"), is kept: a repeated line is better
     # than a lost fact.
-    remaining: dict[str, int] = {}
+    remaining: dict[str, int] = {}              # ingredients
+    steps_left: dict[str, list[int]] = {}       # step text -> positions
     titles: set[str] = set()
     for r in recipes:
-        items = list(r.ingredients) + [s for _t, steps in r.method for s in steps]
-        for item in items:
+        for item in r.ingredients:
             key = _norm(item)
             if key:
                 remaining[key] = remaining.get(key, 0) + 1
-        titles.update(_norm(t) for t, _s in r.method if t)
+        for title, steps in r.method:
+            for position, step in enumerate(steps, start=1):
+                key = _norm(step)
+                if key:
+                    steps_left.setdefault(key, []).append(position)
+            if title:
+                titles.add(_norm(title))
     soup = BeautifulSoup(html, "lxml")
     # Content extractors read JSON-LD too, which would bring the steps back
     for script in soup.find_all("script", attrs={"type": re.compile(r"ld\+json", re.I)}):
@@ -864,9 +883,18 @@ def _strip_recipe_text(html: str, recipes: list[Recipe]) -> str:
         if tag.name == "p" and tag.find_parent("li") is not None:
             continue
         key = _norm(tag.get_text(" "))
-        if remaining.get(key, 0) > 0 and not _in_comment_area(tag):
+        if not key or _in_comment_area(tag):
+            continue
+        if remaining.get(key, 0) > 0:
             remaining[key] -= 1
             tag.decompose()
+            continue
+        for text, position in _step_candidates(key):
+            positions = steps_left.get(text)
+            if positions and (position is None or position in positions):
+                positions.remove(positions[0] if position is None else position)
+                tag.decompose()
+                break
 
     for lst in list(body.find_all(["ul", "ol"])):
         if not lst.decomposed and not lst.find("li"):
