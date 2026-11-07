@@ -63,7 +63,7 @@ python -m pytest tests/ -v
 python -m pytest tests/test_navigation.py -v
 ```
 
-Tests cover date extraction, error detection, URL normalization, page classification, URL rewriting, config and CLI parsing, exit codes, robots.txt rules and request pacing, cache operations, sitemap/RSS/Atom parsing, navigation parsing (including mega-menu/dropdown), outline building, article detection, section splitting, path mapping, YAML frontmatter, section index generation, the run summary, and fixture-driven validation. Some tests run the whole crawl loop against in-memory pages, and the `*_localhost.py`, recipe and feed tests crawl a test server bound to 127.0.0.1 (one of them sends a real Ctrl+C). None of them reach the internet or start a browser.
+Tests cover date extraction, error detection, URL normalization, page classification, URL rewriting, config and CLI parsing, exit codes, robots.txt rules and request pacing, cache operations, sitemap/RSS/Atom parsing, navigation parsing (including mega-menu/dropdown), outline building, article detection, section splitting, path mapping, YAML frontmatter, section index generation, the run summary, and fixture-driven validation. Some tests run the whole crawl loop against in-memory pages, and the `*_localhost.py`, recipe and feed tests crawl a test server bound to 127.0.0.1 (two of them send a real Ctrl+C). None of them reach the internet or start a browser.
 
 ## Usage
 
@@ -81,7 +81,7 @@ python main.py <url> [options]
 | `-m`, `--markdown` / `--no-markdown` | Convert to Markdown after scraping (default: on) |
 | `-s`, `--stay-in-path` | Only crawl URLs under the starting path |
 | `-w`, `--path-wildcard` | Match URLs containing the path (use with `-s`) |
-| `-j`, `--js-render` | Fetch each page with the stealth browser: network idle plus 1 second, then links by regular expression as in the default crawl |
+| `-j`, `--js-render` | Fetch each page with the stealth browser, then find links by regular expression as in the default crawl. The page is not scrolled and `--wait` is only the gap between requests |
 | `-1`, `--single-page` | Single page SPA mode (no crawling) |
 | `--swagger`, `--openapi` | Swagger/OpenAPI documentation mode |
 | `-d`, `--docs` | Documentation site mode |
@@ -334,7 +334,7 @@ Feed mode exits 1 when robots.txt blocks the feed or it cannot be fetched, when 
 
 ### Numeric Path Flattening
 
-Article URLs with numeric path segments are flattened to avoid deeply nested single-file directories:
+In the HTML copy, URLs with numeric path segments are flattened to avoid deeply nested single-file directories; in `MarkdownSites/` this applies to article pages:
 
 ```
 /news/12345/1/slug  →  news/slug-12345-1.html
@@ -365,7 +365,7 @@ For single-page applications. Launches a stealth browser, waits for JavaScript t
 
 ### JS Render (`-j`)
 
-Like the default crawl, but each page is fetched with the stealth browser, which waits for the network to go quiet and then one more second before the HTML is captured. The page is not scrolled, links are extracted from the HTML with regular expressions as in the default crawl, and `--wait` is only the gap between page requests.
+Like the default crawl, but each page is fetched with the stealth browser, which returns the HTML once the page has loaded and Scrapling's Cloudflare check has finished. The page is not scrolled, links are extracted from the HTML with regular expressions as in the default crawl, and `--wait` is only the gap between page requests.
 
 ### Swagger (`--swagger`)
 
@@ -457,12 +457,12 @@ Section-ordered traversal processes article links in DOM order (newest first). W
 - A page too short to convert (under 50 words, recipe pages excepted) is counted as new or changed in `run_summary.json` but has no Markdown file.
 - After an interrupted run, pages that were not reached yet appear in no list in `run_summary.json`.
 - Crawled paths are requested without a trailing slash (`/docs/` is fetched as `/docs`), so a server that answers only the slash form must redirect.
-- With `--stay-in-path`, article files have the starting path removed from their path while section `_index.md` files keep it (crawling `/docs/` with `-s`, the article `/docs/how-to-bake-bread` is `how-to-bake-bread.md` and the section `/docs/kitchen` is `docs/kitchen/_index.md`).
+- With `--stay-in-path` and no `--recent` or `--since`, article files have the starting path removed from their path while section `_index.md` files keep it: crawling `/docs/` with `-s`, the article `/docs/how-to-bake-sourdough-bread` is `how-to-bake-sourdough-bread.md`, while `/docs/how-to-bake-bread` and `/docs/kitchen`, which are classified as sections, are `docs/how-to-bake-bread/_index.md` and `docs/kitchen/_index.md`. With `--recent` or `--since`, articles found on a section are written under that section's folder and keep the starting path (`docs/how-to-bake-sourdough-bread.md`).
 - A brand name in an H1 with no brand signal (no `og:site_name`, `application-name` or schema.org name, no link to the home page, a host name that differs) can become the page title.
 - In recipe pages, the same amount written two ways (`200g` and `200 g`, `½` and `1/2`) leaves a duplicate line in `## Page text`.
-- `-j` waits only for network idle plus one second per page, does not scroll, and extracts links with regular expressions, so content or links that appear later or only after scrolling are missed. `--wait` does not lengthen the render wait.
+- `-j` returns the page once the browser has loaded it and Scrapling's Cloudflare check has finished (a few seconds), so JavaScript-rendered content that appears later can be missed. The page is not scrolled, links are found in the HTML by regular expression, and `--wait` does not lengthen the wait: it is only the gap between page requests.
 - `--proxy` is used by browser modes and asset downloads only. The default crawl's page requests, reconnaissance (sitemaps, feeds, homepage), robots.txt and feed mode connect directly.
-- `-j` is not covered by the automated tests, which never start a browser, and neither is its combination with `--stay-in-path`.
+- `-j`'s argument parsing and settings are covered by the automated tests, but its crawl is not, because the tests never start a browser; the same goes for `-j` with `--stay-in-path`.
 - `-j`, `-1`, `--swagger`, `-d` and `--instagram` need the browser installed (`scrapling install`).
 
 [docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md) lists more limits of the Markdown output.

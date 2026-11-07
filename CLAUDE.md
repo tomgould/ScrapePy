@@ -70,7 +70,7 @@ tests/fixtures/         per-site HTML snapshots plus test_config.json
 
 ## Testing
 
-- Tests never use the internet or a browser. Tests that need a real crawl serve pages from a server bound to 127.0.0.1 (the `*_localhost.py` files and the recipe and feed tests; `tests/test_interrupt_localhost.py` sends a real Ctrl+C). Recipe and feed fixtures are invented, never copied from real sites.
+- Tests never use the internet or a browser. Tests that need a real crawl serve pages from a server bound to 127.0.0.1 (the `*_localhost.py` files and the recipe and feed tests; `tests/test_interrupt_localhost.py` and `tests/test_collisions_localhost.py` send a real Ctrl+C). Recipe and feed fixtures are invented, never copied from real sites.
 - `tests/test_audit_fixtures.py` discovers every `tests/fixtures/*/test_config.json` and checks navigation, page classification, dates and robots.txt parsing against the saved HTML. Missing fixture files cause a skip.
 - Committed fixtures come from sites made for scraping practice. To add one, run `python main.py --audit <url>`, review the generated `test_config.json`, and allow the `pages/` directory in `.gitignore`.
 - Add or update tests with every change to parsing, path mapping or conversion.
