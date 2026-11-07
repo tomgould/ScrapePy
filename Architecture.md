@@ -25,7 +25,7 @@ proxy.py          --proxy validation and credential masking
 engine/       fetcher.py (HTTP, browser and asset fetching), threads.py,
               browser_actions.py and instagram_actions.py (page JavaScript)
 processing/   robots, discovery, feeds, navigation, outline, classifier,
-              dates, urls, errors, assets, rewriter
+              dates, urls, errors, assets, rewriter, targeting
 output/       writer (paths and file I/O), naming (which file each URL gets),
               cache, run_summary, broken_links
 convert/      to_markdown, html_prep, recipe, openapi_to_markdown,
@@ -48,6 +48,8 @@ convert/      to_markdown, html_prep, recipe, openapi_to_markdown,
 6. Links are extracted with regular expressions after `<link rel="alternate">` tags with a non-HTML type are removed; URLs ending in data-format extensions (`.json`, `.xml`, `.rss`, `.atom`) and file types such as images and PDFs are never queued, and query strings and trailing slashes are dropped. With `--recent` or `--since`, section pages split their links into a DOM-ordered article batch and other links, and an article older than the cutoff ends its batch.
 7. Assets are downloaded with `httpx` (not in `--markdown-only`), URLs are rewritten for offline viewing (`processing/rewriter.py`), and the page is converted with `HTMLToMarkdown.prepare()`.
 8. Each page is placed by `output/naming.py`: it gets its natural file name unless another URL already holds that name, in this run, in the stored assignments in the cache, or as a Markdown file on disk whose frontmatter `url` names another URL; then it gets a `-<8 hex>` suffix. A page whose Markdown body equals a file already final in this run is recorded as a duplicate instead of written.
+Targeted crawls (`processing/targeting.py`): with `--include`, `--max-depth` or `--urls-file`, only the start URLs seed the queue and, without a date filter, steps 3 and 4 are skipped. A `Targeting` object records each discovered link's depth (start URLs are 0, a link is one deeper than its page, and with `--follow-next` pagination links keep the page's depth) and decides at step 5 whether a link is fetched: an `--exclude` match skips it, with `--include` it must be inside the `-s` scope or match an include, and with `--max-depth` it must not be deeper. A start URL with a query is fetched as given for its links only. `--only-recipes` drops pages without Recipe data before step 7, after queueing their links. `--max-pages` stops the loop at that many page requests and turns prefetching off. `--site-name` replaces the site folder name and keeps the starting path in file paths. The counts go into a `targeting` object in `run_summary.json`.
+
 9. After the loop: generated section `_index.md` listings (with date filters, unless `--no-index-pages`), section images copied, the cache saved with the file assignments, `broken_links.txt` written, and `run_summary.json` written atomically. Its `exit_code` becomes the process exit code.
 
 Ctrl+C or SIGTERM cancels the main task; the loop catches the cancellation, saves the cache and writes the summary with status `interrupted` (exit 130 or 143).
