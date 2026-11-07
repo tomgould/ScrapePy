@@ -36,21 +36,58 @@ def headings(md):
     return [len(m.group(1)) for m in re.finditer(r"^(#{1,6}) ", md, re.M)]
 
 
+def levels_out(*levels):
+    """Normalise headings of the given levels (named h0, h1, ...) and return
+    the output levels, checking each heading line is otherwise unchanged."""
+    md = "\n\n".join("#" * lv + f" h{i}" for i, lv in enumerate(levels))
+    out = normalize_headings(md).split("\n\n")
+    result = []
+    for i, line in enumerate(out):
+        hashes, text = line.split(" ", 1)
+        assert text == f"h{i}" and set(hashes) == {"#"}
+        result.append(len(hashes))
+    return result
+
+
 class TestNormalizeHeadings:
     def test_single_h1(self):
-        assert headings(normalize_headings("# A\n\n# B\n\n# C")) == [1, 2, 2]
+        assert normalize_headings("# A\n\n# B\n\n# C") == "# A\n\n## B\n\n## C"
 
     def test_no_skipped_levels(self):
-        assert headings(normalize_headings("# A\n\n#### B\n\n###### C\n\n## D")) == [1, 2, 3, 2]
+        assert levels_out(1, 4, 6, 2) == [1, 2, 3, 2]
 
     def test_first_heading_becomes_h1(self):
-        assert headings(normalize_headings("### Title\n\ntext\n\n#### Sub")) == [1, 2]
+        # The first heading is the page title whatever its level
+        assert normalize_headings("### Title\n\ntext\n\n#### Sub") == "# Title\n\ntext\n\n## Sub"
+
+    def test_siblings_stay_siblings(self):
+        assert levels_out(1, 2, 4, 4) == [1, 2, 3, 3]
+
+    def test_sibling_h4s_under_h1_are_all_h2(self):
+        md = "# T\n\n#### Card one\n\nA\n\n#### Card two\n\nB\n\n#### Card three\n\nC"
+        assert normalize_headings(md) == (
+            "# T\n\n## Card one\n\nA\n\n## Card two\n\nB\n\n## Card three\n\nC")
+
+    def test_return_to_an_ancestor_level(self):
+        assert levels_out(1, 3, 5, 3) == [1, 2, 3, 2]
+
+    def test_heading_between_two_levels_becomes_child_of_the_shallower(self):
+        # The H3 pops the H4 and sits under the H2
+        assert levels_out(1, 2, 4, 3) == [1, 2, 3, 3]
+        # Same shape with an H2 as the first heading (which becomes the H1)
+        assert levels_out(2, 4, 3) == [1, 2, 2]
+
+    def test_deep_heading_then_h1_resets(self):
+        assert levels_out(1, 2, 3, 4, 1, 2, 4) == [1, 2, 3, 4, 2, 3, 4]
+        assert levels_out(1, 6, 1, 6) == [1, 2, 2, 3]
+
+    def test_never_deeper_than_h6(self):
+        assert levels_out(6, 1, 2, 3, 4, 5, 6) == [1, 2, 3, 4, 5, 6, 6]
 
     def test_code_fences_untouched(self):
         md = "# T\n\n```bash\n# not a heading\n### nor this\n```\n\n### Real"
-        out = normalize_headings(md)
-        assert "# not a heading\n### nor this" in out
-        assert out.endswith("## Real")
+        assert normalize_headings(md) == (
+            "# T\n\n```bash\n# not a heading\n### nor this\n```\n\n## Real")
 
     def test_text_lines_untouched(self):
         assert normalize_headings("#hashtag\n# T") == "#hashtag\n# T"
@@ -61,6 +98,31 @@ class TestNormalizeHeadings:
         assert normalize_headings(md) == (
             "# T\n\n```bash\n# install\n## step two\n```\n\n## Real\n\n"
             "~~~\n# also code\n~~~\n\n### Deeper")
+
+    def test_tilde_line_does_not_close_backtick_fence(self):
+        md = "# T\n\n```\n~~~\n# not heading\n```\n\n#### After"
+        assert normalize_headings(md) == "# T\n\n```\n~~~\n# not heading\n```\n\n## After"
+
+    def test_shorter_fence_does_not_close_longer_one(self):
+        md = "# T\n\n````md\n```\n# not heading\n```\n````\n\n#### After"
+        assert normalize_headings(md) == (
+            "# T\n\n````md\n```\n# not heading\n```\n````\n\n## After")
+
+    def test_fence_with_info_string_does_not_close(self):
+        md = "# T\n\n```\n```python\n# not heading\n```\n\n#### After"
+        assert normalize_headings(md) == (
+            "# T\n\n```\n```python\n# not heading\n```\n\n## After")
+
+    def test_unclosed_fence_runs_to_the_end(self):
+        md = "# T\n\n```\n# not heading\n\n#### nor this"
+        assert normalize_headings(md) == md
+
+    def test_tilde_inside_pre_from_html(self):
+        html = form_page("<pre>~~~\n# not heading</pre><h4>After</h4><p>More text.</p>")
+        md, _ = convert(html)
+        assert "## not heading" not in md
+        assert "\n# not heading\n" in md
+        assert "## After" in lines(md)
 
     def test_code_comments_survive_conversion(self):
         html = form_page('<pre><code class="language-bash"># install the tool\n'
@@ -73,16 +135,25 @@ class TestNormalizeHeadings:
 
     def test_headings_in_list_items_are_normalised(self):
         md = "# T\n\n- #### Card one\n\n  Blurb\n- #### Card two\n\n1. ###### Step\n\n### After"
-        # Same rule as other headings: at most one level deeper than the last
         assert normalize_headings(md) == (
-            "# T\n\n- ## Card one\n\n  Blurb\n- ### Card two\n\n1. #### Step\n\n### After")
+            "# T\n\n- ## Card one\n\n  Blurb\n- ## Card two\n\n1. ### Step\n\n## After")
 
     def test_list_item_headings_from_html_do_not_skip(self):
         html = form_page('<ul><li><h4>First card</h4><p>About the first.</p></li>'
                          '<li><h4>Second card</h4><p>About the second.</p></li></ul>')
         md, _ = convert(html)
         assert "- ## First card" in lines(md)
-        assert "- ### Second card" in lines(md)
+        assert "- ## Second card" in lines(md)
+
+    def test_headings_in_blockquotes_are_normalised(self):
+        md = "# T\n\n> #### Quoted\n>\n> text\n\n> > ###### Deeper\n\n#### Next"
+        assert normalize_headings(md) == (
+            "# T\n\n> ## Quoted\n>\n> text\n\n> > ### Deeper\n\n## Next")
+
+    def test_blockquote_heading_from_html(self):
+        html = form_page("<blockquote><h4>Quoted title</h4><p>Quoted words.</p></blockquote>")
+        md, _ = convert(html)
+        assert "> ## Quoted title" in lines(md)
 
 
 FILLER = " ".join(["The service covers every part of the country and runs all year."] * 6)

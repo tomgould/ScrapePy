@@ -16,9 +16,15 @@ _BLOCK_TAGS = {"h1", "h2", "h3", "h4", "h5", "h6", "p", "div", "section", "artic
 _HEADINGS = ("h1", "h2", "h3", "h4", "h5", "h6")
 _SKIP_SCHEMES = ("mailto:", "tel:", "javascript:", "data:", "#")
 _RE_LANG_CLASS = re.compile(r"^(?:language|lang|highlight|brush)-?:?([A-Za-z0-9_+#.-]+)$")
-# A heading, optionally inside a list item ("- #### Card title")
-_RE_HEADING = re.compile(r"^(\s*(?:[-*+]|\d{1,9}[.)])\s+)?(#{1,6})(\s+.*)$")
-_RE_FENCE = re.compile(r"^\s*(```|~~~)")
+# Blockquote markers ("> > ") and a list item marker ("- ", "1. ") that can
+# come before a heading or a code fence
+_QUOTE = r"(?:[ \t]*>[ \t]?)"
+_ITEM = r"(?:[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]+)"
+# A heading, optionally inside blockquotes and/or a list item. A heading with
+# neither must start the line (indented lines can be code).
+_RE_HEADING = re.compile(rf"^({_QUOTE}+{_ITEM}?|{_ITEM})?(#{{1,6}})([ \t]+.*)$")
+# A code fence: three or more backticks or tildes, then an info string
+_RE_FENCE = re.compile(rf"^{_QUOTE}*{_ITEM}?[ \t]*(`{{3,}}|~{{3,}})(.*)$")
 
 
 def clean_title(text: str | None) -> str:
@@ -151,27 +157,54 @@ def code_language(el) -> str | None:
 def normalize_headings(md: str) -> str:
     """One H1 (the first heading) and no skipped levels, outside code fences.
 
-    The first heading becomes H1. Any later H1 becomes H2. Each heading goes
-    at most one level deeper than the one before it, so H1 then H4 becomes
-    H1 then H2. Headings at the start of a list item count too.
+    The first heading is the page title and becomes H1 whatever its level.
+    Every later heading sits below it, from H2 down, and keeps its place in
+    the page's outline:
+
+    - a heading at the same original level as an open one is its sibling and
+      gets the same output level (three H4 cards under an H1 are all H2);
+    - a deeper heading is a child, one output level below its parent;
+    - a shallower heading closes the deeper ones and becomes a sibling of the
+      open heading at its own level, or a child of the nearest shallower one.
+
+    So levels never skip, and siblings never drift deeper. Headings that start
+    a list item ("- #### Card") or sit in a blockquote ("> #### Quote") count,
+    keeping their prefix. Code fences follow CommonMark: a fence closes only on
+    the same character repeated at least as many times, and a fence that is
+    never closed runs to the end.
     """
     out = []
-    in_fence = False
-    prev = 0
+    fence = None             # (character, length) of the open code fence
+    seen_title = False
+    stack = []               # open headings below the title: (original, output)
     for line in md.split("\n"):
-        if _RE_FENCE.match(line):
-            in_fence = not in_fence
+        f = _RE_FENCE.match(line)
+        if fence is not None:
+            if (f and f.group(1)[0] == fence[0] and len(f.group(1)) >= fence[1]
+                    and not f.group(2).strip()):
+                fence = None
             out.append(line)
             continue
-        m = None if in_fence else _RE_HEADING.match(line)
+        if f and not (f.group(1)[0] == "`" and "`" in f.group(2)):
+            fence = (f.group(1)[0], len(f.group(1)))
+            out.append(line)
+            continue
+        m = _RE_HEADING.match(line)
         if not m:
             out.append(line)
             continue
-        if prev == 0:
+        original = len(m.group(2))
+        if not seen_title:
+            seen_title = True
             level = 1
         else:
-            level = max(2, min(len(m.group(2)), prev + 1))
-        prev = level
+            while stack and stack[-1][0] > original:
+                stack.pop()
+            if stack and stack[-1][0] == original:
+                level = stack[-1][1]
+            else:
+                level = min(6, (stack[-1][1] if stack else 1) + 1)
+                stack.append((original, level))
         out.append((m.group(1) or "") + "#" * level + m.group(3))
     return "\n".join(out)
 
