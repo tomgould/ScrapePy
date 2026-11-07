@@ -14,7 +14,7 @@ No timeline or priority is assigned.
 - A JSON output option alongside HTML and Markdown
 - A progress indicator during a crawl
 - A tidier directory structure:
-  - Output layout: one folder per site by default instead of one per start path (today `--site-name` gives this when it is passed), the same folder shape for article pages and section pages under `--stay-in-path`, and `_index.md` naming for every listing page.
+  - Output layout: one folder per site by default instead of one per start path (today `--site-name` gives this when it is passed, including the same folder shape for article pages and section pages under `--stay-in-path`), and `_index.md` naming for every listing page.
   - Repository layout: the root documents (`Architecture.md`, `Examples.md`, `Roadmap.md`, `Setup.md`) under `docs/`, with the README linking to them.
 - The `logging` module in place of `print()`, for log levels and file output
 

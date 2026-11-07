@@ -84,7 +84,7 @@ python main.py https://recipes.example.com/category/baby-led-weaning/ \
   --max-pages 200 --site-name recipes_example_com --markdown-only
 ```
 
-Fetches the category listing and its later pages (`--follow-next` follows `rel="next"` and `/page/N/` links without counting them as depth), follows only links whose path starts with `/recipes/` and that are one step from a listing, stops after 200 page requests, and writes only pages with schema.org Recipe data. Only robots.txt and the pages are requested: with `--include`, `--max-depth` or `--urls-file`, no sitemap, feed or homepage requests are made unless `--recent` or `--since` is given. Everything goes into `MarkdownSites/recipes_example_com/`.
+Fetches the category listing and its later pages (`--follow-next` follows `rel="next"` links and the `/page/N/` links of the same listing without counting them as depth; only `--max-pages` bounds it, `--max-depth` does not), follows only links whose path starts with `/recipes/` and that are one step from a listing, stops after 200 fetched pages, and writes only pages with schema.org Recipe data. Only robots.txt and the pages are requested: with `--include`, `--max-depth` or `--urls-file`, no sitemap, feed or homepage requests are made unless `--recent` or `--since` is given. Everything goes into `MarkdownSites/recipes_example_com/`.
 
 ### The results of a site search
 
@@ -94,7 +94,7 @@ python main.py "https://recipes.example.com/?s=baby+led+weaning" \
   --site-name recipes_example_com --markdown-only
 ```
 
-A start URL with a query string is fetched exactly as given and its links are followed; the search page itself is not written. `--site-name` puts the results in the same folder as the category crawl above, and the cache keeps each URL's file across the two runs.
+A start URL with a query string is fetched exactly as given and its links are followed whenever a targeting option (`--include`, `--exclude`, `--max-depth`, `--max-pages`, `--urls-file`, `--only-recipes`, `--site-name` or `--follow-next`) is set; without one, the query is dropped and `/` is fetched as before. The search page itself is never written. `--site-name` puts the results in the same folder as the category crawl above, and the cache keeps each URL's file across the two runs.
 
 ### A list of pages
 
@@ -102,7 +102,7 @@ A start URL with a query string is fetched exactly as given and its links are fo
 python main.py --urls-file recipe-urls.txt --max-depth 0 --site-name recipes_example_com
 ```
 
-`recipe-urls.txt` holds one URL per line (`#` starts a comment), all on one site; duplicates are fetched once. `run_summary.json` gets a `targeting` object with the pages skipped by `--include`, `--exclude` and `--max-depth`, the pages skipped as not recipes, and whether `--max-pages` stopped the run.
+`recipe-urls.txt` holds one URL per line (`#` at the start of a line starts a comment), all on one site; duplicates are fetched once. `run_summary.json` gets a `targeting` object with the pages skipped by `--include`, `--exclude` and `--max-depth`, the pages skipped as not recipes, and whether `--max-pages` stopped the run.
 
 ## Scoped Crawling
 
@@ -240,7 +240,7 @@ Markdown conversion is on by default. The extraction chain handles Readme.io, St
 python main.py https://www.example.com
 ```
 
-Incremental caching is on by default. The first crawl creates `.scrapepy_cache.json` in the output directory. The `CrawlCache` stores per-page: ETag, Last-Modified, SHA-256 content hash, extracted links, timestamp, published date, and page type. Per-asset: ETag, Last-Modified, timestamp.
+Incremental caching is on by default. The first crawl creates `.scrapepy_cache.json` in the output directory. The `CrawlCache` stores per-page: ETag, Last-Modified, SHA-256 content hash, extracted links and `rel="next"` paths, timestamp, published date, and page type. Per-asset: ETag, Last-Modified, timestamp.
 
 ### Re-crawl (only changed pages)
 
