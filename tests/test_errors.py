@@ -166,7 +166,7 @@ class TestErrorHeadingsInOtherLanguages:
         "Ошибка 404", "404 Страница не найдена", "Ошибка 502",      # Russian
         "404 ページが見つかりません", "404エラー", "エラー 503",     # Japanese
         "خطأ 404 - الصفحة غير موجودة", "الصفحة غير موجودة 404",      # Arabic
-        "Gone 410", "410 Gone", "403", "Zugriff verweigert 403", "403 \u7981\u6b62",
+        "Gone 410", "410 Gone", "403", "410", "HTTP 503", "Zugriff verweigert 403", "403 \u7981\u6b62",
         "\u062e\u0637\u0623 500", "Error 410",
         # under 12 words: 11 here
         "one two three four five six seven eight nine ten 404",
@@ -190,3 +190,12 @@ class TestErrorHeadingsInOtherLanguages:
         html = ("<html><head><title>Guide</title></head><body><p>"
                 + "x" * 25000 + "</p><h1>404</h1></body></html>")
         assert is_error_page_html(html) is False
+
+
+def test_error_title_after_a_long_head_is_found():
+    """The title and H1 are looked for in the first 20,000 characters, not
+    only the first few hundred: a long inline style comes first here."""
+    html = ("<html><head><style>" + "body { margin: 0; padding: 0; } " * 40
+            + "</style><title>Not Found</title></head><body></body></html>")
+    assert html.index("<title>") > 1000
+    assert is_error_page_html(html) is True

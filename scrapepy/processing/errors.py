@@ -53,9 +53,8 @@ SHORT_HEADING_WORDS = 12
 _TOKEN = r"(?<![0-9A-Za-z.]){}(?![0-9A-Za-z.])"
 _CLIENT_CODE_RE = re.compile(_TOKEN.format(r"(?:404|403)"))
 # 410 and the 5xx codes also appear in ordinary titles ("Fortune 500",
-# "Highway 410"), so they need to stand alone or beside an error word
+# "Highway 410"), so they need an error word beside them, or to stand alone
 _SERVER_CODE_RE = re.compile(_TOKEN.format(r"(?:410|500|502|503)"))
-_SERVER_CODE_ALONE_RE = re.compile(r"^\W*(?:http\W*)?(?:410|500|502|503)\W*$", re.IGNORECASE)
 # "Error" in several languages, and "gone" for 410
 _ERROR_WORD_RE = re.compile(
     r"\bgone\b|error|fehler|erreur|errore|erro|ошибка|помилка|エラー|错误|錯誤|오류|خطأ|שגיאה|"
@@ -71,8 +70,8 @@ def is_error_heading(text: str) -> bool:
     if len(text.split()) < SHORT_HEADING_WORDS:
         if _CLIENT_CODE_RE.search(text):
             return True
-        if _SERVER_CODE_RE.search(text) and (
-                _SERVER_CODE_ALONE_RE.match(text) or _ERROR_WORD_RE.search(text)):
+        # A code on its own ("503", "HTTP 410") is caught by _ERROR_HEADING_RES
+        if _SERVER_CODE_RE.search(text) and _ERROR_WORD_RE.search(text):
             return True
     return any(r.search(text) for r in _ERROR_HEADING_RES)
 
