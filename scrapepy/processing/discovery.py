@@ -238,14 +238,25 @@ def sitemap_host_allowed(url: str, config: ScrapeConfig) -> bool:
         return False
     if parts.scheme.lower() not in _ALLOWED_SCHEMES:
         return False
-    host = (parts.hostname or "").lower()
+    host = normalize_host(parts.hostname or "")
     if not host:
         return False
-    site_host = (urlsplit(config.base_url).hostname or "").lower()
+    site_host = normalize_host(urlsplit(config.base_url).hostname or "")
     # www.example.com and example.com are one site
     if host.removeprefix("www.") == site_host.removeprefix("www."):
         return True
-    return host in {h.lower() for h in config.allow_sitemap_hosts}
+    return host in {normalize_host(h) for h in config.allow_sitemap_hosts}
+
+
+def normalize_host(host: str) -> str:
+    """A host name in one spelling: lowercase, no trailing dot, and an
+    internationalised name in its ASCII (punycode) form, so EXAMPLE.com.,
+    example.com, bücher.example and xn--bcher-kva.example compare equal."""
+    host = host.strip().lower().rstrip(".")
+    try:
+        return host.encode("idna").decode("ascii").lower()
+    except UnicodeError:
+        return host
 
 
 def _header(headers, name: str) -> str:

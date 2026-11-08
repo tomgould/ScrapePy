@@ -231,7 +231,7 @@ def test_flag_refuses_private_redirects_and_records_them(servers, tmp_path):
     failed = {f["url"][len(site.base):]: f["reason"] for f in summary["failed"]}
     assert set(failed) == {"/to-loopback", "/to-localhost", "/to-meta", "/to-ten"}
     assert "private address refused (127.0.0.1)" in failed["/to-loopback"]
-    assert "localhost resolves to" in failed["/to-localhost"]
+    assert "local host name refused (localhost)" in failed["/to-localhost"]
     assert "private address refused (169.254.169.254)" in failed["/to-meta"]
     assert "private address refused (10.0.0.1)" in failed["/to-ten"]
     assert all(r.startswith("RedirectRefused: ") for r in failed.values())
