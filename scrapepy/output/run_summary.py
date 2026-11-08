@@ -166,6 +166,8 @@ def options_used(config: ScrapeConfig) -> dict:
     if config.documents:
         options["documents"] = list(config.documents)
         options["max_document_mb"] = config.max_document_mb
+        if config.pdf_layout:
+            options["pdf_layout"] = True
     return options
 
 

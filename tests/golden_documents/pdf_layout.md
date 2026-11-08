@@ -1,20 +1,14 @@
 status: converted
-title: Garden Club Leaflet
-date: 2025-03-14
-pages: 1
+title: Garden Club Annual Report
+date: 2025-03-14T09:30:00+01:00
+pages: 3
 sheets: None
 rows: None
 
 ## Page 1
 
-Garden Club Leaflet
+Annual report 2025 Total members: 42 # not a heading (draft)
 
-Members meet on the first Saturday of each month in the community hall, where the well-known plant swap takes place.
+## Page 3
 
-Side note: the hall opens at nine.
-
-- Bring gloves
-
-- Bring a trowel and a pot for seedlings
-
-Do not leave tools in the hall.
+Second page text

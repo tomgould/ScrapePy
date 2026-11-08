@@ -15,7 +15,7 @@ import pytest
 from scrapepy.cli import parse_args
 from scrapepy.config import ScrapeConfig
 from scrapepy.convert.documents import (
-    Limits, convert_document, markdown_table, parse_pdf_date, _clean_pdf_text,
+    Limits, convert_document, markdown_table, parse_pdf_date, _clean_pdf_text, _join_pdf_text,
 )
 from scrapepy.output.writer import UnsafePathError, write_within
 from scrapepy.processing.documents import (
@@ -56,9 +56,20 @@ def golden_layout_pdf():
     return layout_sample_pdf()
 
 
+LAYOUT = Limits(pdf_layout=True)
+
+
+@pytest.mark.parametrize("name,limits,build", [
+    ("pdf_leaflet", None, golden_layout_pdf),
+    ("pdf_leaflet_layout", LAYOUT, golden_layout_pdf),
+    ("pdf_layout", LAYOUT, golden_pdf),
+])
+def test_golden_pdf(name, limits, build):
+    assert rendered(convert_document(build(), "pdf", limits)) == (GOLDEN / f"{name}.md").read_text(encoding="utf-8")
+
+
 @pytest.mark.parametrize("name,kind,build", [
     ("pdf", "pdf", golden_pdf),
-    ("pdf_layout", "pdf", golden_layout_pdf),
     ("docx", "docx", make_docx),
     ("xlsx", "xlsx", golden_xlsx),
     ("csv", "csv", lambda: "name;count;note\r\napples;3;ripe\r\npears;5;\"a|b\"\r\n".encode("cp1252")),
@@ -172,6 +183,14 @@ def test_control_characters_removed():
 
 
 def test_pdf_text_clean_up():
+    assert _clean_pdf_text("ef\ufb01cient work\ufb02ow\nmain-\ntenance\nWell-\nKnown\n\n\n\nend  ") == (
+        "efficient workflow\nmain-tenance\nWell-\nKnown\n\nend")
+    # A hyphen at a line end is kept, so a hyphenated compound survives
+    assert _clean_pdf_text("a well-\nknown fact") == "a well-known fact"
+    assert _clean_pdf_text("# Title\n> quote") == "\\# Title\n\\> quote"
+
+
+def test_layout_pypdf_pages_join_lines():
     # pypdf text (pages past the layout budget): soft line breaks joined,
     # a sentence ending well short of the longest line ends a paragraph,
     # list items start their own, a hyphen at a line end is kept
@@ -183,14 +202,14 @@ def test_pdf_text_clean_up():
             "\u2022 First item that wraps over\n"
             "two lines\n"
             "# Not a heading")
-    assert _clean_pdf_text(text) == (
+    assert _join_pdf_text(text) == (
         "Identity theft places a burden on its victims and presents a challenge. Do not send it to "
         "the IRS. The efficient well-known main-tenance.\n\n"
         "- First item that wraps over two lines # Not a heading")
-    assert _clean_pdf_text("A short line.\nNext paragraph starts here and runs on for a while.") == (
+    assert _join_pdf_text("A short line.\nNext paragraph starts here and runs on for a while.") == (
         "A short line.\n\nNext paragraph starts here and runs on for a while.")
-    assert _clean_pdf_text("# Title\n> quote") == "\\# Title > quote"
-    assert _clean_pdf_text("A sentence ends here.\n# Then a line that starts with a hash and runs on") == (
+    assert _join_pdf_text("# Title\n> quote") == "\\# Title > quote"
+    assert _join_pdf_text("A sentence ends here.\n# Then a line that starts with a hash and runs on") == (
         "A sentence ends here.\n\n\\# Then a line that starts with a hash and runs on")
 
 
@@ -308,6 +327,14 @@ def test_write_within(tmp_path):
 
 
 # --- command line -------------------------------------------------------------
+
+def test_cli_pdf_layout_option():
+    assert parse_args(["https://example.com/", "--documents", "pdf", "--pdf-layout"]).pdf_layout is True
+    assert parse_args(["https://example.com/", "--documents", "pdf"]).pdf_layout is False
+    for argv in (["--pdf-layout"], ["--documents", "csv", "--pdf-layout"]):
+        with pytest.raises(SystemExit):
+            parse_args(["https://example.com/"] + argv)
+
 
 def test_cli_documents_options():
     config = parse_args(["https://example.com/", "--documents", "pdf,CSV"])
@@ -715,31 +742,31 @@ def test_layout_plan_is_counted_not_timed():
     from .document_samples import dense_page_pdf, raw_pdf, text_ops
     pages = [text_ops([(72, 700, 11, f"Page {n} text")]) for n in range(1, 6)]
     data = raw_pdf(pages)
-    result = convert_document(data, "pdf", Limits(layout_max_pages=2))
+    result = convert_document(data, "pdf", Limits(pdf_layout=True, layout_max_pages=2))
     assert (result.layout_pages, result.fallback_pages) == (2, "3 to 5: page budget")
     assert "## Page 4\n\nPage 4 text" in result.text
-    result = convert_document(data, "pdf", Limits(layout_total_pieces=3))
+    result = convert_document(data, "pdf", Limits(pdf_layout=True, layout_total_pieces=3))
     assert (result.layout_pages, result.fallback_pages) == (3, "4 to 5: text budget")
-    result = convert_document(data, "pdf", Limits(layout_total_chars=30))
+    result = convert_document(data, "pdf", Limits(pdf_layout=True, layout_total_chars=30))
     assert result.fallback_pages == "3 to 5: text budget"
-    result = convert_document(dense_page_pdf(101), "pdf", Limits(layout_page_pieces=100))
+    result = convert_document(dense_page_pdf(101), "pdf", Limits(pdf_layout=True, layout_page_pieces=100))
     assert (result.layout_pages, result.fallback_pages) == (0, "1: dense page")
     assert "w1" in result.text
-    assert convert_document(dense_page_pdf(100), "pdf", Limits(layout_page_pieces=100)).fallback_pages is None
-    assert convert_document(data, "pdf", Limits(layout_page_chars=5)).fallback_pages == "1 to 5: dense page"
+    assert convert_document(dense_page_pdf(100), "pdf", Limits(pdf_layout=True, layout_page_pieces=100)).fallback_pages is None
+    assert convert_document(data, "pdf", Limits(pdf_layout=True, layout_page_chars=5)).fallback_pages == "1 to 5: dense page"
     # Many separate pieces: within the piece cap, but too many lines to order
-    result = convert_document(dense_page_pdf(2000), "pdf")
+    result = convert_document(dense_page_pdf(2000), "pdf", LAYOUT)
     assert (result.layout_pages, result.fallback_pages) == (0, "1: complex page")
-    assert convert_document(dense_page_pdf(40), "pdf").fallback_pages is None
+    assert convert_document(dense_page_pdf(40), "pdf", LAYOUT).fallback_pages is None
     # The plan does not move with the time allowed
-    slow, fast = (convert_document(data, "pdf", Limits(layout_seconds=s)) for s in (60, 6000))
+    slow, fast = (convert_document(data, "pdf", Limits(pdf_layout=True, layout_seconds=s)) for s in (60, 6000))
     assert slow.text == fast.text and slow.fallback_pages is None
 
 
 def test_oversized_page_box_is_not_laid_out():
     from .document_samples import raw_pdf, text_ops
     data = raw_pdf([text_ops([(72, 700, 11, "Big page")])], mediabox=b"[0 0 1000000000 1000000000]")
-    result = convert_document(data, "pdf")
+    result = convert_document(data, "pdf", LAYOUT)
     assert (result.fallback_pages, result.status) == ("1: page box too large", "converted")
 
 
@@ -747,10 +774,10 @@ def test_oversized_page_box_is_not_laid_out():
 def test_time_caps_fall_back_to_pypdf_and_say_so():
     from .document_samples import raw_pdf, text_ops
     data = raw_pdf([text_ops([(72, 700, 11, f"Line {i} of the page") for i in range(40)])] * 2)
-    result = convert_document(data, "pdf", Limits(layout_page_seconds=0.000001))
+    result = convert_document(data, "pdf", Limits(pdf_layout=True, layout_page_seconds=0.000001))
     assert (result.layout_pages, result.fallback_pages) == (0, "1 to 2: time cap")
     assert "Line 39 of the page" in result.text
-    result = convert_document(data, "pdf", Limits(layout_seconds=-1))
+    result = convert_document(data, "pdf", Limits(pdf_layout=True, layout_seconds=-1))
     assert result.fallback_pages == "1 to 2: time cap"
 
 
@@ -759,19 +786,19 @@ def test_unmapped_glyphs_fall_back_and_never_reach_markdown():
     fonts = b"/F1 3 0 R /F2 20 0 R"
     mostly = raw_pdf([b"BT /F2 12 Tf 72 700 Td <0024004B00480024004B0048> Tj ET"],
                      UNMAPPED_FONT, fonts)
-    result = convert_document(mostly, "pdf")
+    result = convert_document(mostly, "pdf", LAYOUT)
     assert result.fallback_pages == "1: no Unicode text"
     assert "(cid:" not in result.text
     few = raw_pdf([text_ops([(72, 700, 11, "Readable words fill most of this line of text")])
                    + b"\nBT /F2 12 Tf 72 680 Td <0024> Tj ET"], UNMAPPED_FONT, fonts)
-    result = convert_document(few, "pdf")
+    result = convert_document(few, "pdf", LAYOUT)
     assert result.fallback_pages is None and "(cid:" not in result.text
     assert "Readable words fill most of this line of text" in result.text
 
 
 def test_pdf_table_reads_row_by_row():
     from .document_samples import table_page_pdf
-    assert convert_document(table_page_pdf(), "pdf").text == (
+    assert convert_document(table_page_pdf(), "pdf", LAYOUT).text == (
         "## Page 1\n\nQuarterly Sales Report\n\n| Region | Sales | Growth |\n| --- | --- | --- |\n"
         "| North | 1,200 | 4% |\n| South | 900 | 2% |\n| East | 1,500 | 7% |")
 
@@ -779,17 +806,19 @@ def test_pdf_table_reads_row_by_row():
 def test_heading_does_not_merge_into_smaller_text_below():
     from .document_samples import raw_pdf, text_ops
     data = raw_pdf([text_ops([(72, 700, 14, "Membership Figures"), (72, 686, 11, "Numbers rose this year.")])])
-    assert convert_document(data, "pdf").text == "## Page 1\n\nMembership Figures\n\nNumbers rose this year."
+    assert convert_document(data, "pdf", LAYOUT).text == "## Page 1\n\nMembership Figures\n\nNumbers rose this year."
 
 
 def test_pdf_without_pdfminer_still_converts_with_joined_lines(monkeypatch):
     import sys
-    monkeypatch.setitem(sys.modules, "pdfminer", None)
-    monkeypatch.setitem(sys.modules, "pdfminer.high_level", None)
+    for name in ("pdfminer", "pdfminer.high_level", "pdfminer.converter", "pdfminer.layout",
+                 "pdfminer.pdfdocument", "pdfminer.pdfinterp", "pdfminer.pdfpage", "pdfminer.pdfparser"):
+        monkeypatch.setitem(sys.modules, name, None)
     from .document_samples import layout_sample_pdf
-    result = convert_document(layout_sample_pdf(), "pdf")
+    result = convert_document(layout_sample_pdf(), "pdf", LAYOUT)
     assert result.status == "converted"
     assert "Do not leave tools in the hall." in result.text
+    assert result.fallback_pages == "1: pdfminer.six not installed"
 
 
 def test_default_column_cap_keeps_a_wide_table():
@@ -834,6 +863,73 @@ def test_page_past_pypdf_limits_fails_as_a_bomb_like_before():
     (too dense) and then refused by pypdf: the reason stays the bomb reason."""
     from .document_samples import raw_pdf
     data = raw_pdf([b"BT /F1 6 Tf 72 700 Td " + b"(a) Tj " * 1_100_000 + b"ET"])
-    result = convert_document(data, "pdf")
-    assert (result.status, result.reason) == (
-        "failed", "a compressed stream unpacks past the safety limit (possible PDF bomb)")
+    for limits in (None, LAYOUT):
+        result = convert_document(data, "pdf", limits)
+        assert (result.status, result.reason) == (
+            "failed", "a compressed stream unpacks past the safety limit (possible PDF bomb)")
+
+
+def test_layout_path_bomb_without_text_is_not_handed_to_pdfminer(monkeypatch):
+    from scrapepy.convert import documents as conv
+    from .document_samples import pdf_bomb
+
+    def no_layout(*args):
+        raise AssertionError("pdfminer.six must not run on a PDF bomb")
+    monkeypatch.setattr(conv, "_pdf_layout", no_layout)
+    data = pdf_bomb(80).replace(b"/Resources << /Font << /F1 3 0 R >> >>",
+                                b"/Resources <<" + b" " * 23 + b">>")
+    assert convert_document(data, "pdf", LAYOUT).reason == (
+        "a compressed stream unpacks past the safety limit (possible PDF bomb)")
+
+
+def test_default_pdfminer_fallback_drops_cid_markers():
+    from scrapepy.convert.documents import _without_cid
+    assert _without_cid("(cid:36)(cid:75)(cid:72)") == ""
+    assert _without_cid("Readable text with one (cid:3) glyph") == "Readable text with one  glyph"
+    assert _without_cid("plain") == "plain"
+
+
+def test_default_pdf_keeps_line_breaks_and_uses_no_layout(monkeypatch):
+    from scrapepy.convert import documents as conv
+    from .document_samples import layout_sample_pdf
+
+    def no_layout(*args):
+        raise AssertionError("the layout path is opt-in")
+    monkeypatch.setattr(conv, "_pdf_layout", no_layout)
+    result = convert_document(layout_sample_pdf(), "pdf")
+    assert "Members meet on the first Saturday of\neach month" in result.text
+    assert result.title is None            # junk metadata title dropped: the file name is used
+    assert (result.layout_pages, result.fallback_pages) == (None, None)
+
+
+@pytest.mark.skipif(not hasattr(__import__("signal"), "setitimer"), reason="POSIX timer")
+def test_page_timer_is_not_swallowed_by_a_broad_except(monkeypatch):
+    import time
+    from scrapepy.convert import documents as conv
+    from .document_samples import raw_pdf, text_ops
+    real = conv._layout_page
+
+    def careless(boxes):
+        try:
+            time.sleep(0.5)          # pdfminer code with a broad except, interrupted by the timer
+        except Exception:
+            pass
+        return real(boxes)
+    monkeypatch.setattr(conv, "_layout_page", careless)
+    data = raw_pdf([text_ops([(72, 700, 11, "Some text")])])
+    result = convert_document(data, "pdf", Limits(pdf_layout=True, layout_page_seconds=0.05))
+    assert result.fallback_pages == "1: time cap"
+
+
+def test_default_fallback_never_writes_cid_markers(monkeypatch):
+    """pypdf finds nothing, so pdfminer.six's fallback runs on unmapped glyphs."""
+    from scrapepy.convert import documents as conv
+    from .document_samples import UNMAPPED_FONT, raw_pdf, text_ops
+    monkeypatch.setattr(conv, "_pdf_pypdf", lambda data, limits: (None, None, 1, [""]))
+    fonts = b"/F1 3 0 R /F2 20 0 R"
+    mostly = raw_pdf([b"BT /F2 12 Tf 72 700 Td <0024004B00480024004B0048> Tj ET"], UNMAPPED_FONT, fonts)
+    assert convert_document(mostly, "pdf").status == "no_text"
+    few = raw_pdf([text_ops([(72, 700, 11, "Readable words fill most of this line")])
+                   + b"\nBT /F2 12 Tf 72 680 Td <0024> Tj ET"], UNMAPPED_FONT, fonts)
+    result = convert_document(few, "pdf")
+    assert "Readable words fill most of this line" in result.text and "(cid:" not in result.text

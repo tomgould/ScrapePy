@@ -288,12 +288,11 @@ def test_documents_crawl(site, tmp_path):
         "domain": "127.0.0.1:" + str(Handler.port),
         "file_type": "pdf",
         "pages": 2,
-        "layout_pages": 2,
         "linked_from": site + "/",
         "scraped_at": meta["scraped_at"],
         "content_hash": "sha256:" + hashlib.sha256(body.encode()).hexdigest(),
     }
-    assert body.startswith("# Garden Club Annual Report\n\n## Page 1\n\nAnnual report 2025 Total members: 42\n")
+    assert body.startswith("# Garden Club Annual Report\n\n## Page 1\n\nAnnual report 2025\nTotal members: 42\n")
     assert "## Page 2\n\nSecond page" in body
     assert meta["word_count"] > 5
 
@@ -498,3 +497,19 @@ def test_child_end_reason_reaches_the_summary(site, tmp_path, monkeypatch):
                              start_urls=["/plain.pdf"], max_depth=0)
     assert reasons(summary["documents"]["failed"]) == {
         "plain.pdf": "conversion stopped: crashed (SIGSEGV)"}
+
+
+def test_pdf_layout_is_opt_in(site, tmp_path):
+    config, _, summary, _ = crawl(site, tmp_path, documents=["pdf"], pdf_layout=True,
+                                  start="/reports/annual-report.pdf",
+                                  start_urls=["/reports/annual-report.pdf"], max_depth=0)
+    assert summary["options"]["pdf_layout"] is True
+    meta, body = front(Path(config.markdown_dir) / "reports" / "annual-report.pdf.md")
+    assert meta["layout_pages"] == 2 and "fallback_pages" not in meta
+    assert "Annual report 2025 Total members: 42" in body
+    config, _, summary, _ = crawl(site, tmp_path / "default", documents=["pdf"],
+                                  start="/reports/annual-report.pdf",
+                                  start_urls=["/reports/annual-report.pdf"], max_depth=0)
+    assert "pdf_layout" not in summary["options"]
+    meta, _ = front(Path(config.markdown_dir) / "reports" / "annual-report.pdf.md")
+    assert "layout_pages" not in meta

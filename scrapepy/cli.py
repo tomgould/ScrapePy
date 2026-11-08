@@ -159,6 +159,12 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
                                  "Needs pip install \"scrapepy[documents]\" for pdf, docx and xlsx")
     docs_group.add_argument("--max-document-mb", type=_document_mb, default=None, metavar="MB",
                             help="Largest document downloaded, in MB (1 to 200, default: 25)")
+    docs_group.add_argument("--pdf-layout", action="store_true",
+                            help="Experimental: read PDF pages with pdfminer.six layout analysis "
+                                 "(paragraphs, reading order, tables row by row) where a page "
+                                 "plan allows, instead of plain pypdf text. Multi-column prose, "
+                                 "tables with merged headers and forms can read worse than the "
+                                 "default. Needs --documents with pdf")
     parser.add_argument("--index-pages", action=argparse.BooleanOptionalAction, default=True,
                         help="Write generated _index.md listing pages for sections (default: on)")
     parser.add_argument("--auth", type=str, default=None,
@@ -262,6 +268,8 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
                 parser.error(f"--feed cannot be combined with {flag}")
     if args.max_document_mb is not None and not args.documents:
         parser.error("--max-document-mb needs --documents")
+    if args.pdf_layout and "pdf" not in (args.documents or []):
+        parser.error("--pdf-layout needs --documents with pdf")
     if args.documents:
         if not args.markdown:
             parser.error("--documents writes Markdown and cannot be combined with --no-markdown")
@@ -367,6 +375,7 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
         allow_sitemap_hosts=list(args.allow_sitemap_host),
         refuse_private_redirects=args.refuse_private_redirects,
         solve_cloudflare=not args.no_cloudflare_solve,
+        pdf_layout=args.pdf_layout,
         **({"max_document_mb": args.max_document_mb} if args.max_document_mb else {}),
     )
 

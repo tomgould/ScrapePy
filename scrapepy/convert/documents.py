@@ -48,6 +48,7 @@ class Limits:
     max_columns: int = 100             # columns per table
     max_scan_rows: int = 100_000       # rows read per table, empty ones included
     section_rows: int = 40             # a long table is cut into sections of this many rows
+    pdf_layout: bool = False           # --pdf-layout: the experimental pdfminer.six layout path
     # PDF layout with pdfminer.six is planned per page from counts, so the
     # same file always gives the same text; pages outside the plan are read
     # with pypdf, and the front matter says which and why
@@ -258,8 +259,8 @@ def _quiet(*names: str) -> None:
 # PDF
 # ---------------------------------------------------------------------------
 
-def _convert_pdf(data: bytes, limits: Limits) -> Converted:
-    """pypdf opens the file (encryption, metadata, page count) and unpacks
+def _convert_pdf_layout(data: bytes, limits: Limits) -> Converted:
+    """--pdf-layout (experimental). pypdf opens the file (encryption, metadata, page count) and unpacks
     every page's content stream through its limits, counting the text
     pieces on each page. Pages are then laid out with pdfminer.six
     (paragraphs rebuilt from its text lines, in its reading order) as a plan
@@ -315,7 +316,7 @@ def _convert_pdf(data: bytes, limits: Limits) -> Converted:
                 if _is_limit_error(e):
                     raise DocumentError(_PDF_BOMB) from None
                 raise
-            text = _clean_pdf_text(raw)
+            text = _join_pdf_text(raw)
         texts.append(text)
     if _junk_title(title):
         heading = layout.get(0, ("", None))[1]
@@ -331,6 +332,138 @@ def _convert_pdf(data: bytes, limits: Limits) -> Converted:
         out.notes.append(f"Pages after the first {len(texts):,} are not converted.")
     out.text = "\n\n".join(parts)
     return out
+
+
+def _convert_pdf(data: bytes, limits: Limits) -> Converted:
+    """PDF text from pypdf, page by page, with pdfminer.six as a fallback
+    when pypdf cannot read the file or finds no text; or, with --pdf-layout
+    (Limits.pdf_layout), the experimental layout path."""
+    if limits.pdf_layout:
+        return _convert_pdf_layout(data, limits)
+    if b"%PDF-" not in data[:1024]:
+        raise DocumentError("not a PDF file")
+    _quiet("pypdf", "pdfminer")
+    title = created = None
+    count = None
+    try:
+        title, created, count, texts = _pdf_pypdf(data, limits)
+    except DocumentError:
+        raise
+    except Exception as e:
+        if _is_limit_error(e):
+            # pypdf stopped a stream that unpacks too far: pdfminer.six has
+            # no such limit, so it is never tried on this file
+            raise DocumentError(_PDF_BOMB) from None
+        texts = _pdf_pdfminer(data, limits)
+        if texts is None:
+            raise
+        count = len(texts)
+    if not any(t.strip() for t in texts):
+        # pypdf found nothing: pdfminer reads some files pypdf cannot, but
+        # it has no decompression limit, so the page contents are first
+        # unpacked through pypdf's (extract_text can skip a page unread)
+        _check_pdf_streams_data(data, limits)
+        try:
+            fallback = _pdf_pdfminer(data, limits)
+        except Exception:
+            fallback = None
+        if fallback and any(t.strip() for t in fallback):
+            texts = fallback
+    out = Converted("converted", title=None if _junk_title(title) else title,
+                    date=created, pages=count)
+    if not any(t.strip() for t in texts):
+        out.status, out.reason = "no_text", "no text layer"
+        return out
+    parts = []
+    for number, text in enumerate(texts, start=1):
+        text = _clean_pdf_text(text)
+        if text:
+            parts.append(f"## Page {number}\n\n{text}")
+    if count is not None and count > len(texts):
+        out.notes.append(f"Pages after the first {len(texts):,} are not converted.")
+    out.text = "\n\n".join(parts)
+    return out
+
+
+def _check_pdf_streams_data(data: bytes, limits: Limits) -> None:
+    """Unpack each page's content stream through pypdf's limits; a stream
+    over them fails the document."""
+    from pypdf import PdfReader
+
+    try:
+        reader = PdfReader(io.BytesIO(data), strict=False)
+        if reader.is_encrypted:
+            reader.decrypt("")
+        for index in range(min(len(reader.pages), limits.max_pages)):
+            contents = reader.pages[index].get_contents()
+            if contents is not None:
+                contents.get_data()
+    except Exception as e:
+        if _is_limit_error(e):
+            raise DocumentError(_PDF_BOMB) from None
+
+
+def _pdf_pypdf(data: bytes, limits: Limits):
+    from pypdf import PdfReader
+
+    reader = PdfReader(io.BytesIO(data), strict=False)
+    if reader.is_encrypted:
+        try:
+            opened = reader.decrypt("")
+        except Exception:
+            opened = 0
+        if not opened:
+            raise DocumentError("encrypted (needs a password)")
+    meta = reader.metadata or {}
+    title = meta.get("/Title")
+    created = parse_pdf_date(meta.get("/CreationDate")) or parse_pdf_date(meta.get("/ModDate"))
+    count = len(reader.pages)
+    texts = []
+    for index in range(min(count, limits.max_pages)):
+        texts.append(reader.pages[index].extract_text() or "")
+    return (str(title) if title else None), created, count, texts
+
+
+def _pdf_pdfminer(data: bytes, limits: Limits) -> list[str] | None:
+    """Per-page text from pdfminer.six, or None when it is not installed.
+    "(cid:N)" markers for glyphs without a Unicode mapping are removed, and
+    a page made mostly of them counts as empty."""
+    try:
+        from pdfminer.high_level import extract_pages
+        from pdfminer.layout import LTTextContainer
+    except ImportError:
+        return None
+    texts = []
+    for layout in extract_pages(io.BytesIO(data), maxpages=limits.max_pages):
+        text = "".join(el.get_text() for el in layout if isinstance(el, LTTextContainer))
+        texts.append(_without_cid(text))
+    return texts
+
+
+def _without_cid(text: str) -> str:
+    """text without "(cid:N)" markers; empty when they are most of it."""
+    stripped = "".join(text.split())
+    markers = sum(len(m) for m in _RE_CID.findall(stripped))
+    if stripped and markers * 2 > len(stripped):
+        return ""
+    return _RE_CID.sub("", text)
+
+
+_RE_HYPHEN_BREAK = re.compile(r"([a-z])-\n([a-z])")   # the hyphen is kept: "well-known"
+_RE_BLANK_RUNS = re.compile(r"\n{3,}")
+
+
+def _clean_pdf_text(text: str) -> str:
+    """Page text with ligatures spelled out, a word broken by a hyphen at a
+    line end joined with its hyphen kept (no dictionary can tell
+    "main-tenance" from "well-known", so nothing is lost), trailing spaces
+    and runs of blank lines removed, and line starts escaped. The PDF's own
+    line breaks are kept."""
+    text = clean(text.translate(_LIGATURES))
+    text = _RE_HYPHEN_BREAK.sub(r"\1-\2", text)
+    text = "\n".join(line.rstrip() for line in text.split("\n"))
+    text = _RE_BLANK_RUNS.sub("\n\n", text).strip()
+    return _escape_line_starts(text)
 
 
 def _describe_fallbacks(reasons: dict[int, str]) -> str | None:
@@ -462,8 +595,9 @@ def _paragraph_start(text: str) -> str:
 LAYOUT_BOXES_FLOW = None
 
 
-class _PageTimeout(Exception):
-    pass
+class _PageTimeout(BaseException):
+    """A BaseException, so a broad `except Exception` inside pdfminer.six
+    cannot swallow the page timer."""
 
 
 def _page_timer(seconds: float):
@@ -543,15 +677,6 @@ def _pdf_layout(data: bytes, limits: Limits, pages: int, plan: list[str | None] 
             continue
         layout[index] = (text, heading)
     return layout, reasons
-
-
-def _pdf_pdfminer(data: bytes, limits: Limits) -> list[str] | None:
-    """Per-page text from pdfminer.six, or None when it is not installed."""
-    try:
-        layout, _ = _pdf_layout(data, limits, limits.max_pages, None)
-    except ImportError:
-        return None
-    return [layout.get(i, ("", None))[0] for i in range(max(layout, default=-1) + 1)]
 
 
 _RE_CID = re.compile(r"\(cid:\d+\)")
@@ -684,8 +809,8 @@ def _layout_page(layout) -> tuple[str, str | None, bool]:
     return text, heading, False
 
 
-def _clean_pdf_text(text: str) -> str:
-    """pypdf page text (pages past the layout budget) as paragraphs: lines
+def _join_pdf_text(text: str) -> str:
+    """pypdf page text (pages the --pdf-layout plan leaves to pypdf) as paragraphs: lines
     joined unless the next starts a list item or the line ends a sentence
     well short of the page's longest line, which is how a paragraph ends;
     ligatures spelled out, hyphens at line ends kept, line starts escaped."""
