@@ -535,10 +535,14 @@ def test_docx_list_levels():
 FLOOD_PARENT = """
 import asyncio, json, resource, sys
 from scrapepy.processing.documents import run_in_child
+# A first small run, so the baseline already includes everything imported
+asyncio.run(run_in_child("tests.document_samples:child_flood", [1, False], 120, 0))
+before_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 results = [asyncio.run(run_in_child("tests.document_samples:child_flood", [512, exit_], 120, 0))
            for exit_ in (False, True)]
-peak_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-print(json.dumps({"results": results, "peak_mb": peak_kb // 1024}))
+after_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+print(json.dumps({"results": results, "growth_mb": (after_kb - before_kb) // 1024,
+                  "peak_mb": after_kb // 1024}))
 """
 
 
@@ -557,8 +561,9 @@ def test_child_flooding_stdout_and_stderr_cannot_grow_the_parent(tmp_path):
         ["ok", 512],
         ["died", "exited with code 5 without a result (last line of stderr); it also printed to stdout"],
     ]
-    # 512 MB went through each pipe twice; storing them would pass 2 GB
-    assert report["peak_mb"] < 300, report["peak_mb"]
+    # 512 MB went through each pipe in each run; storing them grows the
+    # parent by about 2 GB, reading them in bounded chunks by almost nothing
+    assert report["growth_mb"] < 64, report
 
 
 PARENT_THEN_KILLED = """
