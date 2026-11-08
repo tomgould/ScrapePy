@@ -309,7 +309,8 @@ def policy_from_response(
         return RobotsPolicy.from_text(None, user_agent, base_url, enforced)
     if status == ROBOTS_REDIRECT_FAILED:
         reason = ("more than five redirects, a redirect loop, a redirect without a "
-                  "Location or a redirect to a non-HTTP URL")
+                  "Location, a redirect to a non-HTTP URL or a redirect refused by "
+                  "--refuse-private-redirects")
     elif status == 0:
         reason = "unreachable"
     else:

@@ -47,6 +47,25 @@ def _document_mb(value: str) -> int:
     return n
 
 
+def _sitemap_host(value: str) -> str:
+    """A host name or IP address for --allow-sitemap-host, lowercased."""
+    host = value.strip().lower()
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    if not host or any(c in host for c in "/@?# \t") or (":" in host and not _is_ipv6(host)):
+        raise argparse.ArgumentTypeError(
+            "give a host name such as cdn.example.com, without a scheme, port or path")
+    return host
+
+
+def _is_ipv6(host: str) -> bool:
+    import ipaddress
+    try:
+        return ipaddress.ip_address(host).version == 6
+    except ValueError:
+        return False
+
+
 def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
     parser = argparse.ArgumentParser(
         prog="scrapepy",
@@ -146,6 +165,20 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
                         help="HTTP Basic Auth credentials (user:pass)")
     parser.add_argument("--proxy", type=str, default=None,
                         help="Proxy URL for requests")
+    net_group = parser.add_argument_group("Network safety")
+    net_group.add_argument("--allow-sitemap-host", action="append", default=[], metavar="HOST",
+                           type=_sitemap_host,
+                           help="Also fetch sitemaps on this host when robots.txt or a sitemap "
+                                "index lists them (repeatable; default: only sitemaps on the "
+                                "site's own host are fetched)")
+    net_group.add_argument("--refuse-private-redirects", action="store_true",
+                           help="Do not follow a redirect to a loopback, link-local, private "
+                                "or carrier-grade NAT address, or to a host that resolves to "
+                                "one; the page is recorded as failed. Covers HTTP fetches, not "
+                                "the browser modes; the start URL is not checked")
+    net_group.add_argument("--no-cloudflare-solve", action="store_true",
+                           help="Do not try to solve Cloudflare challenges in the browser modes "
+                                "(default: try)")
     parser.add_argument("--headless", action="store_true",
                         help="Run browser headless (default: visible)")
     parser.add_argument("-v", "--verbose", action="store_true",
@@ -326,6 +359,9 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
         site_name=args.site_name,
         follow_next=args.follow_next,
         documents=list(args.documents or []),
+        allow_sitemap_hosts=list(args.allow_sitemap_host),
+        refuse_private_redirects=args.refuse_private_redirects,
+        solve_cloudflare=not args.no_cloudflare_solve,
         **({"max_document_mb": args.max_document_mb} if args.max_document_mb else {}),
     )
 
@@ -406,6 +442,8 @@ def _run(config: ScrapeConfig) -> int:
         print("Docs mode: enabled (will navigate through sidebar)")
     if config.incremental:
         print("Incremental mode: only re-downloading changed pages/assets")
+    if config.refuse_private_redirects:
+        print("Redirects to private addresses: refused (HTTP fetches)")
     if config.has_date_filter:
         cutoff_str = config.cutoff_date.strftime("%Y-%m-%d %H:%M UTC")
         if config.recent:

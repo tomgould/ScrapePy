@@ -2,11 +2,15 @@
 
 import asyncio
 from typing import Callable
+from urllib.parse import urlsplit
 
 from scrapling import Fetcher, StealthyFetcher
 
 from ..config import ScrapeConfig
 from ..proxy import protect_logs, redact
+from .redirects import (
+    MAX_REDIRECTS, REDIRECT_STATUSES, RedirectRefused, check_redirect, header_value,
+)
 
 # User agent for asset downloads when --user-agent is not set. Page fetches
 # without --user-agent use the browser-like headers Scrapling generates.
@@ -39,6 +43,8 @@ def fetch_page_http(
     """Fetch a page using Scrapling's HTTP-only Fetcher (fast, no browser).
 
     retries=None keeps Scrapling's default (3 attempts); 1 means a single attempt.
+    With --refuse-private-redirects, redirects are followed here, hop by hop,
+    and one into a private network raises RedirectRefused.
     """
     merged = page_headers(config, headers)
     kwargs = {}
@@ -47,6 +53,8 @@ def fetch_page_http(
     if config.proxy:
         protect_logs(config.proxy)
         kwargs["proxy"] = config.proxy
+    if follow_redirects and config.refuse_private_redirects:
+        return _get_checking_redirects(url, config, merged, timeout, kwargs)
     return Fetcher.get(
         url,
         stealthy_headers=True,
@@ -55,6 +63,30 @@ def fetch_page_http(
         headers=merged,
         **kwargs,
     )
+
+
+def _get_checking_redirects(url: str, config: ScrapeConfig, headers: dict,
+                            timeout: float, kwargs: dict):
+    """Fetcher.get() following at most MAX_REDIRECTS redirects itself, each
+    target checked first. Authorization is not sent to another host."""
+    current = url
+    for _ in range(MAX_REDIRECTS + 1):
+        response = Fetcher.get(
+            current, stealthy_headers=True, follow_redirects=False,
+            timeout=timeout, headers=headers, **kwargs,
+        )
+        location = header_value(getattr(response, "headers", {}), "location")
+        if response.status not in REDIRECT_STATUSES or not location:
+            return response
+        target = check_redirect(current, location, config.url)
+        if _netloc(target) != _netloc(current):
+            headers = {k: v for k, v in headers.items() if k.lower() != "authorization"}
+        current = target
+    raise RedirectRefused(f"more than {MAX_REDIRECTS} redirects")
+
+
+def _netloc(url: str) -> str:
+    return urlsplit(url).netloc.lower()
 
 
 async def fetch_page_browser(
@@ -83,7 +115,7 @@ async def fetch_page_browser(
         page_action=_combined_action,
         timeout=120000,
         wait=wt,
-        solve_cloudflare=True,
+        solve_cloudflare=config.solve_cloudflare,
     )
     if config.auth_header:
         kwargs["extra_headers"] = config.auth_header
@@ -116,7 +148,24 @@ def create_asset_client(config: ScrapeConfig):
         timeout=30.0,
         headers=default_headers,
         proxy=config.proxy,
+        **redirect_hooks(config),
     )
+
+
+def redirect_hooks(config: ScrapeConfig) -> dict:
+    """httpx client arguments for --refuse-private-redirects: a response hook
+    that checks every redirect before the client follows it (and before a
+    caller following redirects itself sees it). Empty without the flag."""
+    if not config.refuse_private_redirects:
+        return {}
+    from .threads import run_blocking
+
+    async def _check(response):
+        location = response.headers.get("location")
+        if response.status_code in REDIRECT_STATUSES and location:
+            await run_blocking(check_redirect, str(response.url), location, config.url)
+
+    return {"event_hooks": {"response": [_check]}}
 
 
 async def download_document(
@@ -176,6 +225,7 @@ async def download_asset(
                 timeout=30.0,
                 headers=req_headers,
                 proxy=config.proxy,
+                **redirect_hooks(config),
             ) as one_shot:
                 resp = await one_shot.get(url)
         resp_headers = dict(resp.headers)

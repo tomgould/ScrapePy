@@ -138,6 +138,12 @@ class ScrapeConfig:
     # and converted to Markdown
     documents: list[str] = field(default_factory=list)
     max_document_mb: int = DEFAULT_MAX_DOCUMENT_MB
+    # Network safety: sitemap hosts besides the site's own whose sitemaps
+    # (from robots.txt or a sitemap index) are fetched; refusing redirects
+    # into private networks; the browser's Cloudflare challenge solver
+    allow_sitemap_hosts: list[str] = field(default_factory=list)
+    refuse_private_redirects: bool = False
+    solve_cloudflare: bool = True
 
     # Derived fields (set in __post_init__)
     cutoff_date: datetime | None = field(init=False, default=None)
