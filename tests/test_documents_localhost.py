@@ -288,6 +288,7 @@ def test_documents_crawl(site, tmp_path):
         "domain": "127.0.0.1:" + str(Handler.port),
         "file_type": "pdf",
         "pages": 2,
+        "layout_pages": 2,
         "linked_from": site + "/",
         "scraped_at": meta["scraped_at"],
         "content_hash": "sha256:" + hashlib.sha256(body.encode()).hexdigest(),
@@ -387,9 +388,11 @@ def test_max_pages_counts_documents(site, tmp_path):
     assert requests == ["/", "/reports/annual-report.pdf", "/plain.pdf"]
     # The documents the budget did not reach are counted and listed
     docs = summary["documents"]
-    assert docs["found_unvisited"] == 19
+    # .doc and .xls links would only be skipped, so they are not listed
+    assert docs["found_unvisited"] == 17
     assert docs["found_unvisited_sample"][:2] == [site + "/files/handbook.docx", site + "/data/rota.xlsx"]
-    assert len(docs["found_unvisited_sample"]) == 19
+    assert len(docs["found_unvisited_sample"]) == 17
+    assert not any(u.endswith((".doc", ".xls")) for u in docs["found_unvisited_sample"])
     assert site + "/plain.pdf" not in docs["found_unvisited_sample"]
     assert summary["counts"]["fetched"] == 3
     assert summary["targeting"]["stopped_by_limit"] is True

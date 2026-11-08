@@ -48,7 +48,19 @@ class Limits:
     max_columns: int = 100             # columns per table
     max_scan_rows: int = 100_000       # rows read per table, empty ones included
     section_rows: int = 40             # a long table is cut into sections of this many rows
-    layout_seconds: float = 30.0       # PDF pages laid out with pdfminer.six for this long, then pypdf
+    # PDF layout with pdfminer.six is planned per page from counts, so the
+    # same file always gives the same text; pages outside the plan are read
+    # with pypdf, and the front matter says which and why
+    layout_max_pages: int = 300        # pages laid out at most
+    layout_page_pieces: int = 20000    # a page with more text pieces is read with pypdf
+    layout_total_pieces: int = 200000  # text pieces laid out in all
+    layout_page_chars: int = 100000    # a page with more text characters is read with pypdf
+    layout_total_chars: int = 2000000  # text characters laid out in all
+    layout_max_boxes: int = 150        # a page with more text boxes or lines is read with pypdf
+    layout_max_lines: int = 1500
+    layout_max_box: float = 14400.0    # points: a larger page box is read with pypdf
+    layout_page_seconds: float = 5.0   # safety cap per page (form contents are not counted)
+    layout_seconds: float = 60.0       # safety cap for all pages
     max_unzipped_bytes: int = 128 * MB  # DOCX and XLSX: total unpacked size
     max_xml_part_bytes: int = 16 * MB   # one XML part parsed whole (all of DOCX; XLSX except sheets)
     max_zip_entries: int = 10000       # DOCX and XLSX: parts in the archive
@@ -70,6 +82,8 @@ class Converted:
     title: str | None = None
     date: str | None = None
     pages: int | None = None           # PDF pages
+    layout_pages: int | None = None    # PDF pages laid out with pdfminer.six
+    fallback_pages: str | None = None  # PDF pages read with pypdf instead, and why
     sheets: int | None = None          # XLSX sheets
     rows: int | None = None            # XLSX and CSV: data rows read (headers not counted)
     text: str = ""
@@ -245,12 +259,16 @@ def _quiet(*names: str) -> None:
 # ---------------------------------------------------------------------------
 
 def _convert_pdf(data: bytes, limits: Limits) -> Converted:
-    """Pages are laid out with pdfminer.six (paragraphs rebuilt from its
-    text lines, in its reading order) until Limits.layout_seconds is spent,
-    and read with pypdf after that, so a long PDF keeps a bounded time.
-    pypdf opens the file first (encryption, metadata, page count) and every
-    page's content stream is unpacked through its limits before pdfminer,
-    which has none, sees the file."""
+    """pypdf opens the file (encryption, metadata, page count) and unpacks
+    every page's content stream through its limits, counting the text
+    pieces on each page. Pages are then laid out with pdfminer.six
+    (paragraphs rebuilt from its text lines, in its reading order) as a plan
+    from those counts allows: the first Limits.layout_max_pages pages, each
+    with at most Limits.layout_page_pieces pieces and a sane page box, up to
+    Limits.layout_total_pieces in all. The other pages, and any page the
+    per-page or total time cap stops, are read with pypdf. The plan depends
+    only on the file; the time caps are a safety net, and every page read
+    with pypdf is recorded in fallback_pages with the reason."""
     if b"%PDF-" not in data[:1024]:
         raise DocumentError("not a PDF file")
     _quiet("pypdf", "pdfminer")
@@ -264,34 +282,47 @@ def _convert_pdf(data: bytes, limits: Limits) -> Converted:
         if _is_limit_error(e):
             raise DocumentError(_PDF_BOMB) from None
         reader = None          # pypdf cannot read it: pdfminer alone
-    wanted = min(count, limits.max_pages) if reader is not None else limits.max_pages
     if reader is not None:
-        _check_pdf_streams(reader, wanted)
+        wanted = min(count, limits.max_pages)
+        plan = _layout_plan(reader, _check_pdf_streams(reader, wanted), limits)
+    else:
+        wanted = limits.max_pages
+        plan = None            # no counts: every page is tried, under the time caps
     try:
-        layout = _pdf_layout(data, limits, wanted)
+        layout, reasons = _pdf_layout(data, limits, wanted, plan)
+    except ImportError:
+        layout, reasons = {}, {}
+        missing = "pdfminer.six not installed"
+        if plan is not None:
+            reasons = {i: plan[i] or missing for i in range(wanted)}
     except Exception:
         if reader is None:
             raise
-        layout = None
-    layout = layout or []
+        layout, reasons = {}, {i: (plan[i] or "layout error") for i in range(wanted)}
     if reader is None:
         if not layout:
             raise DocumentError("corrupt or unreadable PDF file")
-        count = wanted = len(layout)
-    texts = [text for text, _ in layout]
+        count = wanted = max(layout) + 1
+    texts = []
     for index in range(wanted):
-        if index < len(texts) and texts[index].strip():
-            continue
-        raw = (reader.pages[index].extract_text() or "") if reader is not None else ""
-        text = _clean_pdf_text(raw)
-        if index < len(texts):
-            texts[index] = text
-        else:
-            texts.append(text)
+        text = layout.get(index, ("", None))[0]
+        if not text.strip() and reader is not None:
+            if index in layout:
+                reasons.setdefault(index, "no text from layout")
+            try:
+                raw = reader.pages[index].extract_text() or ""
+            except Exception as e:
+                if _is_limit_error(e):
+                    raise DocumentError(_PDF_BOMB) from None
+                raise
+            text = _clean_pdf_text(raw)
+        texts.append(text)
     if _junk_title(title):
-        heading = layout[0][1] if layout else None
+        heading = layout.get(0, ("", None))[1]
         title = heading if not _junk_title(heading) else None
-    out = Converted("converted", title=title, date=created, pages=count)
+    out = Converted("converted", title=title, date=created, pages=count,
+                    layout_pages=len([i for i in layout if i not in reasons]),
+                    fallback_pages=_describe_fallbacks(reasons))
     if not any(t.strip() for t in texts):
         out.status, out.reason = "no_text", "no text layer"
         return out
@@ -300,6 +331,51 @@ def _convert_pdf(data: bytes, limits: Limits) -> Converted:
         out.notes.append(f"Pages after the first {len(texts):,} are not converted.")
     out.text = "\n\n".join(parts)
     return out
+
+
+def _describe_fallbacks(reasons: dict[int, str]) -> str | None:
+    """Pages read with pypdf, grouped by reason: "3, 7 to 9: page budget"."""
+    if not reasons:
+        return None
+    by_reason: dict[str, list[int]] = {}
+    for index in sorted(reasons):
+        by_reason.setdefault(reasons[index], []).append(index + 1)
+    parts = []
+    for reason, pages in by_reason.items():
+        runs, start = [], pages[0]
+        for prev, cur in zip(pages, pages[1:] + [None]):
+            if cur != prev + 1:
+                runs.append(str(start) if start == prev else f"{start} to {prev}")
+                start = cur
+        parts.append(f"{', '.join(runs)}: {reason}")
+    return "; ".join(parts)
+
+
+def _layout_plan(reader, counts: list[tuple[int, int]], limits: Limits) -> list[str | None]:
+    """For each page, None when it is laid out with pdfminer.six, or why it
+    is read with pypdf instead. Depends only on the file."""
+    plan: list[str | None] = []
+    total = total_chars = 0
+    for index, (count, chars) in enumerate(counts):
+        reason = None
+        try:
+            box = reader.pages[index].mediabox
+            width, height = abs(float(box.width)), abs(float(box.height))
+        except Exception:
+            width = height = float("nan")
+        if index >= limits.layout_max_pages:
+            reason = "page budget"
+        elif not (0 < width <= limits.layout_max_box and 0 < height <= limits.layout_max_box):
+            reason = "page box too large"
+        elif count > limits.layout_page_pieces or chars > limits.layout_page_chars:
+            reason = "dense page"
+        elif total + count > limits.layout_total_pieces or total_chars + chars > limits.layout_total_chars:
+            reason = "text budget"
+        else:
+            total += count
+            total_chars += chars
+        plan.append(reason)
+    return plan
 
 
 def _is_limit_error(error: Exception) -> bool:
@@ -313,18 +389,30 @@ def _is_limit_error(error: Exception) -> bool:
 _PDF_BOMB = "a compressed stream unpacks past the safety limit (possible PDF bomb)"
 
 
-def _check_pdf_streams(reader, pages: int) -> None:
-    """Unpack each page's content stream through pypdf's limits; a stream
-    over them fails the document. extract_text can skip a page unread, so
-    this is what stands between pdfminer.six and a bomb."""
+_RE_TEXT_PIECE = re.compile(rb"\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]*>")
+
+
+def _check_pdf_streams(reader, pages: int) -> list[tuple[int, int]]:
+    """Unpack each page's content stream through pypdf's limits (a stream
+    over them fails the document: extract_text can skip a page unread, so
+    this is what stands between pdfminer.six and a bomb) and count its text
+    pieces (the string operands layout analysis groups) and their
+    characters, which together bound its cost."""
+    counts = []
     for index in range(pages):
         try:
             contents = reader.pages[index].get_contents()
-            if contents is not None:
-                contents.get_data()
+            data = contents.get_data() if contents is not None else b""
         except Exception as e:
             if _is_limit_error(e):
                 raise DocumentError(_PDF_BOMB) from None
+            data = b""
+        pieces = chars = 0
+        for match in _RE_TEXT_PIECE.finditer(data):
+            pieces += 1
+            chars += match.end() - match.start() - 2
+        counts.append((pieces, chars))
+    return counts
 
 
 def _pdf_open(data: bytes):
@@ -365,73 +453,235 @@ def _paragraph_start(text: str) -> str:
     return _RE_BULLET.sub("- ", text, count=1)
 
 
-def _pdf_layout(data: bytes, limits: Limits, pages: int):
-    """[(page text, heading or None)] from pdfminer.six for the first pages,
-    stopping once Limits.layout_seconds is spent; None when pdfminer is not
-    installed."""
-    try:
-        from pdfminer.high_level import extract_pages
-        from pdfminer.layout import LAParams
-    except ImportError:
-        return None
+# pdfminer.six's hierarchical box grouping (boxes_flow) gives the reading
+# order (a side column stays one block) but costs more than quadratic time
+# on a page of many boxes or lines. Each page is first analysed without it,
+# which stays linear; the reading order is then worked out only for a page
+# within Limits.layout_max_boxes and layout_max_lines, a count that depends
+# only on the file
+LAYOUT_BOXES_FLOW = None
+
+
+class _PageTimeout(Exception):
+    pass
+
+
+def _page_timer(seconds: float):
+    """A context that raises _PageTimeout after seconds, where a timer
+    signal can be used (POSIX, main thread: the conversion child), else
+    nothing."""
+    import contextlib
+    import signal
+    import threading
+
+    if not hasattr(signal, "setitimer") or threading.current_thread() is not threading.main_thread():
+        return contextlib.nullcontext()
+
+    @contextlib.contextmanager
+    def timer():
+        def expired(signum, frame):
+            raise _PageTimeout()
+        previous = signal.signal(signal.SIGALRM, expired)
+        signal.setitimer(signal.ITIMER_REAL, seconds)
+        try:
+            yield
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous)
+    return timer()
+
+
+def _pdf_layout(data: bytes, limits: Limits, pages: int, plan: list[str | None] | None):
+    """({page index: (text, heading)}, {page index: reason}) from
+    pdfminer.six for the pages the plan allows (every page when there is
+    no plan). A page that runs past Limits.layout_page_seconds, or reached
+    after Limits.layout_seconds in all, is not laid out and gets a reason.
+    Raises ImportError when pdfminer.six is not installed."""
     import time
 
-    out = []
+    from pdfminer.converter import PDFPageAggregator
+    from pdfminer.layout import LAParams
+    from pdfminer.pdfdocument import PDFDocument
+    from pdfminer.pdfinterp import PDFPageInterpreter, PDFResourceManager
+    from pdfminer.pdfpage import PDFPage
+    from pdfminer.pdfparser import PDFParser
+
+    layout: dict[int, tuple[str, str | None]] = {}
+    reasons: dict[int, str] = {}
+    if plan is not None:
+        reasons.update({i: r for i, r in enumerate(plan) if r})
+    if plan is not None and all(plan):
+        return layout, reasons
+    document = PDFDocument(PDFParser(io.BytesIO(data)), password="")
+    resources = PDFResourceManager(caching=True)
     started = time.monotonic()
-    for layout in extract_pages(io.BytesIO(data), laparams=LAParams(), maxpages=pages):
-        out.append(_layout_page(layout))
-        if time.monotonic() - started > limits.layout_seconds:
+    for index, page in enumerate(PDFPage.create_pages(document)):
+        if index >= pages:
             break
-    return out
+        if plan is not None and (index >= len(plan) or plan[index]):
+            continue
+        if time.monotonic() - started > limits.layout_seconds:
+            reasons[index] = "time cap"
+            continue
+        device = PDFPageAggregator(resources, laparams=LAParams(boxes_flow=LAYOUT_BOXES_FLOW))
+        try:
+            with _page_timer(limits.layout_page_seconds):
+                PDFPageInterpreter(resources, device).process_page(page)
+                boxes = _reading_order(device.get_result(), limits)
+                if boxes is None:
+                    reasons[index] = "complex page"
+                    continue
+                text, heading, unmapped = _layout_page(boxes)
+        except _PageTimeout:
+            reasons[index] = "time cap"
+            continue
+        except Exception:
+            reasons[index] = "layout error"
+            continue
+        if unmapped:
+            reasons[index] = "no Unicode text"
+            continue
+        layout[index] = (text, heading)
+    return layout, reasons
 
 
 def _pdf_pdfminer(data: bytes, limits: Limits) -> list[str] | None:
     """Per-page text from pdfminer.six, or None when it is not installed."""
-    layout = _pdf_layout(data, limits, limits.max_pages)
-    return None if layout is None else [text for text, _ in layout]
+    try:
+        layout, _ = _pdf_layout(data, limits, limits.max_pages, None)
+    except ImportError:
+        return None
+    return [layout.get(i, ("", None))[0] for i in range(max(layout, default=-1) + 1)]
 
 
-def _layout_page(layout) -> tuple[str, str | None]:
-    """A page's paragraphs and its heading (the first paragraph set clearly
-    larger than the page's usual text), from pdfminer's text lines. A line
-    joins the paragraph above it when it sits just below, at about the same
-    size, in the same column, and does not start a list item."""
+_RE_CID = re.compile(r"\(cid:\d+\)")
+
+
+def _pdf_table_rows(lines: list[tuple]) -> list[list[list[int]]]:
+    """Groups of line indexes that form table rows: three or more short
+    lines side by side on one baseline, in runs of at least two such rows
+    one under the other. pdfminer groups a table's cells by column, so
+    without this a table reads column by column."""
+    order = sorted(range(len(lines)), key=lambda i: (-(lines[i][3] + lines[i][4]) / 2, lines[i][1]))
+    rows: list[list[int]] = []
+    for i in order:
+        centre = (lines[i][3] + lines[i][4]) / 2
+        height = lines[i][4] - lines[i][3]
+        if rows:
+            last = rows[-1][0]
+            if abs((lines[last][3] + lines[last][4]) / 2 - centre) <= 0.4 * max(height, 1.0):
+                rows[-1].append(i)
+                continue
+        rows.append([i])
+    def cells(row):
+        row = sorted(row, key=lambda i: lines[i][1])
+        apart = all(lines[a][2] <= lines[b][1] + 1 for a, b in zip(row, row[1:]))
+        short = sum(len(lines[i][0]) for i in row) / len(row) <= 30
+        return row if len(row) >= 3 and apart and short else None
+    tables: list[list[list[int]]] = []
+    run: list[list[int]] = []
+    for row in rows:
+        row = cells(row)
+        if row:
+            run.append(row)
+            continue
+        if len(run) >= 2:
+            tables.append(run)
+        run = []
+    if len(run) >= 2:
+        tables.append(run)
+    return tables
+
+
+def _pdf_table_markdown(lines: list[tuple], rows: list[list[int]]) -> str:
+    """Rows rebuilt from positions: a Markdown table when every row has the
+    same number of cells, else one line per row."""
+    texts = [[lines[i][0] for i in row] for row in rows]
+    if len({len(r) for r in texts}) == 1:
+        return markdown_table(texts)
+    return "\n".join(" ".join(r) for r in texts)
+
+
+def _reading_order(page, limits: Limits):
+    """The page's text boxes in pdfminer.six's reading order, or None for a
+    page with more boxes or lines than the limits (too costly to order)."""
+    from pdfminer.layout import IndexAssigner, LAParams, LTTextBox
+
+    boxes = [obj for obj in page if isinstance(obj, LTTextBox)]
+    lines = sum(len(box._objs) for box in boxes)
+    if len(boxes) > limits.layout_max_boxes or lines > limits.layout_max_lines:
+        return None
+    if len(boxes) > 1:
+        # What LTLayoutContainer.analyze does when boxes_flow is set
+        laparams = LAParams()
+        assigner = IndexAssigner()
+        for group in page.group_textboxes(laparams, boxes):
+            group.analyze(laparams)
+            assigner.run(group)
+        boxes.sort(key=lambda box: box.index)
+    return boxes
+
+
+def _layout_page(layout) -> tuple[str, str | None, bool]:
+    """A page's paragraphs, its heading (the first paragraph set clearly
+    larger than the page's usual text) and whether its text is mostly
+    glyphs with no Unicode mapping, from pdfminer's text lines. A line
+    joins the paragraph above it when it sits just below, within 10% of its
+    size, in the same column, and does not start a list item. Lines that
+    form table rows are written row by row where the table starts.
+    "(cid:N)" markers for unmapped glyphs are never written."""
     from pdfminer.layout import LTTextBox, LTTextLine
 
     lines = []
+    raw_chars = cid_chars = 0
     for box in layout:
         if not isinstance(box, LTTextBox):
             continue
         for line in box:
             if not isinstance(line, LTTextLine):
                 continue
-            text = " ".join(clean(line.get_text().translate(_LIGATURES)).split())
+            raw = line.get_text()
+            stripped = "".join(raw.split())
+            raw_chars += len(stripped)
+            cid_chars += sum(len(m) for m in _RE_CID.findall(stripped))
+            text = " ".join(clean(_RE_CID.sub("", raw).translate(_LIGATURES)).split())
             if text:
                 lines.append((text, line.x0, line.x1, line.y0, line.y1))
-    paragraphs: list[list] = []     # [text, x0, x1, y0, y1, first line height]
-    for text, x0, x1, y0, y1 in lines:
+    if raw_chars and cid_chars * 2 > raw_chars:
+        return "", None, True
+    tables = _pdf_table_rows(lines)
+    in_table = {i: n for n, table in enumerate(tables) for row in table for i in row}
+    written: set[int] = set()
+    paragraphs: list[list] = []     # [text, x0, x1, y0, y1, first line height, is table]
+    for index, (text, x0, x1, y0, y1) in enumerate(lines):
+        if index in in_table:
+            number = in_table[index]
+            if number not in written:
+                written.add(number)
+                paragraphs.append([_pdf_table_markdown(lines, tables[number]), x0, x1, y0, y1, 0.0, True])
+            continue
         height = y1 - y0
-        if paragraphs and not _RE_LIST_START.match(text):
+        if paragraphs and not paragraphs[-1][6] and not _RE_LIST_START.match(text):
             para = paragraphs[-1]
             p_height = para[4] - para[3]
             tall = max(height, p_height) or 1.0
-            if (abs(height - p_height) <= 0.25 * tall
+            if (abs(height - p_height) <= 0.1 * tall
                     and -0.5 * tall <= para[3] - y1 <= 0.9 * tall
                     and x0 < para[2] and x1 > para[1]):
                 para[0] = _join_lines(para[0], text)
                 para[1:5] = [min(para[1], x0), max(para[2], x1), y0, y1]
                 continue
-        paragraphs.append([_paragraph_start(text), x0, x1, y0, y1, height])
+        paragraphs.append([_paragraph_start(text), x0, x1, y0, y1, height, False])
     heading = None
-    heights = sorted(p[5] for p in paragraphs)
+    heights = sorted(p[5] for p in paragraphs if not p[6])
     if heights:
         usual = heights[len(heights) // 2]
         for para in paragraphs:
-            if para[5] >= 1.25 * usual and re.search(r"[^\W\d_]{2}", para[0]):
+            if not para[6] and para[5] >= 1.25 * usual and re.search(r"[^\W\d_]{2}", para[0]):
                 heading = para[0][:300]
                 break
-    text = "\n\n".join(_escape_line_starts(p[0]) for p in paragraphs)
-    return text, heading
+    text = "\n\n".join(p[0] if p[6] else _escape_line_starts(p[0]) for p in paragraphs)
+    return text, heading, False
 
 
 def _clean_pdf_text(text: str) -> str:
@@ -462,16 +712,17 @@ _PLACEHOLDER_TITLES = {"untitled", "document", "title", "presentation", "unknown
 
 
 def _junk_title(title: str | None) -> bool:
-    """Whether a metadata title is not a title: empty, no word of three
-    letters, a single token with digits, underscores, dots or slashes (a
-    code or a file name, such as "ch3199paga"), a file name, or a
+    """Whether a metadata title is not a title: empty, no word (three
+    letters, or two CJK characters), a single token with underscores, dots
+    or slashes or with a letter run straight into a digit (a code or a file
+    name, such as "ch3199paga"; "COVID-19" is a title), a file name, or a
     placeholder such as "Untitled"."""
     if not title:
         return True
     text = " ".join(str(title).split())
-    if not re.search(r"[^\W\d_]{3}", text):
+    if not re.search(r"[^\W\d_]{3}|[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af]{2}", text):
         return True
-    if " " not in text and re.search(r"[\d_./\\]", text):
+    if " " not in text and re.search(r"[_./\\]|[^\W\d_]\d|\d[^\W\d_]", text):
         return True
     if _RE_FILE_LIKE.search(text):
         return True

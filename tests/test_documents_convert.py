@@ -642,6 +642,8 @@ def test_child_exits_when_its_parent_is_killed(tmp_path):
     ("Microsoft Word - minutes.doc", True), ("Untitled", True), ("ab", True), ("", True), (None, True),
     ("12/2025", True), ("Budget", False), ("Publication 5027 (Rev. 5-2018)", False),
     ("Contracts (Rights of Third Parties) Act 1999", False), ("COVID-19 guidance", False),
+    ("COVID-19", False), ("Annual-Report-2024", False), ("\u62a5\u544a", False), ("\u6982\u8981", False),
+    ("\u62a5", True), ("A4", True), ("v2final", True),
 ])
 def test_junk_title(title, junk):
     from scrapepy.convert.documents import _junk_title
@@ -709,15 +711,75 @@ def test_xlsx_date_prefers_the_last_save():
     assert convert_document(no_modified, "xlsx").date == "2025-06-02T12:00:00+00:00"
 
 
-def test_layout_budget_hands_later_pages_to_pypdf(monkeypatch):
-    from scrapepy.convert import documents as conv
-    calls = []
-    real = conv._layout_page
-    monkeypatch.setattr(conv, "_layout_page", lambda page: calls.append(1) or real(page))
-    data = make_pdf([["Page one text"], ["Page two text that"], ["Page three"]])
-    result = convert_document(data, "pdf", Limits(layout_seconds=0))
-    assert len(calls) == 1
-    assert "## Page 2\n\nPage two text that" in result.text and "## Page 3\n\nPage three" in result.text
+def test_layout_plan_is_counted_not_timed():
+    from .document_samples import dense_page_pdf, raw_pdf, text_ops
+    pages = [text_ops([(72, 700, 11, f"Page {n} text")]) for n in range(1, 6)]
+    data = raw_pdf(pages)
+    result = convert_document(data, "pdf", Limits(layout_max_pages=2))
+    assert (result.layout_pages, result.fallback_pages) == (2, "3 to 5: page budget")
+    assert "## Page 4\n\nPage 4 text" in result.text
+    result = convert_document(data, "pdf", Limits(layout_total_pieces=3))
+    assert (result.layout_pages, result.fallback_pages) == (3, "4 to 5: text budget")
+    result = convert_document(data, "pdf", Limits(layout_total_chars=30))
+    assert result.fallback_pages == "3 to 5: text budget"
+    result = convert_document(dense_page_pdf(101), "pdf", Limits(layout_page_pieces=100))
+    assert (result.layout_pages, result.fallback_pages) == (0, "1: dense page")
+    assert "w1" in result.text
+    assert convert_document(dense_page_pdf(100), "pdf", Limits(layout_page_pieces=100)).fallback_pages is None
+    assert convert_document(data, "pdf", Limits(layout_page_chars=5)).fallback_pages == "1 to 5: dense page"
+    # Many separate pieces: within the piece cap, but too many lines to order
+    result = convert_document(dense_page_pdf(2000), "pdf")
+    assert (result.layout_pages, result.fallback_pages) == (0, "1: complex page")
+    assert convert_document(dense_page_pdf(40), "pdf").fallback_pages is None
+    # The plan does not move with the time allowed
+    slow, fast = (convert_document(data, "pdf", Limits(layout_seconds=s)) for s in (60, 6000))
+    assert slow.text == fast.text and slow.fallback_pages is None
+
+
+def test_oversized_page_box_is_not_laid_out():
+    from .document_samples import raw_pdf, text_ops
+    data = raw_pdf([text_ops([(72, 700, 11, "Big page")])], mediabox=b"[0 0 1000000000 1000000000]")
+    result = convert_document(data, "pdf")
+    assert (result.fallback_pages, result.status) == ("1: page box too large", "converted")
+
+
+@pytest.mark.skipif(not hasattr(__import__("signal"), "setitimer"), reason="POSIX timer")
+def test_time_caps_fall_back_to_pypdf_and_say_so():
+    from .document_samples import raw_pdf, text_ops
+    data = raw_pdf([text_ops([(72, 700, 11, f"Line {i} of the page") for i in range(40)])] * 2)
+    result = convert_document(data, "pdf", Limits(layout_page_seconds=0.000001))
+    assert (result.layout_pages, result.fallback_pages) == (0, "1 to 2: time cap")
+    assert "Line 39 of the page" in result.text
+    result = convert_document(data, "pdf", Limits(layout_seconds=-1))
+    assert result.fallback_pages == "1 to 2: time cap"
+
+
+def test_unmapped_glyphs_fall_back_and_never_reach_markdown():
+    from .document_samples import UNMAPPED_FONT, raw_pdf, text_ops
+    fonts = b"/F1 3 0 R /F2 20 0 R"
+    mostly = raw_pdf([b"BT /F2 12 Tf 72 700 Td <0024004B00480024004B0048> Tj ET"],
+                     UNMAPPED_FONT, fonts)
+    result = convert_document(mostly, "pdf")
+    assert result.fallback_pages == "1: no Unicode text"
+    assert "(cid:" not in result.text
+    few = raw_pdf([text_ops([(72, 700, 11, "Readable words fill most of this line of text")])
+                   + b"\nBT /F2 12 Tf 72 680 Td <0024> Tj ET"], UNMAPPED_FONT, fonts)
+    result = convert_document(few, "pdf")
+    assert result.fallback_pages is None and "(cid:" not in result.text
+    assert "Readable words fill most of this line of text" in result.text
+
+
+def test_pdf_table_reads_row_by_row():
+    from .document_samples import table_page_pdf
+    assert convert_document(table_page_pdf(), "pdf").text == (
+        "## Page 1\n\nQuarterly Sales Report\n\n| Region | Sales | Growth |\n| --- | --- | --- |\n"
+        "| North | 1,200 | 4% |\n| South | 900 | 2% |\n| East | 1,500 | 7% |")
+
+
+def test_heading_does_not_merge_into_smaller_text_below():
+    from .document_samples import raw_pdf, text_ops
+    data = raw_pdf([text_ops([(72, 700, 14, "Membership Figures"), (72, 686, 11, "Numbers rose this year.")])])
+    assert convert_document(data, "pdf").text == "## Page 1\n\nMembership Figures\n\nNumbers rose this year."
 
 
 def test_pdf_without_pdfminer_still_converts_with_joined_lines(monkeypatch):
@@ -765,3 +827,13 @@ def test_child_exits_at_once_when_the_request_names_another_parent(tmp_path):
         pytest.fail("the child ran on although its parent was not the one named")
     assert done.returncode == 1
     assert not pid_file.exists()
+
+
+def test_page_past_pypdf_limits_fails_as_a_bomb_like_before():
+    """A page with more tokens than pypdf reads is planned out of layout
+    (too dense) and then refused by pypdf: the reason stays the bomb reason."""
+    from .document_samples import raw_pdf
+    data = raw_pdf([b"BT /F1 6 Tf 72 700 Td " + b"(a) Tj " * 1_100_000 + b"ET"])
+    result = convert_document(data, "pdf")
+    assert (result.status, result.reason) == (
+        "failed", "a compressed stream unpacks past the safety limit (possible PDF bomb)")
