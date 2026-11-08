@@ -3,14 +3,15 @@
 Without --documents nothing here runs and links to these files are treated
 as before. With it, a link on the crawl's own site to a listed type goes
 through the crawl queue like a page link, so the same scope, --include,
---exclude, --max-depth, --max-pages and robots.txt rules apply, and is then
-handled here instead of being fetched as a page:
+--exclude, --max-depth, --max-pages and (with --obey-robots) robots.txt
+rules apply, and is then handled here instead of being fetched as a page:
 
 - it is downloaded with the asset client, after the run's single
   HostRateLimiter has spaced it from the previous request to the host,
   with a size cap (--max-document-mb). Redirects are followed only to the
-  crawl's own scheme, host and port and to paths robots.txt allows, at
-  most five times, each hop paced; a redirect anywhere else is refused;
+  crawl's own scheme, host and port (and, with --obey-robots, to paths
+  robots.txt allows), at most five times, each hop paced; a redirect
+  anywhere else is refused;
 - the original is written under files/<site>/ (beside ScrapedSites and
   MarkdownSites), and the converted Markdown under MarkdownSites/<site>/
   as the URL path plus ".md" (reports/2025.pdf.md), both named through the
