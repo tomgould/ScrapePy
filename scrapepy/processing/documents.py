@@ -311,7 +311,10 @@ class DocumentCollector:
         self.cache = cache
         self.names = names
         self.stats = stats
-        self.limits = limits or convert.DEFAULT_LIMITS
+        import dataclasses
+
+        self.limits = limits or dataclasses.replace(convert.DEFAULT_LIMITS,
+                                                    pdf_layout=config.pdf_layout)
         self.client = None
         self.linked_from: dict[str, str] = {}
         self.found: set[str] = set()

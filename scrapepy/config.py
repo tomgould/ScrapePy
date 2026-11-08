@@ -144,6 +144,7 @@ class ScrapeConfig:
     allow_sitemap_hosts: list[str] = field(default_factory=list)
     refuse_private_redirects: bool = False
     solve_cloudflare: bool = True
+    pdf_layout: bool = False           # --pdf-layout: experimental pdfminer.six layout for PDFs
 
     # Derived fields (set in __post_init__)
     cutoff_date: datetime | None = field(init=False, default=None)
