@@ -36,7 +36,7 @@ ERRORS_CHAPTER = page("8. Errors and Exceptions - Example Docs",
                       "<p>Errors detected during execution are called exceptions.</p>",
                       h1="8. Errors and Exceptions")
 SOFT_404 = page("Page not found - Example Docs", h1="Page not found")
-SHELL = ('<html><head><title>App</title><script src="/static/app.js"></script></head>'
+SHELL = ('<html><head><title>Caf\u00e9 \u30a2\u30d7\u30ea</title><script src="/static/app.js"></script></head>'
          '<body><div id="root"></div><noscript>You need to enable JavaScript to run this app.'
          '</noscript></body></html>')
 
@@ -305,3 +305,32 @@ def test_unknown_charset_reason_needs_a_plain_lookup_error():
     config = ScrapeConfig(url="http://example.com/")
     assert _fetch_error(CodecRegistryError("unknown encoding: x"), config) == \
         "CodecRegistryError: unknown encoding: x"
+
+
+def test_needs_render_size_is_in_bytes(run):
+    _, summary, _ = run()
+    entry = next(n for n in summary["needs_render"] if n["url"].endswith("/app"))
+    # The shell's title is not ASCII: bytes, not characters
+    assert entry["bytes"] == len(SHELL.encode("utf-8")) > len(SHELL)
+
+
+def test_a_search_start_url_is_not_listed_for_rendering(site, tmp_path):
+    """A start URL with a query is read for its links only, so it is never
+    listed in needs_render even when it is a JavaScript shell."""
+    config = ScrapeConfig(url=site + "/app?s=x", output_root=str(tmp_path), wait=0,
+                          markdown_only=True, max_depth=0)
+    asyncio.run(run_scraper(config))
+    summary = json.loads((Path(config.output_dir) / "run_summary.json").read_text())
+    assert "/app?s=x" in Handler.log
+    assert summary["needs_render"] == []
+
+
+def test_content_too_short_after_cleaning_says_too_short(tmp_path, monkeypatch):
+    """The branch where cleaning leaves under 50 characters."""
+    converter = HTMLToMarkdown(str(tmp_path), output_dir=str(tmp_path / "md"),
+                               base_url="http://x", domain="x")
+    monkeypatch.setattr(converter, "clean_markdown", lambda md: None)
+    html = page("Long enough to extract")
+    assert converter.prepare(tmp_path / "a.html", metadata={"url": "http://x/a"},
+                             html=html) is None
+    assert converter.last_skip_reason == "too short"
