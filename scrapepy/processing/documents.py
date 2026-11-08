@@ -187,7 +187,12 @@ def _describe_end(returncode: int | None, printed: bool, stderr: bytes) -> str:
         what = f"exited with code {returncode} without a result"
         last = stderr.decode("utf-8", "replace").strip().splitlines()
         if last:
-            what += f" ({last[-1][:160]})"
+            # The child's own text: control characters (escape sequences,
+            # BEL, NUL) are removed before it reaches a terminal or a file
+            from ..convert.to_markdown import clean_text_value
+            detail = " ".join(clean_text_value(last[-1]).split())[:160]
+            if detail:
+                what += f" ({detail})"
     if printed:
         what += "; it also printed to stdout"
     return what
@@ -218,6 +223,7 @@ async def run_in_child(target: str, args: list, timeout: float, memory_bytes: in
         "target": target, "args": list(args), "memory_bytes": memory_bytes,
         "cpu_seconds": cpu_seconds if cpu_seconds is not None else int(timeout) + 2,
         "result_path": result_path,
+        "parent_pid": os.getpid(),
     }).encode()
     proc = None
     try:
