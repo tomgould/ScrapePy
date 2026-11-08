@@ -131,38 +131,87 @@ def safe_relpath(url_path: str) -> str:
     return os.path.join(*parts) if parts else "index"
 
 
-async def run_in_child(target: str, args: list, timeout: float, memory_bytes: int):
-    """Run target ("module:function") with args (JSON values) in a child
-    Python process with an address-space limit of memory_bytes and a CPU
-    limit just over timeout. Returns ("ok", value), ("error", text),
-    ("timeout", None) or ("died", exit code). The child is killed on timeout
-    and when the caller is cancelled, so its memory is always given back.
-    It is a plain subprocess, so the caller's own script is never re-run."""
-    import json
+# The only variables the conversion child is given: enough to find
+# programs and pick a locale and a temporary folder. Proxy settings,
+# credentials and everything else in the crawl's environment stay out.
+CHILD_ENV_KEEP = ("PATH", "LANG", "LANGUAGE", "TZ", "TMPDIR", "TEMP", "TMP",
+                  "SYSTEMROOT", "WINDIR", "COMSPEC")    # the last three: Windows needs them
+
+
+def child_environment() -> dict[str, str]:
+    """The minimal environment for the conversion child (CHILD_ENV_KEEP and
+    LC_*), plus a PYTHONPATH that finds scrapepy as this process does."""
     import sys
 
-    env = dict(os.environ)
-    # The child finds scrapepy (and anything else importable here) the same way
+    env = {k: v for k, v in os.environ.items() if k in CHILD_ENV_KEEP or k.startswith("LC_")}
     env["PYTHONPATH"] = os.pathsep.join(p for p in sys.path if p and os.path.isdir(p))
-    request = json.dumps({"target": target, "args": list(args), "memory_bytes": memory_bytes,
-                          "cpu_seconds": int(timeout) + 2}).encode()
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable, "-m", "scrapepy.convert.document_child",
-        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL, env=env,
-    )
-    try:
+    return env
+
+
+def _describe_end(returncode: int | None, stdout: bytes, stderr: bytes) -> str:
+    """What happened to a child that left no reply."""
+    import signal
+
+    if returncode is not None and returncode < 0:
+        sig = -returncode
+        names = {getattr(signal, "SIGXCPU", None): "CPU time limit reached",
+                 signal.SIGKILL: "killed (SIGKILL), usually the memory limit",
+                 getattr(signal, "SIGSEGV", None): "crashed (SIGSEGV)"}
         try:
-            stdout, _ = await asyncio.wait_for(proc.communicate(request), timeout)
+            what = names.get(sig) or f"killed by {signal.Signals(sig).name}"
+        except ValueError:
+            what = f"killed by signal {sig}"
+    else:
+        what = f"exited with code {returncode} without a result"
+        last = stderr.decode("utf-8", "replace").strip().splitlines()
+        if last:
+            what += f" ({last[-1][:160]})"
+    if stdout.strip():
+        what += "; it also printed to stdout"
+    return what
+
+
+async def run_in_child(target: str, args: list, timeout: float, memory_bytes: int,
+                       cpu_seconds: int | None = None):
+    """Run target ("module:function") with args (JSON values) in a child
+    Python process with an address-space limit of memory_bytes and a CPU
+    limit (cpu_seconds, by default just over timeout). Returns ("ok", value),
+    ("error", text), ("timeout", None) or ("died", what happened). The reply
+    comes back through a file, not stdout, so a library that prints cannot
+    spoil it. The child gets a minimal environment (child_environment), is
+    killed on timeout and when the caller is cancelled, so its memory is
+    always given back, and is a plain subprocess, so the caller's own script
+    is never re-run."""
+    import json
+    import sys
+    import tempfile
+
+    fd, result_path = tempfile.mkstemp(prefix="scrapepy-convert-", suffix=".json")
+    os.close(fd)
+    request = json.dumps({
+        "target": target, "args": list(args), "memory_bytes": memory_bytes,
+        "cpu_seconds": cpu_seconds if cpu_seconds is not None else int(timeout) + 2,
+        "result_path": result_path,
+    }).encode()
+    proc = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "scrapepy.convert.document_child",
+            stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE, env=child_environment(),
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(request), timeout)
         except asyncio.TimeoutError:
             return "timeout", None
         try:
-            outcome, value = json.loads(stdout.decode("utf-8"))
-        except (ValueError, UnicodeDecodeError):
-            return "died", proc.returncode
+            with open(result_path, encoding="utf-8") as f:
+                outcome, value = json.loads(f.read())
+        except (OSError, ValueError, UnicodeDecodeError):
+            return "died", _describe_end(proc.returncode, stdout, stderr)
         return outcome, value
     finally:
-        if proc.returncode is None:
+        if proc is not None and proc.returncode is None:
             try:
                 proc.kill()
             except ProcessLookupError:
@@ -171,6 +220,10 @@ async def run_in_child(target: str, args: list, timeout: float, memory_bytes: in
                 await asyncio.shield(proc.wait())
             except BaseException:
                 pass
+        try:
+            os.unlink(result_path)
+        except OSError:
+            pass
 
 
 def _same_site(url: str, config: ScrapeConfig) -> bool:
@@ -383,7 +436,7 @@ class DocumentCollector:
         if outcome != "ok":
             reason = {
                 "timeout": f"conversion took longer than {CONVERT_TIMEOUT_SECONDS} seconds",
-                "died": "conversion stopped (memory or CPU limit reached, or the converter crashed)",
+                "died": f"conversion stopped: {value}",
             }.get(outcome) or f"conversion failed ({value})"
             self._fail(full_url, reason, url_path)
             return
