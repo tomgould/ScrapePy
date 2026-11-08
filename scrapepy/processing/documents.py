@@ -148,7 +148,26 @@ def child_environment() -> dict[str, str]:
     return env
 
 
-def _describe_end(returncode: int | None, stdout: bytes, stderr: bytes) -> str:
+# The most of the child's stderr kept for a failure reason; stdout is only
+# counted. Neither is stored in full, since the address-space limit does not
+# bound what a child writes into a pipe.
+CHILD_STDERR_TAIL_BYTES = 4096
+
+
+async def _drain(stream, keep: int) -> tuple[int, bytes]:
+    """Read a pipe to its end: the number of bytes and the last keep bytes."""
+    total = 0
+    tail = b""
+    while True:
+        chunk = await stream.read(65536)
+        if not chunk:
+            return total, tail
+        total += len(chunk)
+        if keep:
+            tail = (tail + chunk)[-keep:]
+
+
+def _describe_end(returncode: int | None, printed: bool, stderr: bytes) -> str:
     """What happened to a child that left no reply."""
     import signal
 
@@ -166,7 +185,7 @@ def _describe_end(returncode: int | None, stdout: bytes, stderr: bytes) -> str:
         last = stderr.decode("utf-8", "replace").strip().splitlines()
         if last:
             what += f" ({last[-1][:160]})"
-    if stdout.strip():
+    if printed:
         what += "; it also printed to stdout"
     return what
 
@@ -178,7 +197,11 @@ async def run_in_child(target: str, args: list, timeout: float, memory_bytes: in
     limit (cpu_seconds, by default just over timeout). Returns ("ok", value),
     ("error", text), ("timeout", None) or ("died", what happened). The reply
     comes back through a file, not stdout, so a library that prints cannot
-    spoil it. The child gets a minimal environment (child_environment), is
+    spoil it; stdout is only counted and only the last few KB of stderr are
+    kept, so a child that floods them cannot grow this process. The reply
+    file is made with mkstemp (private to this user) in the temporary
+    folder and reopened by name in the child, so that folder must be
+    private or sticky, as /tmp is. The child gets a minimal environment (child_environment), is
     killed on timeout and when the caller is cancelled, so its memory is
     always given back, and is a plain subprocess, so the caller's own script
     is never re-run."""
@@ -200,15 +223,26 @@ async def run_in_child(target: str, args: list, timeout: float, memory_bytes: in
             stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE, env=child_environment(),
         )
+        async def run():
+            proc.stdin.write(request)
+            try:
+                await proc.stdin.drain()
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+            proc.stdin.close()
+            out, err = await asyncio.gather(_drain(proc.stdout, 0),
+                                            _drain(proc.stderr, CHILD_STDERR_TAIL_BYTES))
+            await proc.wait()
+            return out, err
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(request), timeout)
+            (stdout_bytes, _), (_, stderr_tail) = await asyncio.wait_for(run(), timeout)
         except asyncio.TimeoutError:
             return "timeout", None
         try:
             with open(result_path, encoding="utf-8") as f:
                 outcome, value = json.loads(f.read())
         except (OSError, ValueError, UnicodeDecodeError):
-            return "died", _describe_end(proc.returncode, stdout, stderr)
+            return "died", _describe_end(proc.returncode, stdout_bytes > 0, stderr_tail)
         return outcome, value
     finally:
         if proc is not None and proc.returncode is None:

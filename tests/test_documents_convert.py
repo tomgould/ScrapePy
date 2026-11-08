@@ -530,3 +530,79 @@ def test_docx_list_levels():
                          lambda x: x.replace("</w:body>", nested + "</w:body>", 1)
                          if "<w:sectPr" not in x else x.replace("<w:sectPr", nested + "<w:sectPr", 1))
     assert convert_document(data, "docx").text == "- Top\n    - Deep"
+
+
+FLOOD_PARENT = """
+import asyncio, json, resource, sys
+from scrapepy.processing.documents import run_in_child
+results = [asyncio.run(run_in_child("tests.document_samples:child_flood", [512, exit_], 120, 0))
+           for exit_ in (False, True)]
+peak_kb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+print(json.dumps({"results": results, "peak_mb": peak_kb // 1024}))
+"""
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="POSIX resource accounting")
+def test_child_flooding_stdout_and_stderr_cannot_grow_the_parent(tmp_path):
+    import json
+    import subprocess
+    import sys
+    script = tmp_path / "flood_parent.py"
+    script.write_text(FLOOD_PARENT)
+    root = str(Path(__file__).resolve().parent.parent)
+    out = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=300,
+                         env={**os.environ, "PYTHONPATH": root}, cwd=root)
+    report = json.loads(out.stdout.strip().splitlines()[-1])
+    assert report["results"] == [
+        ["ok", 512],
+        ["died", "exited with code 5 without a result (last line of stderr); it also printed to stdout"],
+    ]
+    # 512 MB went through each pipe twice; storing them would pass 2 GB
+    assert report["peak_mb"] < 300, report["peak_mb"]
+
+
+PARENT_THEN_KILLED = """
+import asyncio, sys
+from scrapepy.processing.documents import run_in_child
+asyncio.run(run_in_child("tests.document_samples:child_sleep", [sys.argv[1]], 600, 0))
+"""
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="POSIX signals")
+def test_child_exits_when_its_parent_is_killed(tmp_path):
+    import signal
+    import subprocess
+    import sys
+    import time
+    script = tmp_path / "parent.py"
+    script.write_text(PARENT_THEN_KILLED)
+    pid_file = tmp_path / "child.pid"
+    root = str(Path(__file__).resolve().parent.parent)
+    parent = subprocess.Popen([sys.executable, str(script), str(pid_file)],
+                              env={**os.environ, "PYTHONPATH": root}, cwd=root)
+    try:
+        deadline = time.monotonic() + 30
+        while not pid_file.exists() or not pid_file.read_text():
+            assert time.monotonic() < deadline, "child never started"
+            time.sleep(0.1)
+        child = int(pid_file.read_text())
+        parent.send_signal(signal.SIGKILL)
+        parent.wait(10)
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                os.kill(child, 0)
+            except ProcessLookupError:
+                break
+            # A child handed to init and already gone may linger as a zombie briefly
+            try:
+                with open(f"/proc/{child}/stat") as f:
+                    if f.read().split()[2] == "Z":
+                        break
+            except OSError:
+                break
+            assert time.monotonic() < deadline, "child outlived its parent"
+            time.sleep(0.2)
+    finally:
+        if parent.poll() is None:
+            parent.kill()

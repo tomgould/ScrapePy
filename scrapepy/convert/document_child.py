@@ -26,8 +26,28 @@ def _limit(memory_bytes: int, cpu_seconds: int) -> None:
         pass   # no resource module (Windows) or limits not allowed: the timeout still applies
 
 
+def _exit_with_parent() -> None:
+    """Stop when the parent is gone (killed with SIGKILL, say), rather than
+    run on to the CPU limit: a thread checks every second whether this
+    process has been handed to another parent."""
+    import os
+    import threading
+    import time
+
+    parent = os.getppid()
+
+    def watch():
+        while True:
+            time.sleep(1)
+            if os.getppid() != parent:
+                os._exit(1)
+
+    threading.Thread(target=watch, name="parent-watch", daemon=True).start()
+
+
 def main() -> int:
     signal.signal(signal.SIGINT, signal.SIG_IGN)   # Ctrl+C is the parent's to handle
+    _exit_with_parent()
     request = json.loads(sys.stdin.read())
     _limit(int(request.get("memory_bytes") or 0), int(request.get("cpu_seconds") or 0))
     try:
