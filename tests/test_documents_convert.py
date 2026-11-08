@@ -738,3 +738,30 @@ def test_default_column_cap_keeps_a_wide_table():
     wider = ",".join(f"c{i}" for i in range(1, 106))
     assert convert_document(f"{wider}\n{wider}\n".encode(), "csv").notes == [
         "Columns after the first 100 are not shown."]
+
+
+def test_child_reason_has_no_control_characters():
+    outcome, reason = run_child("tests.document_samples:child_stderr_controls", [4])
+    assert (outcome, reason) == ("died", "exited with code 4 without a result ([31mboom with bell[0m)")
+
+
+def test_child_exits_at_once_when_the_request_names_another_parent(tmp_path):
+    """The parent died before the child started: the child's parent is
+    already its reaper, which differs from the pid the request names."""
+    import json
+    import subprocess
+    import sys
+    pid_file = tmp_path / "child.pid"
+    request = json.dumps({"target": "tests.document_samples:child_sleep", "args": [str(pid_file)],
+                          "memory_bytes": 0, "cpu_seconds": 0,
+                          "result_path": str(tmp_path / "reply.json"),
+                          "parent_pid": os.getpid() + 1_000_000})
+    root = str(Path(__file__).resolve().parent.parent)
+    try:
+        done = subprocess.run([sys.executable, "-m", "scrapepy.convert.document_child"],
+                              input=request, capture_output=True, text=True, timeout=15,
+                              env={**os.environ, "PYTHONPATH": root}, cwd=root)
+    except subprocess.TimeoutExpired:
+        pytest.fail("the child ran on although its parent was not the one named")
+    assert done.returncode == 1
+    assert not pid_file.exists()

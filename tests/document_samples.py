@@ -401,3 +401,10 @@ def layout_sample_pdf() -> bytes:
         (430, 668, 9, "at nine."),
     ]
     return make_layout_pdf([body], {"Title": "ch3199paga", "CreationDate": "D:20250314"})
+
+
+def child_stderr_controls(code: int) -> None:
+    """Exit with no result after writing a stderr line full of control characters."""
+    import os
+    os.write(2, b"\x1b[31mboom\x07 with\x00 bell\x1b[0m\n")
+    os._exit(code)

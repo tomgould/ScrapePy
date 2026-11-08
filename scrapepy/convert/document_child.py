@@ -1,9 +1,9 @@
 """Child process for document conversion: python -m scrapepy.convert.document_child
 
 Reads one JSON request on stdin, {"target": "module:function", "args": [...],
-"memory_bytes": N, "cpu_seconds": N, "result_path": "..."}, applies the
-limits before importing anything heavy, runs the target and writes one JSON
-reply to result_path: ["ok", value] or ["error", text]. Stdout is not the
+"memory_bytes": N, "cpu_seconds": N, "result_path": "...", "parent_pid": N},
+applies the limits before importing anything heavy, runs the target and
+writes one JSON reply to result_path: ["ok", value] or ["error", text]. Stdout is not the
 result channel, so anything a library prints there cannot spoil the reply;
 the parent reports it. It is a plain subprocess, not multiprocessing, so
 the caller's own script is never imported again.
@@ -26,15 +26,20 @@ def _limit(memory_bytes: int, cpu_seconds: int) -> None:
         pass   # no resource module (Windows) or limits not allowed: the timeout still applies
 
 
-def _exit_with_parent() -> None:
+def _exit_with_parent(parent: int | None) -> None:
     """Stop when the parent is gone (killed with SIGKILL, say), rather than
     run on to the CPU limit: a thread checks every second whether this
-    process has been handed to another parent."""
+    process has been handed to another parent. The parent's pid comes from
+    the request, so a parent that died before this process started (its
+    reaper would already be the parent) is noticed at once."""
     import os
     import threading
     import time
 
-    parent = os.getppid()
+    if parent is None:
+        parent = os.getppid()
+    if os.getppid() != parent:
+        os._exit(1)
 
     def watch():
         while True:
@@ -47,8 +52,8 @@ def _exit_with_parent() -> None:
 
 def main() -> int:
     signal.signal(signal.SIGINT, signal.SIG_IGN)   # Ctrl+C is the parent's to handle
-    _exit_with_parent()
     request = json.loads(sys.stdin.read())
+    _exit_with_parent(request.get("parent_pid"))
     _limit(int(request.get("memory_bytes") or 0), int(request.get("cpu_seconds") or 0))
     try:
         module, _, name = request["target"].partition(":")
