@@ -475,3 +475,15 @@ def test_robots_txt_applies_to_documents_only_with_obey_robots(site, tmp_path):
     assert "/private/secret.pdf" not in requests
     assert reasons(summary["documents"]["failed"]) == {
         "to-private.pdf": "redirect target blocked by robots.txt"}
+
+
+def test_child_end_reason_reaches_the_summary(site, tmp_path, monkeypatch):
+    from scrapepy.processing import documents as docs_mod
+
+    async def crashed(*args, **kwargs):
+        return "died", "crashed (SIGSEGV)"
+    monkeypatch.setattr(docs_mod, "run_in_child", crashed)
+    _, _, summary, _ = crawl(site, tmp_path, documents=["pdf"], start="/plain.pdf",
+                             start_urls=["/plain.pdf"], max_depth=0)
+    assert reasons(summary["documents"]["failed"]) == {
+        "plain.pdf": "conversion stopped: crashed (SIGSEGV)"}

@@ -445,3 +445,88 @@ def test_rows_scanned_are_capped():
     assert "late" not in result.text
     assert result.text.endswith("_Rows after row 20 are not read._")
     assert "late" in convert_document(data, "csv").text
+
+
+# --- robustness follow-up -------------------------------------------------------
+
+def test_docx_of_many_tiny_paragraphs_converts_in_seconds(tmp_path):
+    import time
+    from .document_samples import docx_many_paragraphs
+    path = tmp_path / "many.docx"
+    path.write_bytes(docx_many_paragraphs(470_000))      # 16 MB document.xml, under both caps
+    started = time.monotonic()
+    outcome, value = run_child("scrapepy.convert.documents:convert_path", [str(path), "docx"],
+                               timeout=45)
+    assert outcome == "ok", value
+    assert value["status"] == "converted" and value["text"].startswith("x\n\nx")
+    assert time.monotonic() - started < 45
+
+
+def test_docx_style_ids_are_mapped_to_names():
+    from .document_samples import docx_custom_styles
+    # "MyHead" is named "heading 2": a heading, so it becomes the title
+    # (the document has no title metadata); an unknown id is the default style
+    result = convert_document(docx_custom_styles(), "docx")
+    assert result.title == "Custom heading"
+    assert result.text == "Unknown style\n\nPlain paragraph"
+
+
+def test_child_output_on_stdout_does_not_spoil_the_result():
+    assert run_child("tests.document_samples:child_print_and_return", [7]) == ("ok", 7)
+
+
+def test_child_exit_without_result_is_described():
+    assert run_child("tests.document_samples:child_print_and_exit", [3]) == (
+        "died", "exited with code 3 without a result (boom); it also printed to stdout")
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="POSIX signals")
+def test_child_crash_is_described():
+    assert run_child("tests.document_samples:child_segfault", []) == ("died", "crashed (SIGSEGV)")
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="POSIX resource limits")
+def test_child_cpu_limit_is_described():
+    import asyncio
+    from scrapepy.processing.documents import run_in_child
+    assert asyncio.run(run_in_child("tests.document_samples:child_spin", [], 30, 0, cpu_seconds=1)) == (
+        "died", "CPU time limit reached")
+
+
+def test_child_gets_a_minimal_environment(monkeypatch):
+    from scrapepy.processing.documents import CHILD_ENV_KEEP
+    secrets = {"HTTP_PROXY": "http://proxy.invalid:8080", "https_proxy": "http://proxy.invalid:8080",
+               "ALL_PROXY": "socks5://proxy.invalid", "NO_PROXY": "example.com",
+               "AWS_SECRET_ACCESS_KEY": "not-a-real-key", "GITHUB_TOKEN": "not-a-real-token",
+               "SCRAPER_PROXY": "http://proxy.invalid", "HOME": "/nowhere"}
+    for key, value in secrets.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("LC_ALL", "C.UTF-8")
+    outcome, keys = run_child("tests.document_samples:child_environ", [])
+    assert outcome == "ok"
+    assert not set(keys) & set(secrets)
+    assert all(k in CHILD_ENV_KEEP or k.startswith("LC_") or k == "PYTHONPATH" for k in keys), keys
+    assert "LC_ALL" in keys and "PYTHONPATH" in keys
+
+
+def test_child_result_file_is_removed(tmp_path, monkeypatch):
+    import tempfile
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    assert run_child("tests.document_samples:child_add", [1, 1]) == ("ok", 2)
+    assert run_child("tests.document_samples:child_print_and_exit", [3])[0] == "died"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_docx_list_levels():
+    import docx, io
+    document = docx.Document()
+    document.add_paragraph("Top", style="List Bullet")
+    buf = io.BytesIO()
+    document.save(buf)
+    from .document_samples import _replace_part
+    nested = ('<w:p><w:pPr><w:numPr><w:ilvl w:val="2"/><w:numId w:val="1"/></w:numPr></w:pPr>'
+              '<w:r><w:t>Deep</w:t></w:r></w:p>')
+    data = _replace_part(buf.getvalue(), "word/document.xml",
+                         lambda x: x.replace("</w:body>", nested + "</w:body>", 1)
+                         if "<w:sectPr" not in x else x.replace("<w:sectPr", nested + "<w:sectPr", 1))
+    assert convert_document(data, "docx").text == "- Top\n    - Deep"

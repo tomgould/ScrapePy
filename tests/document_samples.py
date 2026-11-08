@@ -259,3 +259,62 @@ def child_allocate(mb: int) -> int:
 
 def child_add(a: int, b: int) -> int:
     return a + b
+
+
+def docx_many_paragraphs(count: int = 470_000) -> bytes:
+    """A small DOCX whose document.xml holds count one-letter paragraphs
+    (about 16 MB unpacked at 470,000, just under the part cap), the shape
+    that made python-docx's style lookup per paragraph slow."""
+    import docx
+
+    buf = io.BytesIO()
+    docx.Document().save(buf)
+    para = "<w:p><w:r><w:t>x</w:t></w:r></w:p>"
+    return _replace_part(buf.getvalue(), "word/document.xml",
+                         lambda x: x.replace("<w:body>", "<w:body>" + para * count, 1))
+
+
+def docx_custom_styles() -> bytes:
+    """A DOCX with a style whose id differs from its name ("MyHead" named
+    "heading 2"), a paragraph with an unknown style id, and one with none."""
+    import docx
+
+    buf = io.BytesIO()
+    docx.Document().save(buf)
+    style = ('<w:style w:type="paragraph" w:styleId="MyHead"><w:name w:val="heading 2"/>'
+             '<w:basedOn w:val="Normal"/></w:style>')
+    data = _replace_part(buf.getvalue(), "word/styles.xml",
+                         lambda x: x.replace("</w:styles>", style + "</w:styles>", 1))
+    body = ('<w:p><w:pPr><w:pStyle w:val="MyHead"/></w:pPr><w:r><w:t>Custom heading</w:t></w:r></w:p>'
+            '<w:p><w:pPr><w:pStyle w:val="NoSuchStyle"/></w:pPr><w:r><w:t>Unknown style</w:t></w:r></w:p>'
+            '<w:p><w:r><w:t>Plain paragraph</w:t></w:r></w:p>')
+    return _replace_part(data, "word/document.xml",
+                         lambda x: x.replace("<w:body>", "<w:body>" + body, 1))
+
+
+def child_print_and_return(value: int) -> int:
+    print("chatty library output", flush=True)
+    return value
+
+
+def child_print_and_exit(code: int) -> None:
+    import os, sys
+    print("chatty library output", flush=True)
+    sys.stderr.write("boom\n")
+    sys.stderr.flush()
+    os._exit(code)
+
+
+def child_segfault() -> None:
+    import os, signal
+    os.kill(os.getpid(), signal.SIGSEGV)
+
+
+def child_spin() -> None:
+    while True:
+        pass
+
+
+def child_environ() -> list:
+    import os
+    return sorted(os.environ)
