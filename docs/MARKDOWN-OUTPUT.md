@@ -237,7 +237,7 @@ Written to `ScrapedSites/<site>/run_summary.json` at the start of a crawl or a `
 | `documents` | object | With `--documents` only (below) |
 | `targeting` | object | Only when `--include`, `--exclude`, `--max-depth`, `--max-pages`, `--urls-file`, `--only-recipes`, `--site-name` or `--follow-next` is given (below) |
 
-`options` lists those options only when they are set; with `--documents` it also holds `documents` (the list of types) and `max_document_mb`. Document requests are counted in `counts.fetched`, documents converted in `new_markdown` or `changed_markdown` (and `counts.new` or `counts.changed`), unchanged documents in `unchanged_urls`, and failed documents in `failed`, as for pages. `documents` holds:
+`options` lists those options only when they are set; `allow_sitemap_hosts` (a list of hosts), `refuse_private_redirects` (`true`) and `solve_cloudflare` (`false`) likewise appear only when `--allow-sitemap-host`, `--refuse-private-redirects` or `--no-cloudflare-solve` is given. A redirect refused by `--refuse-private-redirects` is listed in `failed` with a reason starting `RedirectRefused: `. With `--documents` it also holds `documents` (the list of types) and `max_document_mb`. Document requests are counted in `counts.fetched`, documents converted in `new_markdown` or `changed_markdown` (and `counts.new` or `counts.changed`), unchanged documents in `unchanged_urls`, and failed documents in `failed`, as for pages. `documents` holds:
 
 | Key | Type | Meaning |
 |-----|------|---------|

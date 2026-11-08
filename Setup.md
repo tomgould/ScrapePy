@@ -149,7 +149,7 @@ pip install "scrapling[fetchers]"
 
 ### Cloudflare blocking
 
-ScrapePy handles Cloudflare automatically via `solve_cloudflare=True` in `StealthyFetcher.async_fetch()`. If you're still blocked:
+ScrapePy handles Cloudflare automatically via `solve_cloudflare=True` in `StealthyFetcher.async_fetch()`; `--no-cloudflare-solve` passes `solve_cloudflare=False` instead. If you're still blocked:
 
 1. Try running without `--headless` (default) so the browser window is visible
 2. Increase wait time: `--wait 10`

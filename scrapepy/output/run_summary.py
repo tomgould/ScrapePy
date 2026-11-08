@@ -116,6 +116,13 @@ def options_used(config: ScrapeConfig) -> dict:
         if value is None or value is False or value == [] or (value == 0 and key != "max_depth"):
             continue
         options[key] = value
+    # Network-safety options appear only when they differ from the default
+    if config.allow_sitemap_hosts:
+        options["allow_sitemap_hosts"] = list(config.allow_sitemap_hosts)
+    if config.refuse_private_redirects:
+        options["refuse_private_redirects"] = True
+    if not config.solve_cloudflare:
+        options["solve_cloudflare"] = False
     if config.documents:
         options["documents"] = list(config.documents)
         options["max_document_mb"] = config.max_document_mb

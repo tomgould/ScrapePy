@@ -3,13 +3,14 @@
 import asyncio
 import re
 from datetime import datetime
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin, urlparse, urlsplit
 
 from bs4 import BeautifulSoup
 
 from ..config import ScrapeConfig
 from ..proxy import redact
 from ..engine.fetcher import fetch_page_http
+from ..engine.redirects import private_redirect_reason
 from ..engine.threads import run_blocking
 from .dates import _parse_iso_date, _parse_rfc2822_date
 from .robots import ROBOTS_REDIRECT_FAILED, RobotsPolicy, policy_from_response, robots_url
@@ -211,6 +212,36 @@ ROBOTS_MAX_REDIRECTS = 5
 ROBOTS_TIMEOUT_SECONDS = 10
 _ALLOWED_SCHEMES = ("http", "https")
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+# Only the first 512 KB of robots.txt is kept; the rest is treated as absent
+ROBOTS_MAX_BYTES = 512 * 1024
+# At most this many robots.txt Sitemap: URLs are fetched
+ROBOTS_MAX_SITEMAPS = 50
+
+
+def robots_body(body: bytes, encoding: str | None) -> str:
+    """robots.txt text, cut to its first ROBOTS_MAX_BYTES. A cut file loses
+    its last, incomplete line too, so no rule or URL is read half."""
+    if len(body) > ROBOTS_MAX_BYTES:
+        body = body[:ROBOTS_MAX_BYTES]
+        body = body[:body.rfind(b"\n") + 1]
+    return body.decode(encoding or "utf-8", errors="replace")
+
+
+def sitemap_host_allowed(url: str, config: ScrapeConfig) -> bool:
+    """True when a sitemap URL may be fetched: http or https, on the site's
+    own host (any port) or a host given with --allow-sitemap-host."""
+    try:
+        parts = urlsplit(url)
+        parts.port  # noqa: B018 - raises ValueError for a bad port
+    except ValueError:
+        return False
+    if parts.scheme.lower() not in _ALLOWED_SCHEMES:
+        return False
+    host = (parts.hostname or "").lower()
+    if not host:
+        return False
+    site_host = (urlsplit(config.base_url).hostname or "").lower()
+    return host == site_host or host in {h.lower() for h in config.allow_sitemap_hosts}
 
 
 def _header(headers, name: str) -> str:
@@ -226,8 +257,10 @@ def fetch_robots_txt(config: ScrapeConfig) -> tuple[int, str | None]:
     Returns (HTTP status, body). Status 0 means unreachable, including a
     timeout (one attempt, ROBOTS_TIMEOUT_SECONDS). ROBOTS_REDIRECT_FAILED
     covers a redirect loop, a chain longer than five, a redirect with no
-    Location, and a redirect to anything other than http or https.
+    Location, a redirect to anything other than http or https and, with
+    --refuse-private-redirects, a redirect into a private network.
     The file reached applies to this site, wherever it was served from.
+    Only its first ROBOTS_MAX_BYTES are kept.
     """
     url = robots_url(config.base_url)
     seen = {url}
@@ -255,10 +288,15 @@ def fetch_robots_txt(config: ScrapeConfig) -> tuple[int, str | None]:
                 if config.verbose:
                     print(f"    robots.txt redirect loop at {url}")
                 return ROBOTS_REDIRECT_FAILED, None
+            if config.refuse_private_redirects:
+                reason = private_redirect_reason(url, config.url)
+                if reason:
+                    print(f"    robots.txt {reason}")
+                    return ROBOTS_REDIRECT_FAILED, None
             seen.add(url)
             continue
         if 200 <= status < 300:
-            return status, response.body.decode(response.encoding or "utf-8", errors="replace")
+            return status, robots_body(response.body, response.encoding)
         return status, None
     if config.verbose:
         print(f"    robots.txt: more than {ROBOTS_MAX_REDIRECTS} redirects")
@@ -347,19 +385,35 @@ async def run_discovery(
         if verbose:
             print(f"  Discovery: sitemap.xml: {len(urls_found)} dated URLs")
 
+    # Sitemaps on another host are fetched only with --allow-sitemap-host
+    refused_hosts: list[str] = []
+
+    def _host_ok(u: str) -> bool:
+        if sitemap_host_allowed(u, config):
+            return True
+        refused_hosts.append(u)
+        return False
+
     # Collect all sub-sitemap URLs to fetch (from main + robots.txt extras)
     seen_sitemaps = {sitemap_url}
     all_sub_urls: list[str] = []
     for u in sub_sitemaps[:20]:
-        if u not in seen_sitemaps:
+        if u not in seen_sitemaps and _host_ok(u):
             seen_sitemaps.add(u)
             all_sub_urls.append(u)
 
     if extra_sitemaps:
+        followed = 0
         for sm_url in extra_sitemaps:
-            if sm_url not in seen_sitemaps:
+            if followed >= ROBOTS_MAX_SITEMAPS:
+                if verbose:
+                    print(f"  Discovery: robots.txt lists more than {ROBOTS_MAX_SITEMAPS} "
+                          "sitemaps, the rest are not fetched")
+                break
+            if sm_url not in seen_sitemaps and _host_ok(sm_url):
                 seen_sitemaps.add(sm_url)
                 all_sub_urls.append(sm_url)
+                followed += 1
 
     # Fetch all sub-sitemaps concurrently
     if all_sub_urls:
@@ -378,7 +432,7 @@ async def run_discovery(
             if verbose:
                 print(f"  Discovery: sub-sitemap: {len(sub_urls)} dated URLs")
             for u in sub_subs[:20]:
-                if u not in seen_sitemaps:
+                if u not in seen_sitemaps and _host_ok(u):
                     seen_sitemaps.add(u)
                     level2_urls.append(u)
 
@@ -396,6 +450,13 @@ async def run_discovery(
                 date_map.update(sub_urls)
                 if verbose:
                     print(f"  Discovery: level-2 sub-sitemap: {len(sub_urls)} dated URLs")
+
+    if refused_hosts:
+        print(f"  Discovery: {len(refused_hosts)} sitemaps on another host not fetched "
+              "(allow a host with --allow-sitemap-host)")
+        if verbose:
+            for u in refused_hosts[:10]:
+                print(f"    {u[:200]}")
 
     # 2. Try RSS/Atom feeds
     # Auto-discover from homepage (already fetched above)

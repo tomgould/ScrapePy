@@ -13,6 +13,7 @@ You are responsible for how you use ScrapePy. Follow the terms of service of the
 What ScrapePy does to keep a crawl polite:
 
 - robots.txt is optional, and ScrapePy does not apply it unless you pass `--obey-robots`. By default no URL is skipped because robots.txt disallows it, no `Crawl-delay` is waited out, and a robots.txt that cannot be read stops nothing. It is requested once, only to read its `Sitemap:` lines, by the default crawl, `-j` and `--audit` when reconnaissance runs (`--audit` also saves it as a fixture). No other mode requests it, and neither does a targeted crawl that skips reconnaissance (see Targeted crawls). `run_summary.json` records the choice as `options.obey_robots`.
+- Only the first 512 KB of robots.txt is read; anything after it is treated as absent, and a line cut at that point is dropped. At most 50 of its `Sitemap:` URLs are fetched. A sitemap URL from robots.txt or from a sitemap index is fetched only when it is `http` or `https` and on the site's own host (any port), or on a host given with `--allow-sitemap-host` (repeatable). The run prints how many were not fetched. `www.example.com` and `example.com` count as different hosts.
 - `--obey-robots` applies robots.txt as described below. `--ignore-robots` is accepted and does nothing, so scripts that pass it keep working. Passing both flags is an error and exits 2.
 - Pacing is not part of robots.txt and always applies. Page requests to a site start at least `--wait` seconds apart (3 seconds by default, 5 in browser modes). Prefetching does not get around the gap: it overlaps waiting, not requests. Reconnaissance and page requests share one limiter, so the gap also holds between the last reconnaissance request and the first page.
 - At most 4 requests run at once by default (`-c` changes this).
@@ -24,7 +25,7 @@ With `--obey-robots`:
 - Rules follow [RFC 9309](https://www.rfc-editor.org/rfc/rfc9309): the longest matching `Allow` or `Disallow` pattern wins whatever order the lines are in, and `Allow` wins a tie. `*` matches any run of characters and a trailing `$` anchors the end of the URL, so `Disallow: /*.pdf$` blocks PDFs and `Disallow: /*?sort=` blocks sorted listings. Links found while crawling never carry query strings (they are stripped before queueing), so rules about query strings only affect sitemap and feed URLs. Paths are case-sensitive and percent-encoding is normalised. An empty `Disallow:` allows everything, and a UTF-8 byte order mark at the start of the file is ignored. Path parameters (`;`) are matched as ordinary characters. Matching uses no regular expressions and its cost is bounded: `Allow` and `Disallow` patterns longer than 2,000 characters are ignored, and when the site has rules for you, a URL whose path and query come to more than 8,192 characters, measured after percent-encoding (so each non-ASCII byte counts as three), is not fetched and is counted as blocked by robots.txt.
 - The group is chosen by your `--user-agent` product token (`MyBot` in `MyBot/1.0`): a group whose `User-agent` line names the same token, compared case-insensitively and ignoring any version suffix, replaces the `User-agent: *` group. `User-agent: M` does not match `MyBot`. Groups naming the same token are merged. Without `--user-agent`, the `*` group applies. `Crawl-delay` is read from the chosen group only.
 - A robots.txt that returns 404 or another 4xx means there are no restrictions. One that returns a 5xx error, or a server that cannot be reached or does not answer within 10 seconds (one attempt, no retries), means the whole site is treated as disallowed: ScrapePy prints why and fetches nothing.
-- Up to five redirects are followed when fetching robots.txt, to any host, and the file they lead to applies to the site being crawled. Only `http` and `https` redirect targets are followed. More than five redirects, a redirect loop, a redirect without a `Location` header or a redirect to any other scheme (such as `file:` or `ftp:`) count as unreachable, so the site is treated as disallowed.
+- Up to five redirects are followed when fetching robots.txt, to any host, and the file they lead to applies to the site being crawled. Only `http` and `https` redirect targets are followed. More than five redirects, a redirect loop, a redirect without a `Location` header, a redirect to any other scheme (such as `file:` or `ftp:`) or, with `--refuse-private-redirects`, a redirect to a private address count as unreachable, so the site is treated as disallowed.
 - A robots.txt `Crawl-delay` raises the gap between page requests and is never lowered by `--wait`. Reconnaissance requests are never spaced by less than `Crawl-delay` either.
 
 Which modes use robots.txt:
@@ -41,6 +42,19 @@ Which modes use robots.txt:
 Asset downloads (images, CSS, JS) linked from an allowed page are not checked against robots.txt and are not paced, though they share the `-c` concurrency limit.
 
 The stealth browser and proxy features exist because some sites block ordinary clients even for content they publish openly. They do not give you permission to access anything.
+
+### Network safety
+
+A site can redirect a request anywhere, including to addresses on your own network. `--refuse-private-redirects` (off by default) refuses to follow a redirect whose target is a loopback address (127.0.0.0/8, `::1`), "this host" (0.0.0.0/8, `::`), link-local (169.254.0.0/16, which includes the cloud metadata address 169.254.169.254, and `fe80::/10`), private (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 and IPv6 unique local `fc00::/7`) or carrier-grade NAT (100.64.0.0/10). An IPv4 address written as IPv6 (`::ffff:127.0.0.1`) counts as its IPv4 address. A host name is resolved first and the redirect is refused when any address it resolves to is in those ranges, so `localhost` is refused too. Redirects to a scheme other than `http` or `https` are refused as well, and redirects are followed at most 10 times. The `Authorization` header from `--auth` is not sent to another host.
+
+- Every hop is checked: page fetches in the default crawl, reconnaissance (sitemaps, feeds, homepage), robots.txt, feed mode and asset and document downloads. A refused page is recorded in `failed` in `run_summary.json` with a reason such as `RedirectRefused: redirect to a private address refused (169.254.169.254)`; a refused asset is not saved.
+- Only redirect targets are checked. The start URL is fetched whatever its address, and a redirect back to the start URL's own host and port is followed, so a crawl of a site on your own network still works.
+- The browser modes (`-j`, `-1`, `--swagger`, `-d`, `--instagram`) follow redirects inside the browser, and those are not checked. Assets downloaded during a `-j` crawl are.
+- The address is resolved for the check and again when the request is made, so a host whose DNS answer changes in between is not caught. With `--proxy`, the proxy resolves the name.
+
+Without the flag, redirects are followed wherever they lead, as the HTTP client does by default, so a site served from 127.0.0.1 can redirect to another local address.
+
+`--no-cloudflare-solve` turns off the browser's attempt to solve Cloudflare challenges (on by default) in the browser modes. A challenge page is then saved or skipped like any other page.
 
 ## Installation
 
@@ -115,6 +129,9 @@ python main.py <url> [options]
 | `--feed` | Read the URL as an RSS or Atom feed: one Markdown file per entry from one request. Automatic for URLs such as `/feed` or `/rss.xml`. `--max-articles` caps the entries (default 50) |
 | `--auth USER:PASS` | HTTP Basic Auth credentials |
 | `--proxy URL` | Proxy for every request: pages, reconnaissance, robots.txt, feeds, browser modes and asset downloads. Schemes `http`, `https`, `socks4`, `socks4a`, `socks5`, `socks5h`; a password in it is never printed or written |
+| `--allow-sitemap-host HOST` | Also fetch sitemaps on this host when robots.txt or a sitemap index lists them (repeatable; default: only the site's own host). A host name or IP address, without a scheme, port or path |
+| `--refuse-private-redirects` | Do not follow a redirect to a loopback, link-local, private or carrier-grade NAT address, or to a host that resolves to one; the page is recorded as failed. Covers HTTP fetches, not redirects inside the browser; the start URL is not checked. See Network safety |
+| `--no-cloudflare-solve` | Do not try to solve Cloudflare challenges in the browser modes (default: try) |
 | `--headless` | Run browser headless (default: visible) |
 | `-v`, `--verbose` | Verbose logging |
 | `--recent DURATION` | Only keep articles from last N period: `2w`, `1d`, `6h` |
@@ -325,7 +342,7 @@ The file is replaced as soon as a crawl starts with a placeholder whose `status`
 | `interrupted`, `interrupted_by` | Whether the run was stopped early, and by which signal (`SIGINT` or `SIGTERM`, otherwise `null`) |
 | `start_url`, `started_at`, `ended_at` | The URL given and the run's start and end times (UTC, ISO 8601) |
 | `output_dir` | Absolute path of the output directory. `html_dir` and `markdown_dir` are relative to it; `markdown_dir` is `null` with `--no-markdown` |
-| `options` | The settings that shaped the run. Credentials are never written: `auth_used` and `proxy_used` only say whether they were set. `obey_robots` is `true` only with `--obey-robots`; `ignore_robots` is its opposite: `true` when robots.txt rules and `Crawl-delay` were not applied, which is the default |
+| `options` | The settings that shaped the run. Credentials are never written: `auth_used` and `proxy_used` only say whether they were set. `obey_robots` is `true` only with `--obey-robots`; `ignore_robots` is its opposite: `true` when robots.txt rules and `Crawl-delay` were not applied, which is the default. `allow_sitemap_hosts`, `refuse_private_redirects` and `solve_cloudflare` (`false` with `--no-cloudflare-solve`) appear only when their flag is given |
 | `counts.fetched` | Page requests that completed, with a response or a network error, including ones answered 304 Not Modified. A request still waiting for its turn when the run is interrupted is not counted |
 | `counts.new`, `counts.changed` | Pages saved this run. A page is changed when an earlier run saved it (it is in the incremental cache or its HTML file already exists). A page whose Markdown body matches a file already written or unchanged in the run is a duplicate and gets no file |
 | `counts.unchanged` | Pages skipped because the server said 304 or the HTML matched the cache. Their URLs are in `unchanged_urls` |
