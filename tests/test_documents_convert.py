@@ -728,3 +728,13 @@ def test_pdf_without_pdfminer_still_converts_with_joined_lines(monkeypatch):
     result = convert_document(layout_sample_pdf(), "pdf")
     assert result.status == "converted"
     assert "Do not leave tools in the hall." in result.text
+
+
+def test_default_column_cap_keeps_a_wide_table():
+    header = ",".join(f"c{i}" for i in range(1, 61))
+    row = ",".join(str(i) for i in range(1, 61))
+    result = convert_document(f"{header}\n{row}\n".encode(), "csv")
+    assert "| c60 |" in result.text and not result.notes
+    wider = ",".join(f"c{i}" for i in range(1, 106))
+    assert convert_document(f"{wider}\n{wider}\n".encode(), "csv").notes == [
+        "Columns after the first 100 are not shown."]
