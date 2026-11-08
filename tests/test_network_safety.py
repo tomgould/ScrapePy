@@ -247,7 +247,11 @@ def test_robots_body_drops_a_cut_line():
 @pytest.mark.parametrize("url, allowed", [
     ("http://example.com/sitemap.xml", True),
     ("https://EXAMPLE.com:8443/sitemap.xml", True),
-    ("http://www.example.com/sitemap.xml", False),
+    ("http://www.example.com/sitemap.xml", True),
+    ("http://WWW.example.com:8080/sitemap.xml", True),
+    ("http://www2.example.com/sitemap.xml", False),
+    ("http://www.www.example.com/sitemap.xml", False),
+    ("http://wwwexample.com/sitemap.xml", False),
     ("http://cdn.example.net/sitemap.xml", False),
     ("http://other.example.org/sitemap.xml", True),
     ("ftp://example.com/sitemap.xml", False),
@@ -257,6 +261,16 @@ def test_robots_body_drops_a_cut_line():
 ])
 def test_sitemap_host_rule(url, allowed):
     config = ScrapeConfig(url="http://example.com/", allow_sitemap_hosts=["other.example.org"])
+    assert discovery.sitemap_host_allowed(url, config) is allowed
+
+
+@pytest.mark.parametrize("url, allowed", [
+    ("http://example.com/sitemap.xml", True),
+    ("https://www.example.com/sitemap.xml", True),
+    ("http://cdn.example.com/sitemap.xml", False),
+])
+def test_sitemap_host_rule_for_a_www_site(url, allowed):
+    config = ScrapeConfig(url="https://www.example.com/")
     assert discovery.sitemap_host_allowed(url, config) is allowed
 
 

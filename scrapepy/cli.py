@@ -175,7 +175,10 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
                            help="Do not follow a redirect to a loopback, link-local, private "
                                 "or carrier-grade NAT address, or to a host that resolves to "
                                 "one; the page is recorded as failed. Covers HTTP fetches, not "
-                                "the browser modes; the start URL is not checked")
+                                "the browser modes; the start URL and redirects back to its "
+                                "own host and port are not checked, and a host whose DNS "
+                                "answer changes between the check and the request (DNS "
+                                "rebinding) is not caught")
     net_group.add_argument("--no-cloudflare-solve", action="store_true",
                            help="Do not try to solve Cloudflare challenges in the browser modes "
                                 "(default: try)")
