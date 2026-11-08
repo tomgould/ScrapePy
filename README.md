@@ -395,7 +395,7 @@ Section pages are not flattened in `MarkdownSites/`: every path segment becomes 
 
 ### Default Crawl
 
-Recursively crawls all pages on the same domain using HTTP requests with TLS fingerprint spoofing. Downloads images, rewrites internal URLs to relative paths for offline viewing, and detects error pages: a status of 400 or above, or a 200 page whose title or first H1 names an error ("404 Not Found", "Page not found", "Error 500") or that is a short storage-service error document. Body text and code samples are not read for this, so a page that shows `404` in an example or is called "Errors and Exceptions" is kept.
+Recursively crawls all pages on the same domain using HTTP requests with TLS fingerprint spoofing. Downloads images, rewrites internal URLs to relative paths for offline viewing, and detects error pages: a status of 400 or above, or a 200 page whose title or first H1 names an error ("404 Not Found", "Page not found", "Error 500") or that is a short storage-service error document. Body text and code samples are not read for this, so a page that shows `404` in an example or is called "Errors and Exceptions" is kept. This is deliberate: a 200 page whose title and H1 look normal is kept even when its body says "page not found", because reading body text rejected real pages, and a soft 404 of that kind is usually too short to give a Markdown file (it is then listed under `no_markdown`).
 
 Before crawling begins, a lightweight reconnaissance step runs automatically:
 1. Fetches `robots.txt` for its sitemap URLs, and with `--obey-robots` also for its access rules and `Crawl-delay`
