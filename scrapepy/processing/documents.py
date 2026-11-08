@@ -544,6 +544,8 @@ class DocumentCollector:
             "domain": self.config.domain,
             "file_type": kind,
             "pages": result.pages,
+            "layout_pages": result.layout_pages,
+            "fallback_pages": result.fallback_pages,
             "sheets": result.sheets,
             "rows": result.rows,
             "linked_from": self.linked_from.get(url_path),

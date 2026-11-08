@@ -73,7 +73,7 @@ from ..output.writer import url_to_filepath, write_file
 from ..output.broken_links import BrokenLinkTracker
 from ..output.cache import CrawlCache
 from ..output.run_summary import RunStats, build_summary, write_summary
-from ..processing.documents import DocumentCollector, document_type
+from ..processing.documents import LEGACY_TYPES, DocumentCollector, document_type
 
 # Discovery (sitemaps, feeds) spaces its requests at least this far apart,
 # or by robots.txt Crawl-delay when that is longer.
@@ -1255,7 +1255,9 @@ async def run_crawl_mode(
             if item.startswith("#"):
                 continue
             path, _, url = _parse_visit_item(item, config)
-            if path not in visited and documents.kind(path):
+            kind = documents.kind(path)
+            # .doc and .xls links would only be recorded as skipped
+            if path not in visited and kind and kind not in LEGACY_TYPES:
                 unvisited.append(url)
         documents.note_unvisited(unvisited)
         stats.documents = documents.summary()

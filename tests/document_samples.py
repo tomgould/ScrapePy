@@ -408,3 +408,66 @@ def child_stderr_controls(code: int) -> None:
     import os
     os.write(2, b"\x1b[31mboom\x07 with\x00 bell\x1b[0m\n")
     os._exit(code)
+
+
+def raw_pdf(contents: list[bytes], extra: dict[int, bytes] | None = None,
+            fonts: bytes = b"/F1 3 0 R", mediabox: bytes = b"[0 0 612 792]") -> bytes:
+    """A PDF with the given raw content stream per page. Object 3 is
+    Helvetica; extra objects start at 20 and fonts names the page fonts."""
+    objects: dict[int, bytes] = {
+        1: b"<< /Type /Catalog /Pages 2 0 R >>",
+        3: b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+    }
+    kids = []
+    for i, ops in enumerate(contents):
+        page_id = 4 + 2 * i
+        kids.append(page_id)
+        objects[page_id] = (b"<< /Type /Page /Parent 2 0 R /MediaBox " + mediabox
+                            + b" /Resources << /Font << " + fonts + b" >> >> /Contents %d 0 R >>" % (page_id + 1))
+        objects[page_id + 1] = b"<< /Length %d >>\nstream\n" % len(ops) + ops + b"\nendstream"
+    objects[2] = (b"<< /Type /Pages /Count %d /Kids [" % len(kids)
+                  + b" ".join(b"%d 0 R" % k for k in kids) + b"] >>")
+    objects.update(extra or {})
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = {}
+    for number in sorted(objects):
+        offsets[number] = len(out)
+        out += b"%d 0 obj\n" % number + objects[number] + b"\nendobj\n"
+    xref = len(out)
+    size = max(objects) + 1
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % size
+    for number in range(1, size):
+        out += b"%010d 00000 n \n" % offsets[number] if number in offsets else b"0000000000 65535 f \n"
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (size, xref)
+    return bytes(out)
+
+
+def text_ops(lines: list[tuple[float, float, float, str]], font: bytes = b"/F1") -> bytes:
+    """Content operators placing each (x, y, size, text) exactly."""
+    return b"\n".join(b"BT %s %g Tf 1 0 0 1 %g %g Tm (%s) Tj ET" % (font, size, x, y, _pdf_string(t))
+                      for x, y, size, t in lines)
+
+
+# A Type0 font with Identity-H encoding and no ToUnicode map: pdfminer
+# writes "(cid:N)" for its glyphs
+UNMAPPED_FONT = {
+    20: b"<< /Type /Font /Subtype /Type0 /BaseFont /Foo /Encoding /Identity-H /DescendantFonts [21 0 R] >>",
+    21: (b"<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Foo /CIDSystemInfo "
+         b"<< /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /DW 500 >>"),
+}
+
+
+def table_page_pdf() -> bytes:
+    """A heading and a 3 by 4 table whose cells are placed one by one."""
+    cells = []
+    for r, row in enumerate([("Region", "Sales", "Growth"), ("North", "1,200", "4%"),
+                             ("South", "900", "2%"), ("East", "1,500", "7%")]):
+        y = 700 - 15 * r
+        cells += [(72, y, 11, row[0]), (250, y, 11, row[1]), (400, y, 11, row[2])]
+    return raw_pdf([text_ops([(72, 740, 16, "Quarterly Sales Report")] + cells)])
+
+
+def dense_page_pdf(pieces: int) -> bytes:
+    """One page of pieces separately placed short words."""
+    lines = [(36 + (i % 20) * 27, 760 - (i // 20 % 70) * 10, 6, "w%d" % (i % 10)) for i in range(pieces)]
+    return raw_pdf([text_ops(lines)])
