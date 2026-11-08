@@ -26,7 +26,7 @@ TOP_LEVEL_KEYS = {
     "changed_markdown", "unchanged_urls", "failed", "blocked_by_robots",
     "interrupted", "interrupted_by", "exit_code", "duplicates", "renamed",
     "skipped_non_html", "no_markdown", "no_markdown_reasons", "needs_render",
-    "encoding_fallbacks",
+    "encoding_fallbacks", "truncated",
 }
 COUNT_KEYS = {"fetched", "new", "changed", "unchanged", "failed", "blocked_by_robots", "skipped_old",
               "duplicates", "renamed", "skipped_non_html", "no_markdown", "needs_render",
@@ -268,3 +268,29 @@ class TestReadersNeverSeePartialFile:
         src, dst = calls[0]
         assert dst == path
         assert os.path.dirname(src) == os.path.dirname(path)
+
+
+class TestCappedLists:
+    def test_new_lists_keep_the_first_entries_and_exact_counts(self, tmp_path):
+        from scrapepy.output.run_summary import LIST_CAP, RunStats
+        config = _config(tmp_path)
+        stats = RunStats()
+        for i in range(LIST_CAP + 5):
+            stats.record_no_markdown(f"https://example.com/p{i}", "too short")
+        stats.record_needs_render("https://example.com/app", 120)
+        summary = build_summary(config, stats)
+        assert len(summary["no_markdown"]) == LIST_CAP
+        assert summary["no_markdown"][0]["url"] == "https://example.com/p0"
+        assert summary["counts"]["no_markdown"] == LIST_CAP + 5
+        assert summary["no_markdown_reasons"] == {"too short": LIST_CAP + 5}
+        assert summary["truncated"] == ["no_markdown"]
+        assert len(summary["needs_render"]) == 1
+
+    def test_nothing_truncated(self, tmp_path):
+        from scrapepy.output.run_summary import LIST_CAP, RunStats
+        config = _config(tmp_path)
+        stats = RunStats()
+        for i in range(LIST_CAP):
+            stats.record_encoding_fallback(f"https://example.com/p{i}", "utf-8", "cp1252")
+        summary = build_summary(config, stats)
+        assert len(summary["encoding_fallbacks"]) == LIST_CAP and summary["truncated"] == []

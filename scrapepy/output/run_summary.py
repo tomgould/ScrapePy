@@ -15,6 +15,10 @@ from ..config import ScrapeConfig
 SUMMARY_FILENAME = "run_summary.json"
 SCHEMA_VERSION = 1
 
+# The no_markdown, needs_render and encoding_fallbacks lists keep their first
+# LIST_CAP entries; counts stay exact and "truncated" names any list cut
+LIST_CAP = 200
+
 # Why a fetched page gave no Markdown file (run_summary.json "no_markdown")
 NO_MARKDOWN_REASONS = (
     "converter failure",   # the converter raised an error (also in "failed")
@@ -221,10 +225,13 @@ def build_summary(
             for d in stats.duplicates
         ],
         "skipped_non_html": list(stats.skipped_non_html),
-        "no_markdown": list(stats.no_markdown),
+        "no_markdown": stats.no_markdown[:LIST_CAP],
         "no_markdown_reasons": stats.no_markdown_reasons(),
-        "needs_render": list(stats.needs_render),
-        "encoding_fallbacks": list(stats.encoding_fallbacks),
+        "needs_render": stats.needs_render[:LIST_CAP],
+        "encoding_fallbacks": stats.encoding_fallbacks[:LIST_CAP],
+        "truncated": [name for name, items in (
+            ("no_markdown", stats.no_markdown), ("needs_render", stats.needs_render),
+            ("encoding_fallbacks", stats.encoding_fallbacks)) if len(items) > LIST_CAP],
         "renamed": [
             {"url": r["url"], "file": relative_to_root(r["file"], root),
              "natural_file": relative_to_root(r["natural_file"], root)}

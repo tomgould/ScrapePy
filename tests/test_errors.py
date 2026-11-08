@@ -136,7 +136,8 @@ class TestErrorHeadings:
     @pytest.mark.parametrize("text", [
         "8. Errors and Exceptions", "4. More Control Flow Tools", "Top 500 companies",
         "500 Days of Summer", "Error handling in Python", "Not found: a lost and found story",
-        "HTTP status 404 explained", "Errors", "", "Fortune 500 list",
+        "How to build a custom 404 page for your static site with plain HTML today",
+        "Errors", "", "Fortune 500 list", "Python 3.10.4 release notes", "Release v1.404",
         "When to raise an error", "Files that are not found",
     ])
     def test_ordinary_headings(self, text):
@@ -154,4 +155,33 @@ class TestErrorHeadings:
     def test_long_page_mentioning_nosuchkey_is_kept(self):
         html = ("<html><head><title>Storage errors explained</title></head><body>"
                 + "<p>A missing object answers NoSuchKey.</p>" * 100 + "</body></html>")
+        assert is_error_page_html(html) is False
+
+
+class TestErrorHeadingsInOtherLanguages:
+    @pytest.mark.parametrize("text", [
+        "Fehler 404", "Seite nicht gefunden (404)",                 # German
+        "Erreur 404 - Page introuvable", "Erreur 500",              # French
+        "Error 404 - Página no encontrada", "404 No encontrado",    # Spanish
+        "Ошибка 404", "404 Страница не найдена", "Ошибка 502",      # Russian
+        "404 ページが見つかりません", "404エラー", "エラー 503",     # Japanese
+        "خطأ 404 - الصفحة غير موجودة", "الصفحة غير موجودة 404",      # Arabic
+        "Gone 410", "403",
+    ])
+    def test_status_code_in_a_short_heading(self, text):
+        assert is_error_heading(text) is True
+
+    @pytest.mark.parametrize("text", [
+        "Top 500 companies", "500 Days of Summer", "Fortune 500 list", "Die 500 besten Rezepte",
+        "Как настроить страницу 404 на своём сайте с помощью nginx и простого HTML шаблона",
+        "Code 14040", "E404X",
+    ])
+    def test_codes_in_ordinary_headings(self, text):
+        assert is_error_heading(text) is False
+
+    def test_only_a_prefix_of_the_html_is_read(self):
+        # The title and first H1 are near the start; a late "404" heading in a
+        # long page is not read
+        html = ("<html><head><title>Guide</title></head><body><p>"
+                + "x" * 25000 + "</p><h1>404</h1></body></html>")
         assert is_error_page_html(html) is False
