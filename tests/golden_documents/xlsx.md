@@ -1,7 +1,9 @@
 status: converted
 title: Plot rota
-date: 2025-06-02T12:00:00+00:00
-pages: 3
+date: 2025-11-03T09:00:00+00:00
+pages: None
+sheets: 3
+rows: 4
 
 ## Rota
 

@@ -47,6 +47,9 @@ REQUIRED_MODULES = {"pdf": "pypdf", "docx": "docx", "xlsx": "openpyxl"}
 
 INSTALL_HINT = 'pip install "scrapepy[documents]"'
 
+# How many unvisited document URLs the run summary lists
+UNVISITED_SAMPLE = 20
+
 MAX_REDIRECTS = 5
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
@@ -312,6 +315,7 @@ class DocumentCollector:
         self.unchanged = 0
         self.skipped: list[dict] = []
         self.failed: list[dict] = []
+        self.unvisited: list[str] = []
 
     async def open(self) -> None:
         self.client = create_asset_client(self.config)
@@ -357,6 +361,13 @@ class DocumentCollector:
             self.stats.record_renamed(url, renamed[0], renamed[1])
         self.stats.unchanged.append(url)
 
+    def note_unvisited(self, urls) -> None:
+        """Document URLs still queued when the crawl stopped (--max-pages,
+        say), so a caller can tell a widened budget would reach them."""
+        for url in urls:
+            if url not in self.found and url not in self.unvisited:
+                self.unvisited.append(url)
+
     def summary(self) -> dict:
         root = self.config.output_root or "."
         return {
@@ -368,6 +379,8 @@ class DocumentCollector:
             "unchanged": self.unchanged,
             "skipped": list(self.skipped),
             "failed": list(self.failed),
+            "found_unvisited": len(self.unvisited),
+            "found_unvisited_sample": self.unvisited[:UNVISITED_SAMPLE],
         }
 
     # -- fetching ----------------------------------------------------------
@@ -525,6 +538,8 @@ class DocumentCollector:
             "domain": self.config.domain,
             "file_type": kind,
             "pages": result.pages,
+            "sheets": result.sheets,
+            "rows": result.rows,
             "linked_from": self.linked_from.get(url_path),
             "scraped_at": utc_now_iso(),
             "content_hash": content_hash(body),

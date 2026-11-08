@@ -94,7 +94,8 @@ def make_docx(title: str | None = "Garden Club Handbook", created: datetime | No
 
 
 def make_xlsx(sheets: dict[str, list[list]], title: str | None = "Plot rota",
-              created: datetime | None = None, formula: bool = False) -> bytes:
+              created: datetime | None = None, formula: bool = False,
+              modified: str | None = "2025-11-03T09:00:00Z") -> bytes:
     import openpyxl
 
     workbook = openpyxl.Workbook()
@@ -109,7 +110,14 @@ def make_xlsx(sheets: dict[str, list[list]], title: str | None = "Plot rota",
     workbook.properties.created = created or datetime(2025, 6, 2, 12, 0, 0)
     buf = io.BytesIO()
     workbook.save(buf)
-    return buf.getvalue()
+    # openpyxl stamps the save time as the modified date: set it afterwards
+    import re as _re
+    if modified is None:
+        drop = lambda x: _re.sub(r"<dcterms:modified[^>]*>[^<]*</dcterms:modified>", "", x)
+        return _replace_part(buf.getvalue(), "docProps/core.xml", drop)
+    stamp = lambda x: _re.sub(r"(<dcterms:modified[^>]*>)[^<]*(</dcterms:modified>)",
+                              lambda m: m.group(1) + modified + m.group(2), x)
+    return _replace_part(buf.getvalue(), "docProps/core.xml", stamp)
 
 
 def with_cached_formula_value(xlsx: bytes, cell: str, formula: str, cached: str) -> bytes:
@@ -331,3 +339,65 @@ def child_flood(mb: int, then_exit: bool = False) -> int:
     if then_exit:
         os._exit(5)
     return mb
+
+
+def make_layout_pdf(pages: list[list[tuple[float, float, float, str]]],
+                    info: dict[str, str] | None = None) -> bytes:
+    """A PDF with text placed exactly: each page is a list of (x, y, size,
+    text) in points from the bottom left, in Helvetica."""
+    count = len(pages)
+    first_page_id = 4
+    info_id = first_page_id + 2 * count
+    objects: dict[int, bytes] = {
+        1: b"<< /Type /Catalog /Pages 2 0 R >>",
+        2: (b"<< /Type /Pages /Count %d /Kids [" % count
+            + b" ".join(b"%d 0 R" % (first_page_id + 2 * i) for i in range(count)) + b"] >>"),
+        3: b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+    }
+    for i, items in enumerate(pages):
+        page_id = first_page_id + 2 * i
+        ops = b"\n".join(b"BT /F1 %g Tf %g %g Td (%s) Tj ET" % (size, x, y, _pdf_string(text))
+                         for x, y, size, text in items)
+        objects[page_id] = (b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+                            b"/Resources << /Font << /F1 3 0 R >> >> /Contents %d 0 R >>" % (page_id + 1))
+        objects[page_id + 1] = b"<< /Length %d >>\nstream\n" % len(ops) + ops + b"\nendstream"
+    if info:
+        objects[info_id] = b"<< " + b" ".join(
+            b"/" + k.encode() + b" (" + _pdf_string(v) + b")" for k, v in info.items()) + b" >>"
+    out = bytearray(b"%PDF-1.4\n")
+    offsets = {}
+    for number in sorted(objects):
+        offsets[number] = len(out)
+        out += b"%d 0 obj\n" % number + objects[number] + b"\nendobj\n"
+    xref = len(out)
+    size = max(objects) + 1
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % size
+    for number in range(1, size):
+        out += b"%010d 00000 n \n" % offsets[number] if number in offsets else b"0000000000 65535 f \n"
+    trailer = b"<< /Size %d /Root 1 0 R" % size
+    if info:
+        trailer += b" /Info %d 0 R" % info_id
+    out += b"trailer\n" + trailer + b" >>\nstartxref\n%d\n%%%%EOF\n" % xref
+    return bytes(out)
+
+
+def layout_sample_pdf() -> bytes:
+    """A page laid out like a leaflet: a large heading, a paragraph wrapped
+    over three lines (one ending in a hyphen), a bulleted list whose second
+    item wraps, a second paragraph after a gap, and a side column; plus a
+    junk metadata title."""
+    body = [
+        (72, 720, 20, "Garden Club Leaflet"),
+        (72, 690, 11, "Members meet on the first Saturday of"),
+        (72, 676, 11, "each month in the community hall, where the well-"),
+        (72, 662, 11, "known plant swap takes place."),
+        (72, 636, 11, "\x95 Bring gloves"),
+        (72, 622, 11, "\x95 Bring a trowel and a pot for"),
+        (84, 608, 11, "seedlings"),
+        (72, 580, 11, "Do not"),
+        (72, 566, 11, "leave tools in the hall."),
+        (430, 690, 9, "Side note:"),
+        (430, 679, 9, "the hall opens"),
+        (430, 668, 9, "at nine."),
+    ]
+    return make_layout_pdf([body], {"Title": "ch3199paga", "CreationDate": "D:20250314"})
