@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 from ..config import ScrapeConfig
 from ..proxy import redact
+from ..processing.encoding import decode_body
 from ..engine.fetcher import fetch_page_browser
 from ..engine.browser_actions import expand_swagger_sections, find_spec_url, scroll_full_page
 from ..output.writer import write_file
@@ -51,7 +52,7 @@ async def run_swagger_mode(config: ScrapeConfig) -> int:
         print("Check that the URL is correct and the browser is installed (scrapling install).")
         return 0
 
-    html = response.body.decode(response.encoding or "utf-8")
+    html = decode_body(response.body, response.encoding)[0]
 
     output_file = os.path.join(config.output_dir, "index.html")
     write_file(output_file, html)

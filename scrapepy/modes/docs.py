@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 from ..config import ScrapeConfig
 from ..proxy import redact
+from ..processing.encoding import decode_body
 from ..engine.fetcher import fetch_page_browser
 from ..engine.browser_actions import (
     find_nav_links,
@@ -50,7 +51,7 @@ async def run_docs_mode(config: ScrapeConfig, robots: RobotsPolicy | None = None
     print("  Finding navigation links...")
 
     # Get the initial page HTML
-    main_html = response.body.decode(response.encoding or "utf-8")
+    main_html = decode_body(response.body, response.encoding)[0]
     all_content.append({
         "url": config.url,
         "title": "Home",
@@ -87,7 +88,7 @@ async def run_docs_mode(config: ScrapeConfig, robots: RobotsPolicy | None = None
                 link["href"], config, page_action=sub_page_action, wait_time=1.0
             )
 
-            page_html = sub_response.body.decode(sub_response.encoding or "utf-8")
+            page_html = decode_body(sub_response.body, sub_response.encoding)[0]
             page_title = _extract_title(page_html) or link["text"]
 
             all_content.append({

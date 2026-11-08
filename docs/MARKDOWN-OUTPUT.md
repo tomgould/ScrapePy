@@ -45,7 +45,7 @@ A site folder holding a `MarkdownSites/<site>/index/_index.md` whose `url` is th
 
 Only pages are crawled. A URL ending in `.json`, `.xml`, `.rss` or `.atom` is never queued, nor is one that a page declares with `<link rel="alternate">` and a type that is not HTML (its JSON, Markdown or feed version); alternates with no type or an HTML type, such as language versions, are followed. Links to `.md` addresses in the body are followed like any other link, but a response is converted only when the server says it is HTML (`text/html` or `application/xhtml+xml`, or no type at all), so a raw Markdown, JSON or XML file is fetched and skipped rather than written as a garbled copy of the page; `run_summary.json` lists it under `skipped_non_html`. In the default mode such responses (a `.txt` file or a PDF served at a page address) are not saved in the HTML copy either.
 
-Some pages produce no file: error pages, RSS and Atom feeds met during a crawl (a feed given as the start URL is read in feed mode, below), pages with fewer than 50 words of content (recipe pages excepted), and paths containing `/feed`, `/author/`, `/category/`, `/tag/`, `/wp-includes/` or `/wp-json/` relative to the crawl's start. They are still fetched and counted in the summary.
+Some pages produce no file, and `run_summary.json` lists each one under `no_markdown` with the reason: error pages, RSS and Atom feeds met during a crawl (a feed given as the start URL is read in feed mode, below), pages with fewer than 50 words of content (recipe pages excepted), and paths containing `/feed`, `/author/`, `/category/`, `/tag/`, `/wp-includes/` or `/wp-json/` relative to the crawl's start. They are still fetched and counted in the summary.
 
 ## Frontmatter
 
@@ -223,13 +223,17 @@ Written to `ScrapedSites/<site>/run_summary.json` at the start of a crawl or a `
 | `output_dir` | string | Absolute path of the output folder |
 | `html_dir`, `markdown_dir` | string | Site folders, relative to `output_dir`; `markdown_dir` is null with `--no-markdown` |
 | `options` | object | The settings used. Credentials are never included. `obey_robots` is true only when `--obey-robots` was given; `ignore_robots` is its opposite: true when robots.txt rules and `Crawl-delay` were not applied, which is the default |
-| `counts` | object of integers | `fetched`, `new`, `changed`, `unchanged`, `failed`, `blocked_by_robots`, `duplicates`, `renamed`, `skipped_non_html`, `skipped_old` |
+| `counts` | object of integers | `fetched`, `new`, `changed`, `unchanged`, `failed`, `blocked_by_robots`, `duplicates`, `renamed`, `skipped_non_html`, `skipped_old`, `no_markdown`, `needs_render`, `encoding_fallbacks` |
 | `new_markdown`, `changed_markdown` | list of strings | Markdown files written for new and changed pages |
 | `unchanged_urls` | list of strings | Pages the server or the cache showed had not changed |
 | `failed` | list of `{url, reason}` | Fetch errors, HTTP 4xx and 5xx, error pages, and pages whose conversion to Markdown failed (these are not counted as new or changed and are converted again on the next run) |
 | `blocked_by_robots` | list of strings | URLs robots.txt disallowed. Empty unless `--obey-robots` was given |
 | `duplicates` | list of `{url, same_as}` | Pages whose Markdown matched a file already written, and that file |
-| `skipped_non_html` | list of `{url, content_type}` | Responses fetched but not converted because the server said they are not HTML (a raw Markdown, JSON or plain-text file), with the media type it gave |
+| `skipped_non_html` | list of `{url, content_type}` | Responses fetched but not converted because the server said they are not HTML (a raw Markdown, JSON or plain-text file), with the media type it gave, and binary data served as a page (a body that needed a fallback encoding and holds NUL bytes) |
+| `no_markdown` | list of `{url, reason}` | Every page fetched that gave no Markdown file, with the reason: `converter failure`, `duplicate`, `empty` (no main content found), `error page`, `feed or XML`, `non-HTML`, `not a recipe` (`--only-recipes`), `skipped path` (`/category/`, `/tag/`, `/author/` and feed paths) and `too short` (under 50 words). A page can also appear in `failed`, `duplicates` or `skipped_non_html`. A page that failed to fetch or answered 400 or above is only in `failed`. Empty with `--no-markdown` |
+| `no_markdown_reasons` | object of integers | `no_markdown` counted by reason |
+| `needs_render` | list of `{url, bytes}` | Pages fetched over HTTP that came back nearly empty and look built by JavaScript (scripts and under 200 characters of visible text, or a `<noscript>` asking for JavaScript and under 500), with the size of the HTML in bytes. Fetching them again with `-j` may give their content. Never listed in the browser modes |
+| `encoding_fallbacks` | list of `{url, declared, used}` | Pages whose body did not decode with the encoding the response declared (the Content-Type charset, else UTF-8), with the encoding that worked: the `<meta>` charset, then UTF-8, then Windows-1252, and last UTF-8 with undecodable bytes replaced (`utf-8 (undecodable bytes replaced)`) |
 | `renamed` | list of `{url, file, natural_file}` | Pages written to a hash-suffixed name because another URL has their natural file name, with the file used and the name they would have had (both relative to `output_dir`). Listed in every run where the page is written or unchanged |
 | `interrupted`, `interrupted_by` | boolean, string or null | Whether the run stopped early, and the signal (`SIGINT` or `SIGTERM`) |
 | `exit_code` | integer or null | The process exit code; null while running |

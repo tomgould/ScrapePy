@@ -15,6 +15,19 @@ from ..config import ScrapeConfig
 SUMMARY_FILENAME = "run_summary.json"
 SCHEMA_VERSION = 1
 
+# Why a fetched page gave no Markdown file (run_summary.json "no_markdown")
+NO_MARKDOWN_REASONS = (
+    "converter failure",   # the converter raised an error (also in "failed")
+    "duplicate",           # same body as another page's file (also in "duplicates")
+    "empty",               # no main content found
+    "error page",          # the title or H1 names an error (also in "failed")
+    "feed or XML",         # an RSS, Atom or XML document served as a page
+    "non-HTML",            # not an HTML response (also in "skipped_non_html")
+    "not a recipe",        # --only-recipes and no Recipe data
+    "skipped path",        # a /category/, /tag/, /author/ or feed path
+    "too short",           # under 50 words of content
+)
+
 EXIT_OK = 0
 EXIT_NOTHING_FETCHED = 1
 EXIT_BAD_ARGS = 2
@@ -42,6 +55,9 @@ class RunStats:
     duplicates: list[dict] = field(default_factory=list)  # {"url", "same_as"}
     renamed: list[dict] = field(default_factory=list)  # {"url", "file", "natural_file"}
     skipped_non_html: list[dict] = field(default_factory=list)  # {"url", "content_type"}
+    no_markdown: list[dict] = field(default_factory=list)  # {"url", "reason"}
+    needs_render: list[dict] = field(default_factory=list)  # {"url", "bytes"}
+    encoding_fallbacks: list[dict] = field(default_factory=list)  # {"url", "declared", "used"}
     skipped_old: int = 0
     interrupted: bool = False
     interrupted_by: str | None = None    # "SIGINT" or "SIGTERM"
@@ -75,6 +91,26 @@ class RunStats:
     def record_non_html(self, url: str, content_type: str) -> None:
         """A response that was fetched but not converted because it is not HTML."""
         self.skipped_non_html.append({"url": url, "content_type": content_type})
+
+    def record_no_markdown(self, url: str, reason: str) -> None:
+        """A page that was fetched but gave no Markdown file, and why
+        (one of NO_MARKDOWN_REASONS)."""
+        self.no_markdown.append({"url": url, "reason": reason})
+
+    def record_needs_render(self, url: str, size: int) -> None:
+        """A page that came back nearly empty and looks built by JavaScript:
+        fetching it again with -j may give its content."""
+        self.needs_render.append({"url": url, "bytes": size})
+
+    def record_encoding_fallback(self, url: str, declared: str, used: str) -> None:
+        """A page whose body did not decode with its declared encoding."""
+        self.encoding_fallbacks.append({"url": url, "declared": declared, "used": used})
+
+    def no_markdown_reasons(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for item in self.no_markdown:
+            counts[item["reason"]] = counts.get(item["reason"], 0) + 1
+        return dict(sorted(counts.items()))
 
     def record_blocked(self, url: str):
         if url not in self.blocked_by_robots:
@@ -170,6 +206,9 @@ def build_summary(
             "duplicates": len(stats.duplicates),
             "renamed": len(stats.renamed),
             "skipped_non_html": len(stats.skipped_non_html),
+            "no_markdown": len(stats.no_markdown),
+            "needs_render": len(stats.needs_render),
+            "encoding_fallbacks": len(stats.encoding_fallbacks),
             "skipped_old": stats.skipped_old,
         },
         "new_markdown": [relative_to_root(p, root) for p in stats.new_markdown],
@@ -182,6 +221,10 @@ def build_summary(
             for d in stats.duplicates
         ],
         "skipped_non_html": list(stats.skipped_non_html),
+        "no_markdown": list(stats.no_markdown),
+        "no_markdown_reasons": stats.no_markdown_reasons(),
+        "needs_render": list(stats.needs_render),
+        "encoding_fallbacks": list(stats.encoding_fallbacks),
         "renamed": [
             {"url": r["url"], "file": relative_to_root(r["file"], root),
              "natural_file": relative_to_root(r["natural_file"], root)}

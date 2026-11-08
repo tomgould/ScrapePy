@@ -12,6 +12,7 @@ from ..proxy import redact
 from ..engine.fetcher import fetch_page_http
 from ..engine.redirects import private_redirect_reason
 from ..engine.threads import run_blocking
+from .encoding import decode_body
 from .dates import _parse_iso_date, _parse_rfc2822_date
 from .robots import ROBOTS_REDIRECT_FAILED, RobotsPolicy, policy_from_response, robots_url
 
@@ -24,7 +25,7 @@ def _fetch_url(url: str, config: ScrapeConfig) -> str | None:
     try:
         response = fetch_page_http(url, config)
         if response.status == 200:
-            return response.body.decode(response.encoding or "utf-8")
+            return decode_body(response.body, response.encoding)[0]
     except Exception as e:
         if config.verbose:
             print(redact(f"    Discovery fetch failed ({type(e).__name__}: {e}): {url}", config.proxy))
