@@ -229,7 +229,8 @@ def robots_body(body: bytes, encoding: str | None) -> str:
 
 def sitemap_host_allowed(url: str, config: ScrapeConfig) -> bool:
     """True when a sitemap URL may be fetched: http or https, on the site's
-    own host (any port) or a host given with --allow-sitemap-host."""
+    own host (any port, with or without "www.") or a host given with
+    --allow-sitemap-host."""
     try:
         parts = urlsplit(url)
         parts.port  # noqa: B018 - raises ValueError for a bad port
@@ -241,7 +242,10 @@ def sitemap_host_allowed(url: str, config: ScrapeConfig) -> bool:
     if not host:
         return False
     site_host = (urlsplit(config.base_url).hostname or "").lower()
-    return host == site_host or host in {h.lower() for h in config.allow_sitemap_hosts}
+    # www.example.com and example.com are one site
+    if host.removeprefix("www.") == site_host.removeprefix("www."):
+        return True
+    return host in {h.lower() for h in config.allow_sitemap_hosts}
 
 
 def _header(headers, name: str) -> str:
