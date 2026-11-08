@@ -232,7 +232,8 @@ def test_default_run_ignores_documents(site, tmp_path):
 
 
 def test_documents_crawl(site, tmp_path):
-    config, code, summary, requests = crawl(site, tmp_path, documents=ALL, max_document_mb=1)
+    config, code, summary, requests = crawl(site, tmp_path, documents=ALL, max_document_mb=1,
+                                            obey_robots=True)
     assert code == 0
     docs = summary["documents"]
     assert docs["types"] == ALL
@@ -329,8 +330,8 @@ def test_documents_crawl(site, tmp_path):
 
 
 def test_incremental_rerun_reports_documents_unchanged(site, tmp_path):
-    crawl(site, tmp_path, documents=["pdf", "csv"])
-    config, code, summary, requests = crawl(site, tmp_path, documents=["pdf", "csv"])
+    crawl(site, tmp_path, documents=["pdf", "csv"], obey_robots=True)
+    config, code, summary, requests = crawl(site, tmp_path, documents=["pdf", "csv"], obey_robots=True)
     assert code == 0
     docs = summary["documents"]
     assert docs["converted"] == 0
@@ -345,7 +346,7 @@ def test_incremental_rerun_reports_documents_unchanged(site, tmp_path):
 
     # A changed document is converted again and counted as changed
     Handler.docs["/plain.pdf"] = (make_pdf([["Plain notice, second edition"]]), PDF, None)
-    config, code, summary, requests = crawl(site, tmp_path, documents=["pdf", "csv"])
+    config, code, summary, requests = crawl(site, tmp_path, documents=["pdf", "csv"], obey_robots=True)
     assert summary["documents"]["converted"] == 1
     assert summary["changed_markdown"] == [f"MarkdownSites/{config.output_dir_name}/plain.pdf.md"]
     assert "second edition" in (Path(config.markdown_dir) / "plain.pdf.md").read_text()
@@ -462,3 +463,15 @@ def test_csv_needs_no_extra_library(site, tmp_path, monkeypatch):
     _, code, summary, _ = crawl(site, tmp_path, documents=["csv"])
     assert code == 0
     assert summary["documents"]["converted"] == 1
+
+
+def test_robots_txt_applies_to_documents_only_with_obey_robots(site, tmp_path):
+    _, _, summary, requests = crawl(site, tmp_path, documents=["pdf"], include=["^/private/", "^/to-private"])
+    assert "/private/secret.pdf" in requests
+    assert summary["blocked_by_robots"] == []
+    assert "to-private.pdf" not in reasons(summary["documents"]["failed"])
+    _, _, summary, requests = crawl(site, tmp_path / "obey", documents=["pdf"], obey_robots=True,
+                                    include=["^/private/", "^/to-private"])
+    assert "/private/secret.pdf" not in requests
+    assert reasons(summary["documents"]["failed"]) == {
+        "to-private.pdf": "redirect target blocked by robots.txt"}
