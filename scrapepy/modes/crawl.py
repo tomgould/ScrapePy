@@ -423,6 +423,7 @@ async def run_crawl_mode(
             if natural[kind] and a[kind] != fit_path(natural[kind]):
                 stats.record_renamed(url, a[kind], fit_path(natural[kind]))
                 break
+        reason = None
         if config.markdown and not md_written:
             # Every page that gives no Markdown file says why
             if entry["error"]:
@@ -456,6 +457,7 @@ async def run_crawl_mode(
                     entry["url_path"], entry["headers"], entry["html"], links=entry["links"],
                     published_date=entry["pub_date"], page_type=entry["page_type"],
                     next_links=_rel_next(entry["html"], entry["url_path"], config),
+                    no_markdown=reason,
                 )
         meet(url, entry["hash"] if md_written else None)
 
@@ -637,6 +639,7 @@ async def run_crawl_mode(
                     print(f"  Unchanged (304): {full_url}")
                     unchanged_count += 1
                     _meet_unchanged(full_url, names, stats, meet)
+                    _note_unchanged_without_markdown(cache, cache_key, full_url, stats, config)
                     cached_links = cache.get_page_links(url_path)
                     if cached_links and targeting is not None:
                         # rel="next" comes from the cache, as the page is not re-read
@@ -758,6 +761,7 @@ async def run_crawl_mode(
                 print(f"  Unchanged (same content): {full_url}")
                 unchanged_count += 1
                 _meet_unchanged(full_url, names, stats, meet)
+                _note_unchanged_without_markdown(cache, cache_key, full_url, stats, config)
                 if config.follow_next and not cache.has_page_next(url_path):
                     # A cache entry written without rel="next" paths gets them now
                     cache.set_page_next(url_path, _rel_next(html, url_path, config))
@@ -1546,6 +1550,14 @@ def _meet_unchanged(url, names, stats, meet) -> None:
         stats.record_renamed(url, renamed[0], renamed[1])
     stats.unchanged.append(url)
     meet(url, names.by_url.get(url, {}).get("hash"))
+
+
+def _note_unchanged_without_markdown(cache, cache_key, url, stats, config) -> None:
+    """An unchanged page that gave no Markdown file when it was converted is
+    listed in no_markdown again, with the reason stored in the cache."""
+    reason = cache.get_page_no_markdown(cache_key) if cache else None
+    if reason and config.markdown:
+        stats.record_no_markdown(url, reason)
 
 
 def _content_type(page_info: dict) -> str:

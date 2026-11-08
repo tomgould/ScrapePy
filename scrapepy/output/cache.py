@@ -85,6 +85,7 @@ class CrawlCache:
         published_date: str | None = None,
         page_type: str | None = None,
         next_links: list[str] | None = None,
+        no_markdown: str | None = None,
     ):
         """Store cache entry for a page using response headers + content hash."""
         entry = {
@@ -100,6 +101,8 @@ class CrawlCache:
             entry["page_type"] = page_type
         if next_links is not None:
             entry["next"] = list(next_links)
+        if no_markdown:
+            entry["no_markdown"] = no_markdown
         self._data["pages"][url_path] = entry
 
     def has_page(self, url_path: str) -> bool:
@@ -148,6 +151,10 @@ class CrawlCache:
         if not entry:
             return None
         return entry.get("page_type")
+
+    def get_page_no_markdown(self, url_path: str) -> str | None:
+        """Why the page gave no Markdown file when it was last converted, or None."""
+        return (self._data["pages"].get(url_path) or {}).get("no_markdown")
 
     def remove_page(self, url_path: str) -> None:
         """Forget a page, so the next run fetches and converts it in full."""

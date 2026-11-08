@@ -1,5 +1,7 @@
 """Tests for processing/encoding.py and processing/rendering.py."""
 
+import codecs
+
 import pytest
 
 from scrapepy.processing.encoding import REPLACED, decode_body, meta_charset
@@ -45,6 +47,41 @@ class TestDecodeBody:
         assert meta_charset(body) == name
 
 
+class TestDecodeBodyHardCases:
+    def test_meta_charset_undefined_never_raises(self):
+        # "undefined" is a codec Python knows that raises on every decode
+        text, used, _ = decode_body(b'<meta charset="undefined">caf\xe9', "utf-8")
+        assert used == "cp1252" and text.endswith("caf\u00e9")
+
+    def test_utf8_is_tried_before_cp1252_when_the_declared_charset_is_wrong(self):
+        assert decode_body("caf\u00e9".encode("utf-8"), "ascii") == ("caf\u00e9", "utf-8", "ascii")
+
+    def test_one_stray_byte_keeps_a_utf8_page_utf8(self):
+        lines = ["Gr\u00fc\u00dfe aus K\u00f6ln, \u00e7a va tr\u00e8s bien"] * 40
+        body = "\n".join(lines).encode("utf-8") + b"\n\xe9"
+        text, used, _ = decode_body(body, "utf-8")
+        assert used == REPLACED
+        assert text.splitlines()[:40] == lines
+
+    def test_mostly_latin1_page_is_cp1252(self):
+        body = ("caf\u00e9 " * 40).encode("cp1252")
+        assert decode_body(body, "utf-8")[1] == "cp1252"
+
+    @pytest.mark.parametrize("codec,name", [("utf-16", "utf-16"), ("utf-16-be", "utf-16"),
+                                            ("utf-32", "utf-32")])
+    def test_byte_order_mark_wins(self, codec, name):
+        body = "<html>caf\u00e9</html>".encode(codec)
+        if codec == "utf-16-be":
+            body = codecs.BOM_UTF16_BE + body
+        assert decode_body(body, None)[:2] == ("<html>caf\u00e9</html>", name)
+
+    def test_meta_window(self):
+        late = b"<!--" + b"x" * 3000 + b'--><meta charset="iso-8859-15">'
+        assert meta_charset(late) == "iso-8859-15"
+        too_late = b"<!--" + b"x" * 5000 + b'--><meta charset="iso-8859-15">'
+        assert meta_charset(too_late) is None
+
+
 class TestLooksUnrendered:
     def test_empty_shell_with_script(self):
         assert looks_unrendered('<html><body><div id="root"></div>'
@@ -65,3 +102,11 @@ class TestLooksUnrendered:
     def test_text_inside_scripts_does_not_count(self):
         html = "<html><body><script>" + "var a = 'words words';" * 100 + "</script></body></html>"
         assert looks_unrendered(html) is True
+
+    def test_thresholds(self):
+        script = "<script>boot()</script>"
+        assert looks_unrendered(f"<html><body><p>{'a' * 199}</p>{script}</body></html>") is True
+        assert looks_unrendered(f"<html><body><p>{'a' * 200}</p>{script}</body></html>") is False
+        noscript = "<noscript>Enable JavaScript</noscript>"
+        assert looks_unrendered(f"<html><body><p>{'a' * 499}</p>{noscript}</body></html>") is True
+        assert looks_unrendered(f"<html><body><p>{'a' * 500}</p>{noscript}</body></html>") is False
