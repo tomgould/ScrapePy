@@ -23,6 +23,8 @@ from ..engine.browser_actions import (
 from bs4 import BeautifulSoup
 
 from ..processing.errors import is_error_page_html, is_error_page_content, is_cloudflare_challenge
+from ..processing.encoding import decode_body
+from ..processing.rendering import looks_unrendered
 from ..processing.assets import discover_and_download_assets
 from ..processing.rewriter import rewrite_urls
 from ..processing.urls import (
@@ -421,6 +423,15 @@ async def run_crawl_mode(
             if natural[kind] and a[kind] != fit_path(natural[kind]):
                 stats.record_renamed(url, a[kind], fit_path(natural[kind]))
                 break
+        if config.markdown and not md_written:
+            # Every page that gives no Markdown file says why
+            if entry["error"]:
+                reason = "converter failure"
+            elif duplicate_of:
+                reason = "duplicate"
+            else:
+                reason = entry.get("skip_reason") or "empty"
+            stats.record_no_markdown(url, reason)
         if entry["error"]:
             # No Markdown was written: report the page as failed, and keep
             # it out of the cache so the next run converts it again
@@ -668,12 +679,30 @@ async def run_crawl_mode(
                 stats.record_failed(full_url, f"HTTP {status}")
                 continue
 
+            if page_info.get("encoding") and page_info["encoding"] != page_info.get("encoding_first"):
+                print(f"  Decoded as {page_info['encoding']} ({page_info['encoding_first']} "
+                      f"failed): {full_url}")
+                stats.record_encoding_fallback(full_url, page_info["encoding_first"],
+                                               page_info["encoding"])
+
             # Only HTML is converted: a page's raw Markdown, JSON or XML
             # version would be written as a second, garbled copy of the page
             content_type = _content_type(page_info)
             if content_type and not content_type.startswith(_HTML_TYPES):
                 print(f"  Skipped (not HTML, {content_type}): {full_url}")
                 stats.record_non_html(full_url, content_type)
+                if config.markdown:
+                    stats.record_no_markdown(full_url, "non-HTML")
+                continue
+
+            # A body that needed a fallback encoding and holds NUL bytes is
+            # binary data (a spreadsheet or archive served as a page)
+            if (page_info.get("encoding") != page_info.get("encoding_first")
+                    and "\x00" in html[:8192]):
+                print(f"  Skipped (binary data): {full_url}")
+                stats.record_non_html(full_url, content_type or "binary data")
+                if config.markdown:
+                    stats.record_no_markdown(full_url, "non-HTML")
                 continue
 
             # Quick error page check
@@ -681,6 +710,8 @@ async def run_crawl_mode(
                 print(f"  Skipped (error page): {full_url}")
                 broken_links.add(full_url)
                 stats.record_failed(full_url, "error page")
+                if config.markdown:
+                    stats.record_no_markdown(full_url, "error page")
                 continue
 
             # Cloudflare challenge
@@ -699,7 +730,15 @@ async def run_crawl_mode(
                 print(f"  Skipped (error page): {full_url}")
                 broken_links.add(full_url)
                 stats.record_failed(full_url, "error page")
+                if config.markdown:
+                    stats.record_no_markdown(full_url, "error page")
                 continue
+
+            # A nearly empty page built by JavaScript: listed so it can be
+            # fetched again with -j (the browser modes render it already)
+            if not config.needs_browser and not discovery_only and looks_unrendered(html):
+                print(f"  Nearly empty, may need -j: {full_url}")
+                stats.record_needs_render(full_url, len(html.encode("utf-8")))
 
             # A start URL with a query (a site search) is read for its links
             # only: its query cannot reach a file name or the cache
@@ -878,6 +917,8 @@ async def run_crawl_mode(
             if config.only_recipes and not find_recipes(html):
                 print(f"  Not a recipe (links followed, not written): {full_url}")
                 not_recipe.append(full_url)
+                if config.markdown:
+                    stats.record_no_markdown(full_url, "not a recipe")
                 if not is_min_article and not focused_crawl:
                     _queue_links(
                         links, url_path, config, visited, visited_hashes,
@@ -1013,6 +1054,7 @@ async def run_crawl_mode(
                 "mirror_html": mirror_html, "prepared": prepared,
                 "cached": cache is not None and cache.has_page(cache_key),
                 "error": md_converter.last_error if md_converter else None,
+                "skip_reason": md_converter.last_skip_reason if md_converter else None,
                 "hash": prepared.content_hash if prepared else None,
                 "headers": page_info.get("headers", {}), "html": html, "links": links,
                 "pub_date": pub_date_str, "page_type": page_type_str,
@@ -1210,6 +1252,14 @@ async def run_crawl_mode(
     if stats.blocked_by_robots:
         print(f"Skipped (blocked by robots.txt): {len(stats.blocked_by_robots)}")
 
+    if stats.no_markdown:
+        reasons = ", ".join(f"{r} {n}" for r, n in stats.no_markdown_reasons().items())
+        print(f"Pages with no Markdown: {len(stats.no_markdown)} ({reasons})")
+    if stats.needs_render:
+        print(f"Pages that may need -j (nearly empty): {len(stats.needs_render)}")
+    if stats.encoding_fallbacks:
+        print(f"Pages decoded with a fallback encoding: {len(stats.encoding_fallbacks)}")
+
     print(f"Output folder: {config.output_dir}")
 
     stats.skipped_old = articles_skipped_old
@@ -1376,8 +1426,9 @@ def _fetch_with_http(
         status = response.status
         if status == 304:
             return "", 304, {"headers": dict(response.headers)}
-        html = response.body.decode(response.encoding or "utf-8")
-        return html, status, {"headers": dict(response.headers)}
+        html, used, first = decode_body(response.body, response.encoding)
+        return html, status, {"headers": dict(response.headers),
+                              "encoding": used, "encoding_first": first}
     except Exception as e:
         return "", 0, {"error": redact(f"{type(e).__name__}: {e}", config.proxy)}
 
@@ -1416,8 +1467,9 @@ async def _fetch_with_browser(
             wait_time=None if page_action else 1.0,
         )
         status = response.status
-        html = response.body.decode(response.encoding or "utf-8")
-        return html, status, {"final_url": getattr(response, "url", "") or ""}
+        html, used, first = decode_body(response.body, response.encoding)
+        return html, status, {"final_url": getattr(response, "url", "") or "",
+                              "encoding": used, "encoding_first": first}
     except Exception as e:
         return "", 0, {"error": redact(f"{type(e).__name__}: {e}", config.proxy)}
 

@@ -319,7 +319,8 @@ The file is replaced as soon as a crawl starts with a placeholder whose `status`
   "options": { "concurrent": 4, "wait_seconds": 3.0, "obey_robots": false, "ignore_robots": true, "...": "..." },
   "counts": {
     "fetched": 12, "new": 10, "changed": 0, "unchanged": 0,
-    "failed": 2, "blocked_by_robots": 0, "duplicates": 0, "renamed": 0, "skipped_non_html": 0, "skipped_old": 0
+    "failed": 2, "blocked_by_robots": 0, "duplicates": 0, "renamed": 0, "skipped_non_html": 0, "skipped_old": 0,
+    "no_markdown": 2, "needs_render": 0, "encoding_fallbacks": 0
   },
   "new_markdown": ["MarkdownSites/quotes_toscrape_com/_index.md"],
   "changed_markdown": [],
@@ -329,6 +330,10 @@ The file is replaced as soon as a crawl starts with a placeholder whose `status`
   "duplicates": [],
   "renamed": [],
   "skipped_non_html": [],
+  "no_markdown": [{ "url": "https://quotes.toscrape.com/login", "reason": "too short" }, "..."],
+  "no_markdown_reasons": { "too short": 2 },
+  "needs_render": [],
+  "encoding_fallbacks": [],
   "interrupted": false,
   "interrupted_by": null,
   "exit_code": 0
@@ -352,6 +357,9 @@ The file is replaced as soon as a crawl starts with a placeholder whose `status`
 | `counts.renamed` | Pages written to a hash-suffixed file name (`about-1f3a9c0e.md`) because another URL already has their natural name. A page never replaces another URL's file; the assignment is stored in the cache, so each URL keeps its file in later runs. `renamed` lists each `url` with its `file` and `natural_file`. Use the frontmatter `url` as the key, not the file name |
 | `counts.skipped_non_html` | Responses fetched but not converted because their Content-Type is not HTML; `skipped_non_html` lists each `url` with its `content_type` |
 | `counts.skipped_old` | Articles dropped by `--recent`/`--since` after fetching |
+| `counts.no_markdown` | Pages fetched that gave no Markdown file (a page that failed to fetch, or answered 400 or above, is only in `failed`). `no_markdown` lists each `url` with its `reason` (such as `too short`, `empty`, `error page`, `non-HTML` or `converter failure`) and `no_markdown_reasons` counts them by reason |
+| `counts.needs_render` | Pages fetched over HTTP that came back nearly empty and look built by JavaScript. `needs_render` lists each `url` with the size of its HTML in `bytes`, so they can be fetched again with `-j` |
+| `counts.encoding_fallbacks` | Pages that did not decode with their declared encoding. `encoding_fallbacks` lists each `url` with the `declared` encoding and the one `used`. A page is never dropped for its encoding |
 | `new_markdown`, `changed_markdown` | Markdown files written for new and changed pages. A page too short to convert is counted but has no file here. Generated `_index.md` listing pages are not included |
 | `exit_code` | The exit code the run finished with |
 | `feed` | Feed mode only: the feed's format and title and its written, unchanged, over-cap, skipped and teaser entries. See [docs/MARKDOWN-OUTPUT.md](https://github.com/tomgould/ScrapePy/blob/master/docs/MARKDOWN-OUTPUT.md) |
@@ -387,7 +395,7 @@ Section pages are not flattened in `MarkdownSites/`: every path segment becomes 
 
 ### Default Crawl
 
-Recursively crawls all pages on the same domain using HTTP requests with TLS fingerprint spoofing. Downloads images, rewrites internal URLs to relative paths for offline viewing, and detects error pages (404, 403, etc.).
+Recursively crawls all pages on the same domain using HTTP requests with TLS fingerprint spoofing. Downloads images, rewrites internal URLs to relative paths for offline viewing, and detects error pages: a status of 400 or above, or a 200 page whose title or first H1 names an error ("404 Not Found", "Page not found", "Error 500") or that is a short storage-service error document. Body text and code samples are not read for this, so a page that shows `404` in an example or is called "Errors and Exceptions" is kept.
 
 Before crawling begins, a lightweight reconnaissance step runs automatically:
 1. Fetches `robots.txt` for its sitemap URLs, and with `--obey-robots` also for its access rules and `Crawl-delay`

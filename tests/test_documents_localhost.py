@@ -226,9 +226,11 @@ def test_default_run_ignores_documents(site, tmp_path):
     assert "documents" not in summary
     assert "documents" not in summary["options"]
     assert not (tmp_path / "files").exists()
-    assert [s["url"].rsplit("/", 1)[1] for s in summary["skipped_non_html"]] == ["plots.csv"]
-    # Binary files fetched as pages fail to decode, as before
-    assert {f["url"].rsplit("/", 1)[1] for f in summary["failed"]} == {"rota.xlsx", "budget.xls"}
+    # Binary files fetched as pages are decoded without failing and skipped
+    # as not HTML, like the CSV file
+    assert sorted(s["url"].rsplit("/", 1)[1] for s in summary["skipped_non_html"]) == [
+        "budget.xls", "plots.csv", "rota.xlsx"]
+    assert summary["failed"] == []
 
 
 def test_documents_crawl(site, tmp_path):

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from ..config import ScrapeConfig
 from ..proxy import redact
+from ..processing.encoding import decode_body
 from ..engine.fetcher import fetch_page_http
 from ..processing.discovery import (
     DiscoveryMap,
@@ -55,7 +56,7 @@ def _fetch_sample_page(url: str, config: ScrapeConfig) -> tuple[str, int]:
         response = fetch_page_http(url, config)
         status = response.status
         if status == 200:
-            html = response.body.decode(response.encoding or "utf-8")
+            html = decode_body(response.body, response.encoding)[0]
             return html, status
         return "", status
     except Exception as e:

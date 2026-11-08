@@ -35,6 +35,7 @@ from .html_prep import (
 import markdownify
 
 from ..output.naming import suffixed_path
+from ..processing.errors import is_storage_error_document
 import yaml
 
 try:
@@ -536,6 +537,8 @@ class HTMLToMarkdown:
         self._page_url: str | None = None
         # Why the most recent convert_file() call failed, or None
         self.last_error: str | None = None
+        # Why the last prepare() gave no file (run_summary NO_MARKDOWN_REASONS)
+        self.last_skip_reason: str | None = None
 
     def _prepare_html(self, html: str, metadata: dict) -> str:
         """Unwrap block links, read the canonical URL, and in markdown-only
@@ -947,6 +950,7 @@ class HTMLToMarkdown:
         soup = BeautifulSoup(html, "lxml")
 
         if self.is_error_page(soup, html):
+            self.last_skip_reason = "error page"
             return None
 
         # Detect API documentation platforms
@@ -1555,6 +1559,7 @@ class HTMLToMarkdown:
         self.last_output_existed = False
         self.last_duplicate_of = None
         self.last_error = None
+        self.last_skip_reason = None
         filepath = Path(filepath)
         explicit_output = output_path is not None
         if output_path:
@@ -1562,6 +1567,7 @@ class HTMLToMarkdown:
         else:
             output_path = self.get_output_path(filepath)
             if not output_path:
+                self.last_skip_reason = "skipped path"
                 return None
         # One spelling per file, so the same file always compares equal
         output_path = Path(os.path.abspath(output_path))
@@ -1574,12 +1580,14 @@ class HTMLToMarkdown:
             # Skip RSS/Atom XML feeds
             if html.lstrip().startswith("<?xml") or "<rss" in html[:500] or "<feed" in html[:500]:
                 print(f"  Skipped (XML/RSS feed): {filepath.name}")
+                self.last_skip_reason = "feed or XML"
                 self.skipped += 1
                 return None
 
             # Skip XML manifests and non-HTML content
             if html.lstrip().startswith("<manifest") or html.lstrip().startswith("<wlw"):
                 print(f"  Skipped (XML manifest): {filepath.name}")
+                self.last_skip_reason = "feed or XML"
                 self.skipped += 1
                 return None
 
@@ -1589,11 +1597,14 @@ class HTMLToMarkdown:
             wp_skip_patterns = ("/feed", "/author/", "/category/", "/tag/", "/wp-includes/", "/wp-json/")
             if any(pat in "/" + rel_str for pat in wp_skip_patterns):
                 print(f"  Skipped (WordPress boilerplate): {filepath.name}")
+                self.last_skip_reason = "skipped path"
                 self.skipped += 1
                 return None
 
-            if "<title>404" in html or "<title>403" in html or "NoSuchKey" in html:
+            if ("<title>404" in html or "<title>403" in html
+                    or is_storage_error_document(html)):
                 print(f"  Skipped (error page): {filepath.name}")
+                self.last_skip_reason = "error page"
                 self.skipped += 1
                 return None
 
@@ -1629,6 +1640,7 @@ class HTMLToMarkdown:
             md = self.extract_content(html, filepath)
             if not md and not recipes:
                 print(f"  Skipped (no content/error page): {filepath.name}")
+                self.last_skip_reason = self.last_skip_reason or "empty"
                 self.skipped += 1
                 return None
 
@@ -1639,6 +1651,7 @@ class HTMLToMarkdown:
             md = self.clean_markdown(md) or ("" if recipes else None)
             if md is None:
                 print(f"  Skipped (content too short): {filepath.name}")
+                self.last_skip_reason = "too short"
                 self.skipped += 1
                 return None
 
@@ -1675,6 +1688,7 @@ class HTMLToMarkdown:
             word_count = self._compute_word_count(md)
             if word_count < 50 and not recipes:
                 print(f"  Skipped (list/section page, {word_count} words): {filepath.name}")
+                self.last_skip_reason = "too short"
                 self.skipped += 1
                 return None
 
@@ -1693,6 +1707,7 @@ class HTMLToMarkdown:
             if self.dedupe and first and first != str(output_path):
                 print(f"  Skipped (same content as {Path(first).name}): {filepath.name}")
                 self.skipped += 1
+                self.last_skip_reason = "duplicate"
                 self.last_duplicate_of = first
                 return None
             frontmatter = self._build_frontmatter(metadata)
@@ -1706,6 +1721,7 @@ class HTMLToMarkdown:
             print(f"  Error converting {filepath.name}: {type(e).__name__}: {e}")
             self.failed += 1
             self.last_error = f"{type(e).__name__}: {e}"
+            self.last_skip_reason = "converter failure"
             return None
 
     def commit(self, page: "PreparedPage") -> None:
