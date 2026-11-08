@@ -55,43 +55,14 @@ def fetch_page_http(
         kwargs["proxy"] = config.proxy
     if follow_redirects and config.refuse_private_redirects:
         return _get_checking_redirects(url, config, merged, timeout, kwargs)
-    try:
-        return Fetcher.get(
-            url,
-            stealthy_headers=True,
-            follow_redirects=follow_redirects,
-            timeout=timeout,
-            headers=merged,
-            **kwargs,
-        )
-    except LookupError:
-        # Scrapling parses the body with the charset the Content-Type header
-        # names and raises on one Python does not know (charset=klingon).
-        # The page is requested once more with a plain client, so its raw
-        # body can be decoded by processing/encoding.py.
-        return _fetch_raw(url, config, merged, follow_redirects, timeout)
-
-
-class RawResponse:
-    """The parts of a Scrapling response the crawl reads, from httpx."""
-
-    def __init__(self, response):
-        self.url = str(response.url)
-        self.status = response.status_code
-        self.body = response.content
-        self.headers = dict(response.headers)
-        # Not a usable codec name: decode_body() starts with UTF-8
-        self.encoding = response.charset_encoding
-
-
-def _fetch_raw(url: str, config: ScrapeConfig, headers: dict,
-               follow_redirects: bool, timeout: float) -> RawResponse:
-    import httpx
-
-    with httpx.Client(follow_redirects=follow_redirects, timeout=timeout,
-                      proxy=config.proxy, headers={"User-Agent": asset_user_agent(config),
-                                                   **headers}) as client:
-        return RawResponse(client.get(url))
+    return Fetcher.get(
+        url,
+        stealthy_headers=True,
+        follow_redirects=follow_redirects,
+        timeout=timeout,
+        headers=merged,
+        **kwargs,
+    )
 
 
 def _get_checking_redirects(url: str, config: ScrapeConfig, headers: dict,

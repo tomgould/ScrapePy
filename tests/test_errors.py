@@ -166,7 +166,10 @@ class TestErrorHeadingsInOtherLanguages:
         "Ошибка 404", "404 Страница не найдена", "Ошибка 502",      # Russian
         "404 ページが見つかりません", "404エラー", "エラー 503",     # Japanese
         "خطأ 404 - الصفحة غير موجودة", "الصفحة غير موجودة 404",      # Arabic
-        "Gone 410", "403",
+        "Gone 410", "410 Gone", "403", "Zugriff verweigert 403", "403 \u7981\u6b62",
+        "\u062e\u0637\u0623 500", "Error 410",
+        # under 12 words: 11 here
+        "one two three four five six seven eight nine ten 404",
     ])
     def test_status_code_in_a_short_heading(self, text):
         assert is_error_heading(text) is True
@@ -174,7 +177,9 @@ class TestErrorHeadingsInOtherLanguages:
     @pytest.mark.parametrize("text", [
         "Top 500 companies", "500 Days of Summer", "Fortune 500 list", "Die 500 besten Rezepte",
         "Как настроить страницу 404 на своём сайте с помощью nginx и простого HTML шаблона",
-        "Code 14040", "E404X",
+        "Code 14040", "E404X", "Highway 410 construction update", "Route 410",
+        # 12 words is not short
+        "one two three four five six seven eight nine ten eleven 404",
     ])
     def test_codes_in_ordinary_headings(self, text):
         assert is_error_heading(text) is False

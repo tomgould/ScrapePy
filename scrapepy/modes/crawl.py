@@ -1434,7 +1434,7 @@ def _fetch_with_http(
         return html, status, {"headers": dict(response.headers),
                               "encoding": used, "encoding_first": first}
     except Exception as e:
-        return "", 0, {"error": redact(f"{type(e).__name__}: {e}", config.proxy)}
+        return "", 0, {"error": _fetch_error(e, config)}
 
 
 async def _fetch_with_http_async(
@@ -1550,6 +1550,21 @@ def _meet_unchanged(url, names, stats, meet) -> None:
         stats.record_renamed(url, renamed[0], renamed[1])
     stats.unchanged.append(url)
     meet(url, names.by_url.get(url, {}).get("hash"))
+
+
+_UNKNOWN_ENCODING = re.compile(r"^unknown encoding: (?:'?b?)?'?([^']*)'*$")
+
+
+def _fetch_error(e: Exception, config: ScrapeConfig) -> str:
+    """The failed reason for an exception raised by an HTTP page fetch.
+    Scrapling parses a body with the charset its Content-Type names and
+    raises LookupError("unknown encoding: ...") for one Python does not
+    know; that page is not requested again, and the reason names the charset."""
+    if type(e) is LookupError:
+        m = _UNKNOWN_ENCODING.match(str(e))
+        if m:
+            return redact(f"unknown charset '{m.group(1)}' in Content-Type", config.proxy)
+    return redact(f"{type(e).__name__}: {e}", config.proxy)
 
 
 def _note_unchanged_without_markdown(cache, cache_key, url, stats, config) -> None:

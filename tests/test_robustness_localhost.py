@@ -218,12 +218,17 @@ def extra(monkeypatch):
 def test_hard_encodings_are_written(run, extra):
     code, summary, files = run()
     assert code == 0
-    assert "Café au lait" in files["/klingon"]
     assert "Encoded as UTF-16" in files["/wide"]
+    # An unknown Content-Type charset fails the page with a clear reason,
+    # after one request only
+    failed = {f["url"].rsplit("/", 1)[1]: f["reason"] for f in summary["failed"]}
+    assert failed["klingon"] == "unknown charset 'klingon' in Content-Type"
+    assert "/klingon" not in files
+    assert Handler.log.count("/klingon") == 1
     # Valid UTF-8 with a NUL byte is a page, not binary data
     assert "sits in valid UTF-8" in files["/nul"]
     used = {f["url"].rsplit("/", 1)[1]: f["used"] for f in summary["encoding_fallbacks"]}
-    assert used == {"klingon": "cp1252", "wide": "utf-16"}
+    assert used == {"wide": "utf-16"}
     assert summary["skipped_non_html"] == []
 
 
@@ -241,7 +246,7 @@ def test_other_no_markdown_reasons(run, extra):
 def test_not_a_recipe_reason(run, extra):
     _, summary, _ = run(only_recipes=True)
     reasons = {n["url"].rsplit("/", 1)[1]: n["reason"] for n in summary["no_markdown"]}
-    assert reasons["errors"] == "not a recipe" and reasons["klingon"] == "not a recipe"
+    assert reasons["errors"] == "not a recipe" and reasons["wide"] == "not a recipe"
 
 
 def test_unchanged_page_without_markdown_is_listed_again(run):
@@ -277,3 +282,26 @@ def test_needs_render_is_not_listed_in_js_mode(site, tmp_path, monkeypatch):
     summary = json.loads((Path(config.output_dir) / "run_summary.json").read_text())
     assert summary["needs_render"] == []
     assert any(n["url"].endswith("/app") for n in summary["no_markdown"])
+
+
+def test_unknown_charset_reason_is_narrow():
+    from scrapepy.modes.crawl import _fetch_error
+    config = ScrapeConfig(url="http://example.com/")
+    assert _fetch_error(LookupError("unknown encoding: 'b'klingon''"), config) == \
+        "unknown charset 'klingon' in Content-Type"
+    assert _fetch_error(LookupError("unknown encoding: x-mac-klingon"), config) == \
+        "unknown charset 'x-mac-klingon' in Content-Type"
+    # Other lookup errors keep their own text
+    assert _fetch_error(KeyError("unknown encoding: x"), config) == "KeyError: 'unknown encoding: x'"
+    assert _fetch_error(LookupError("no such thing"), config) == "LookupError: no such thing"
+
+
+def test_unknown_charset_reason_needs_a_plain_lookup_error():
+    from scrapepy.modes.crawl import _fetch_error
+
+    class CodecRegistryError(LookupError):
+        pass
+
+    config = ScrapeConfig(url="http://example.com/")
+    assert _fetch_error(CodecRegistryError("unknown encoding: x"), config) == \
+        "CodecRegistryError: unknown encoding: x"

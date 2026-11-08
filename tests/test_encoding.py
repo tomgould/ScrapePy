@@ -63,6 +63,16 @@ class TestDecodeBodyHardCases:
         assert used == REPLACED
         assert text.splitlines()[:40] == lines
 
+    def test_a_tie_between_good_and_bad_utf8_is_cp1252(self):
+        # One valid non-ASCII character and one bad byte: not mostly UTF-8
+        assert decode_body("\u00e9".encode("utf-8") + b"\xff", "utf-8")[1] == "cp1252"
+
+    def test_truncated_utf16_page_never_raises(self):
+        # A UTF-16 byte order mark with an odd number of bytes after it
+        body = codecs.BOM_UTF16_LE + "<p>x</p>".encode("utf-16-le") + b"<"
+        text, used, _ = decode_body(body, None)
+        assert used == "cp1252" and text.startswith("\u00ff\u00fe")
+
     def test_mostly_latin1_page_is_cp1252(self):
         body = ("caf\u00e9 " * 40).encode("cp1252")
         assert decode_body(body, "utf-8")[1] == "cp1252"

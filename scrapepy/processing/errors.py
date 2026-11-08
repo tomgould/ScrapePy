@@ -5,10 +5,11 @@ checks run. A 200 page is an error page only when its title or its first
 H1 says so, or when it is a short storage-service error document
 (NoSuchKey, AccessDenied). A title or H1 says so when:
 
-- it is short (under 12 words) and holds 404, 403 or 410 as a whole token,
-  in any language ("Fehler 404", "404 Страница не найдена", "404エラー");
-- it is short and holds 500, 502 or 503 as a whole token, alone or with a
-  word for "error" in one of several languages ("Erreur 500", "Ошибка 502");
+- it is short (under 12 words) and holds 404 or 403 as a whole token, in
+  any language ("Fehler 404", "404 Страница не найдена", "404エラー");
+- it is short and holds 410, 500, 502 or 503 as a whole token, alone or
+  with "gone" or a word for "error" in one of several languages ("410
+  Gone", "Erreur 500", "Ошибка 502");
 - or it holds an English error phrase ("404 Not Found", "Page not found",
   "Internal Server Error"), or is nothing but "Error" or "Not Found".
 
@@ -50,13 +51,14 @@ SHORT_HEADING_WORDS = 12
 # A status code as a whole token: no letter, digit or dot of the Latin
 # alphabet next to it (CJK text can follow a code directly: "404エラー")
 _TOKEN = r"(?<![0-9A-Za-z.]){}(?![0-9A-Za-z.])"
-_CLIENT_CODE_RE = re.compile(_TOKEN.format(r"(?:404|403|410)"))
-_SERVER_CODE_RE = re.compile(_TOKEN.format(r"(?:500|502|503)"))
-_SERVER_CODE_ALONE_RE = re.compile(r"^\W*(?:http\W*)?(?:500|502|503)\W*$", re.IGNORECASE)
-# "Error" in several languages, for 5xx codes, which also appear in
-# ordinary titles ("Fortune 500")
+_CLIENT_CODE_RE = re.compile(_TOKEN.format(r"(?:404|403)"))
+# 410 and the 5xx codes also appear in ordinary titles ("Fortune 500",
+# "Highway 410"), so they need to stand alone or beside an error word
+_SERVER_CODE_RE = re.compile(_TOKEN.format(r"(?:410|500|502|503)"))
+_SERVER_CODE_ALONE_RE = re.compile(r"^\W*(?:http\W*)?(?:410|500|502|503)\W*$", re.IGNORECASE)
+# "Error" in several languages, and "gone" for 410
 _ERROR_WORD_RE = re.compile(
-    r"error|fehler|erreur|errore|erro|ошибка|помилка|エラー|错误|錯誤|오류|خطأ|שגיאה|"
+    r"\bgone\b|error|fehler|erreur|errore|erro|ошибка|помилка|エラー|错误|錯誤|오류|خطأ|שגיאה|"
     r"hata|błąd|fout|chyba|virhe|\bfel\b|feil|hiba|σφάλμα|lỗi|kesalahan|ข้อผิดพลาด",
     re.IGNORECASE)
 
