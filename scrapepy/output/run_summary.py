@@ -229,9 +229,6 @@ def build_summary(
         "no_markdown_reasons": stats.no_markdown_reasons(),
         "needs_render": stats.needs_render[:LIST_CAP],
         "encoding_fallbacks": stats.encoding_fallbacks[:LIST_CAP],
-        "truncated": [name for name, items in (
-            ("no_markdown", stats.no_markdown), ("needs_render", stats.needs_render),
-            ("encoding_fallbacks", stats.encoding_fallbacks)) if len(items) > LIST_CAP],
         "renamed": [
             {"url": r["url"], "file": relative_to_root(r["file"], root),
              "natural_file": relative_to_root(r["natural_file"], root)}
@@ -241,6 +238,11 @@ def build_summary(
         "interrupted_by": stats.interrupted_by,
         "exit_code": None if in_progress else exit_code_for(stats),
     }
+    truncated = [name for name, items in (
+        ("no_markdown", stats.no_markdown), ("needs_render", stats.needs_render),
+        ("encoding_fallbacks", stats.encoding_fallbacks)) if len(items) > LIST_CAP]
+    if truncated:
+        summary["truncated"] = truncated
     if stats.targeting is not None:
         summary["targeting"] = {k: (list(v) if isinstance(v, list) else v)
                                 for k, v in stats.targeting.items()}

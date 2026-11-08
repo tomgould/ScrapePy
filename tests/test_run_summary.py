@@ -26,7 +26,7 @@ TOP_LEVEL_KEYS = {
     "changed_markdown", "unchanged_urls", "failed", "blocked_by_robots",
     "interrupted", "interrupted_by", "exit_code", "duplicates", "renamed",
     "skipped_non_html", "no_markdown", "no_markdown_reasons", "needs_render",
-    "encoding_fallbacks", "truncated",
+    "encoding_fallbacks",
 }
 COUNT_KEYS = {"fetched", "new", "changed", "unchanged", "failed", "blocked_by_robots", "skipped_old",
               "duplicates", "renamed", "skipped_non_html", "no_markdown", "needs_render",
@@ -293,4 +293,22 @@ class TestCappedLists:
         for i in range(LIST_CAP):
             stats.record_encoding_fallback(f"https://example.com/p{i}", "utf-8", "cp1252")
         summary = build_summary(config, stats)
-        assert len(summary["encoding_fallbacks"]) == LIST_CAP and summary["truncated"] == []
+        assert len(summary["encoding_fallbacks"]) == LIST_CAP and "truncated" not in summary
+
+    def test_cap_is_200(self):
+        from scrapepy.output.run_summary import LIST_CAP
+        assert LIST_CAP == 200
+
+    def test_every_new_list_is_capped(self, tmp_path):
+        from scrapepy.output.run_summary import LIST_CAP, RunStats
+        config = _config(tmp_path)
+        stats = RunStats()
+        for i in range(LIST_CAP + 1):
+            stats.record_needs_render(f"https://example.com/a{i}", i)
+            stats.record_encoding_fallback(f"https://example.com/e{i}", "utf-8", "cp1252")
+        summary = build_summary(config, stats)
+        assert len(summary["needs_render"]) == LIST_CAP
+        assert len(summary["encoding_fallbacks"]) == LIST_CAP
+        assert summary["counts"]["needs_render"] == LIST_CAP + 1
+        assert summary["counts"]["encoding_fallbacks"] == LIST_CAP + 1
+        assert summary["truncated"] == ["needs_render", "encoding_fallbacks"]
