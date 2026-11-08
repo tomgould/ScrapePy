@@ -25,6 +25,14 @@ SITE = "http://example.com/start"
     "100.64.0.1", "100.127.255.255", "::1", "::", "fc00::1", "fd12:3456::1",
     "fe80::1", "fe80::1%eth0", "::ffff:127.0.0.1", "::ffff:169.254.169.254",
     "::ffff:10.1.2.3", "::ffff:100.64.0.9",
+    # IPv4 inside IPv6: IPv4-compatible, NAT64, 6to4
+    "::127.0.0.1", "::169.254.169.254", "64:ff9b::7f00:1", "64:ff9b::a9fe:a9fe",
+    "2002:7f00:1::", "2002:a00:1::1",
+    # benchmarking, reserved, multicast, broadcast
+    "198.18.0.1", "198.19.255.255", "240.0.0.1", "255.255.255.255", "224.0.0.1",
+    "239.255.255.250", "ff02::1", "ff05::2",
+    # documentation and protocol ranges, known only to ipaddress
+    "192.0.2.1", "203.0.113.5", "192.0.0.8", "2001:db8::1",
 ])
 def test_private_addresses(address):
     assert is_private_address(address)
@@ -34,6 +42,8 @@ def test_private_addresses(address):
     "8.8.8.8", "1.1.1.1", "172.15.255.255", "172.32.0.1", "100.63.255.255",
     "100.128.0.1", "169.253.255.255", "192.169.0.1", "11.0.0.1", "2001:4860:4860::8888",
     "::ffff:8.8.8.8", "fec0::1", "example.com", "", "not an address",
+    "64:ff9b::808:808", "2002:808:808::", "::8.8.8.8", "198.17.255.255", "198.20.0.1",
+    "223.255.255.254",
 ])
 def test_public_addresses_and_names(address):
     assert not is_private_address(address)
@@ -51,9 +61,9 @@ def _resolver(*addresses):
 
 
 def test_a_name_resolving_to_loopback_is_refused():
-    # localhost resolves locally, from the hosts file
-    reason = private_redirect_reason("http://localhost:9/x", SITE)
-    assert reason and "localhost resolves to" in reason
+    reason = private_redirect_reason("http://intranet.example:9/x", SITE,
+                                     resolve=_resolver("127.0.0.1"))
+    assert reason and "intranet.example resolves to 127.0.0.1" in reason
 
 
 def test_any_private_resolved_address_refuses():
@@ -301,3 +311,48 @@ def test_options_recorded_only_when_set(tmp_path):
     assert opts["solve_cloudflare"] is False
     config = parse_args(["http://example.com/", "--refuse-private-redirects", "--no-cloudflare-solve"])
     assert config.refuse_private_redirects is True and config.solve_cloudflare is False
+
+
+@pytest.mark.parametrize("target", [
+    "http://localhost/x", "http://foo.localhost/x", "http://a.b.localhost:8080/x",
+    "http://LOCALHOST./x", "http://app.localhost./x",
+])
+def test_localhost_names_refused_without_resolving(target):
+    def resolve(host, port):
+        raise AssertionError("resolved")
+    reason = private_redirect_reason(target, SITE, resolve=resolve)
+    assert reason and "local host name" in reason
+
+
+def test_names_that_only_contain_localhost_are_resolved():
+    seen = []
+
+    def resolve(host, port):
+        seen.append(host)
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
+
+    assert private_redirect_reason("http://localhost.example.com/x", SITE, resolve=resolve) is None
+    assert private_redirect_reason("http://mylocalhost/x", SITE, resolve=resolve) is None
+    assert seen == ["localhost.example.com", "mylocalhost"]
+
+
+@pytest.mark.parametrize("site, sitemap, allowed_hosts, allowed", [
+    ("http://example.com/", "http://EXAMPLE.COM./sitemap.xml", [], True),
+    ("http://example.com./", "http://example.com/sitemap.xml", [], True),
+    ("http://example.com/", "http://cdn.example.net/s.xml", ["CDN.EXAMPLE.NET."], True),
+    ("http://example.com/", "http://x.com/s.xml", ["X.COM."], True),
+    ("http://b\u00fccher.example/", "http://xn--bcher-kva.example/s.xml", [], True),
+    ("http://xn--bcher-kva.example/", "http://www.b\u00fccher.example/s.xml", [], True),
+    ("http://example.com/", "http://b\u00fccher.example/s.xml", ["xn--bcher-kva.example"], True),
+    ("http://example.com/", "http://xn--bcher-kva.example/s.xml", ["B\u00dcCHER.example"], True),
+    ("http://b\u00fccher.example/", "http://xn--bcher-kvb.example/s.xml", [], False),
+    ("http://example.com/", "http://x.com.evil.example/s.xml", ["x.com"], False),
+])
+def test_sitemap_hosts_are_normalised(site, sitemap, allowed_hosts, allowed):
+    config = ScrapeConfig(url=site, allow_sitemap_hosts=allowed_hosts)
+    assert discovery.sitemap_host_allowed(sitemap, config) is allowed
+
+
+def test_allow_sitemap_host_with_trailing_dot_from_the_command_line():
+    config = parse_args(["http://x.com/", "--allow-sitemap-host", "CDN.Example.NET."])
+    assert discovery.sitemap_host_allowed("http://cdn.example.net/s.xml", config)

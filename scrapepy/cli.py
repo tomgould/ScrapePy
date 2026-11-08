@@ -174,8 +174,10 @@ def parse_args(argv: list[str] | None = None) -> ScrapeConfig:
     net_group.add_argument("--refuse-private-redirects", action="store_true",
                            help="Do not follow a redirect to a loopback, link-local, private "
                                 "or carrier-grade NAT address, or to a host that resolves to "
-                                "one; the page is recorded as failed. Covers HTTP fetches, not "
-                                "the browser modes; the start URL and redirects back to its "
+                                "one; the page is recorded as failed. Covers HTTP fetches only: "
+                                "in the browser modes neither the browser's redirects nor the "
+                                "images, scripts and icons it loads while rendering are "
+                                "checked. The start URL and redirects back to its "
                                 "own host and port are not checked, and a host whose DNS "
                                 "answer changes between the check and the request (DNS "
                                 "rebinding) is not caught")
