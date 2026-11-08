@@ -423,17 +423,41 @@ def _docx_text(element) -> str:
     return " ".join(clean("".join(parts)).split())
 
 
+def _docx_style_names(document) -> tuple[dict[str, str], str]:
+    """styleId -> style name (as Word shows it: "Heading 1") and the default
+    paragraph style's name, read once from the styles part. Looking the
+    style up per paragraph through python-docx costs about a millisecond
+    each, which a document of many tiny paragraphs turns into minutes."""
+    from docx.styles import BabelFish
+
+    names: dict[str, str] = {}
+    default = ""
+    try:
+        styles = document.styles.element
+    except Exception:
+        return names, default
+    for style in styles.iterchildren(f"{_W}style"):
+        name_el = style.find(f"{_W}name")
+        name = BabelFish.internal2ui((name_el.get(f"{_W}val") if name_el is not None else "") or "")
+        style_id = style.get(f"{_W}styleId")
+        if style_id:
+            names[style_id] = name
+        if style.get(f"{_W}type") == "paragraph" and style.get(f"{_W}default") in ("1", "true", "on"):
+            default = name
+    return names, default
+
+
 def _convert_docx(data: bytes, limits: Limits) -> Converted:
     check_zip(data, "docx", limits)
     import docx
     from docx.table import Table
-    from docx.text.paragraph import Paragraph
 
     document = docx.Document(io.BytesIO(data))
     core = document.core_properties
     meta_title = _clean_title(core.title)
     created = _iso(core.created) or _iso(core.modified)
 
+    style_names, default_style = _docx_style_names(document)
     blocks: list[tuple[str, int, str]] = []    # (kind, level, text)
     for tag, element in _docx_blocks(document.element.body):
         if tag == "tbl":
@@ -449,27 +473,27 @@ def _convert_docx(data: bytes, limits: Limits) -> Converted:
                     text += f"\n\n_Rows after the first {limits.max_rows:,} are not shown._"
                 blocks.append(("table", 0, text))
             continue
-        para = Paragraph(element, document)
         text = _docx_text(element)
         if not text:
             continue
-        try:
-            style = para.style.name if para.style is not None else ""
-        except Exception:
-            style = ""
-        style = style or ""
+        # Read from the XML: no python-docx Paragraph or style lookup per paragraph
+        ppr = element.find(f"{_W}pPr")
+        style_el = ppr.find(f"{_W}pStyle") if ppr is not None else None
+        style_id = style_el.get(f"{_W}val") if style_el is not None else None
+        style = (style_names.get(style_id, default_style) if style_id else default_style) or ""
+        num_pr = ppr.find(f"{_W}numPr") if ppr is not None else None
         heading = re.fullmatch(r"Heading (\d)", style)
-        ppr = para._p.pPr
-        numbered = ppr is not None and ppr.numPr is not None
+        numbered = num_pr is not None
         if style == "Title":
             blocks.append(("title", 0, text))
         elif heading:
             blocks.append(("heading", int(heading.group(1)), text))
         elif style.startswith("List") or numbered:
             level = 0
-            if numbered and ppr.numPr.ilvl is not None:
+            ilvl = num_pr.find(f"{_W}ilvl") if numbered else None
+            if ilvl is not None:
                 try:
-                    level = min(int(ppr.numPr.ilvl.val), 8)
+                    level = min(int(ilvl.get(f"{_W}val")), 8)
                 except (TypeError, ValueError):
                     level = 0
             marker = "1." if "Number" in style else "-"
