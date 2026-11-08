@@ -292,7 +292,7 @@ def test_documents_crawl(site, tmp_path):
         "scraped_at": meta["scraped_at"],
         "content_hash": "sha256:" + hashlib.sha256(body.encode()).hexdigest(),
     }
-    assert body.startswith("# Garden Club Annual Report\n\n## Page 1\n\nAnnual report 2025\n")
+    assert body.startswith("# Garden Club Annual Report\n\n## Page 1\n\nAnnual report 2025 Total members: 42\n")
     assert "## Page 2\n\nSecond page" in body
     assert meta["word_count"] > 5
 
@@ -312,9 +312,9 @@ def test_documents_crawl(site, tmp_path):
     assert meta["file_type"] == "docx" and meta["title"] == "Garden Club Handbook"
     assert "pages" not in meta
     meta, body = front(md / "data" / "rota.xlsx.md")
-    assert meta["pages"] == 1 and "| A1 | Sam |" in body
+    assert meta["sheets"] == 1 and meta["rows"] == 2 and "pages" not in meta and "| A1 | Sam |" in body
     meta, body = front(md / "data" / "plots.csv.md")
-    assert meta["title"] == "plots.csv"
+    assert meta["title"] == "plots.csv" and meta["rows"] == 2 and "sheets" not in meta
     assert body == "# plots.csv\n\n| name | count |\n| --- | --- |\n| apples | 3 |\n| pears | 5 |\n"
 
     # Two URLs with the same file name: the second gets the hash suffix
@@ -385,6 +385,12 @@ def test_max_depth_counts_document_links(site, tmp_path):
 def test_max_pages_counts_documents(site, tmp_path):
     _, _, summary, requests = crawl(site, tmp_path, documents=ALL, max_pages=3)
     assert requests == ["/", "/reports/annual-report.pdf", "/plain.pdf"]
+    # The documents the budget did not reach are counted and listed
+    docs = summary["documents"]
+    assert docs["found_unvisited"] == 19
+    assert docs["found_unvisited_sample"][:2] == [site + "/files/handbook.docx", site + "/data/rota.xlsx"]
+    assert len(docs["found_unvisited_sample"]) == 19
+    assert site + "/plain.pdf" not in docs["found_unvisited_sample"]
     assert summary["counts"]["fetched"] == 3
     assert summary["targeting"]["stopped_by_limit"] is True
 

@@ -102,6 +102,7 @@ async def run_crawl_mode(
     query_starts: set[str] = set()      # start URLs with a query: fetched for links only
     not_recipe: list[str] = []          # --only-recipes: pages fetched but not written
     stopped_by_limit = False
+    stopped_at = None                   # the queue item --max-pages stopped at
     # Any targeting option keeps a start URL's query; without one the crawl
     # treats the start URL as it always has
     keep_query = bool(targeting is not None or config.only_recipes or config.max_pages
@@ -591,6 +592,7 @@ async def run_crawl_mode(
 
         if config.max_pages and stats.fetched >= config.max_pages:
             stopped_by_limit = True
+            stopped_at = url_or_path      # taken off the queue but not fetched
             print(f"  Stopped: --max-pages {config.max_pages} reached")
             break
 
@@ -1241,6 +1243,21 @@ async def run_crawl_mode(
             print(f"Min-articles kept (old): {min_kept} across {len(section_article_counts)} sections")
 
     if documents:
+        # Documents still queued (the run stopped first): listed, so a
+        # caller knows a larger --max-pages would reach them
+        pending = ([stopped_at] if stopped_at else []) + list(to_visit)
+        if current_section_batch:
+            pending += list(current_section_batch[1])
+        for _, batch in section_batches:
+            pending += list(batch)
+        unvisited = []
+        for item in pending:
+            if item.startswith("#"):
+                continue
+            path, _, url = _parse_visit_item(item, config)
+            if path not in visited and documents.kind(path):
+                unvisited.append(url)
+        documents.note_unvisited(unvisited)
         stats.documents = documents.summary()
         print(f"Documents: {documents.converted} converted, {documents.unchanged} unchanged, "
               f"{len(documents.skipped)} skipped, {len(documents.failed)} failed "

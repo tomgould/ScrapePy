@@ -33,7 +33,7 @@ GOLDEN = Path(__file__).parent / "golden_documents"
 
 def rendered(result) -> str:
     return (f"status: {result.status}\ntitle: {result.title}\ndate: {result.date}\n"
-            f"pages: {result.pages}\n\n{result.text}\n")
+            f"pages: {result.pages}\nsheets: {result.sheets}\nrows: {result.rows}\n\n{result.text}\n")
 
 
 def golden_pdf():
@@ -51,8 +51,14 @@ def golden_xlsx():
     return with_cached_formula_value(data, "C3", "C2*2", "7")
 
 
+def golden_layout_pdf():
+    from .document_samples import layout_sample_pdf
+    return layout_sample_pdf()
+
+
 @pytest.mark.parametrize("name,kind,build", [
     ("pdf", "pdf", golden_pdf),
+    ("pdf_layout", "pdf", golden_layout_pdf),
     ("docx", "docx", make_docx),
     ("xlsx", "xlsx", golden_xlsx),
     ("csv", "csv", lambda: "name;count;note\r\napples;3;ripe\r\npears;5;\"a|b\"\r\n".encode("cp1252")),
@@ -166,11 +172,27 @@ def test_control_characters_removed():
 
 
 def test_pdf_text_clean_up():
-    assert _clean_pdf_text("efﬁcient workﬂow\nmain-\ntenance\nWell-\nKnown\n\n\n\nend  ") == (
-        "efficient workflow\nmain-tenance\nWell-\nKnown\n\nend")
-    # A hyphen at a line end is kept, so a hyphenated compound survives
-    assert _clean_pdf_text("a well-\nknown fact") == "a well-known fact"
-    assert _clean_pdf_text("# Title\n> quote") == "\\# Title\n\\> quote"
+    # pypdf text (pages past the layout budget): soft line breaks joined,
+    # a sentence ending well short of the longest line ends a paragraph,
+    # list items start their own, a hyphen at a line end is kept
+    text = ("Identity theft places a burden on its victims and\n"
+            "presents a challenge. Do not\n"
+            "send it to the IRS. The ef\ufb01cient well-\n"
+            "known main-\n"
+            "tenance.\n"
+            "\u2022 First item that wraps over\n"
+            "two lines\n"
+            "# Not a heading")
+    assert _clean_pdf_text(text) == (
+        "Identity theft places a burden on its victims and presents a challenge. Do not send it to "
+        "the IRS. The efficient well-known main-tenance.\n\n"
+        "- First item that wraps over two lines # Not a heading")
+    assert _clean_pdf_text("A short line.\nNext paragraph starts here and runs on for a while.") == (
+        "A short line.\n\nNext paragraph starts here and runs on for a while.")
+    assert _clean_pdf_text("# Title\n> quote") == "\\# Title > quote"
+    assert _clean_pdf_text("A sentence ends here.\n# Then a line that starts with a hash and runs on") == (
+        "A sentence ends here.\n\n\\# Then a line that starts with a hash and runs on")
+
 
 
 def test_docx_without_text():
@@ -611,3 +633,98 @@ def test_child_exits_when_its_parent_is_killed(tmp_path):
     finally:
         if parent.poll() is None:
             parent.kill()
+
+
+# --- quality follow-up (real-document findings) ---------------------------------
+
+@pytest.mark.parametrize("title,junk", [
+    ("ch3199paga", True), ("ukpga_19990031_en", True), ("report.pdf", True),
+    ("Microsoft Word - minutes.doc", True), ("Untitled", True), ("ab", True), ("", True), (None, True),
+    ("12/2025", True), ("Budget", False), ("Publication 5027 (Rev. 5-2018)", False),
+    ("Contracts (Rights of Third Parties) Act 1999", False), ("COVID-19 guidance", False),
+])
+def test_junk_title(title, junk):
+    from scrapepy.convert.documents import _junk_title
+    assert _junk_title(title) is junk
+
+
+def test_pdf_junk_title_without_heading_is_dropped():
+    # One font size: no heading to fall back on, so the collector uses the file name
+    result = convert_document(make_pdf([["Plain text only"]], {"Title": "ch3199paga"}), "pdf")
+    assert result.title is None
+
+
+def test_pdf_good_metadata_title_is_kept():
+    from .document_samples import make_layout_pdf
+    data = make_layout_pdf([[(72, 720, 20, "Big Heading"), (72, 690, 11, "Body text here.")]],
+                           {"Title": "Annual Report"})
+    assert convert_document(data, "pdf").title == "Annual Report"
+
+
+def test_docx_junk_metadata_title_falls_back_to_heading():
+    assert convert_document(make_docx(title="ch3199paga"), "docx").title == "Welcome"
+
+
+def test_long_csv_is_cut_into_sections_with_the_header_repeated():
+    data = ("year,count,\n" + "".join(f"{1900 + i},{i},\n" for i in range(1, 101))).encode()
+    text = convert_document(data, "csv").text
+    assert [l for l in text.splitlines() if l.startswith("## ")] == [
+        "## Rows 1 to 40", "## Rows 41 to 80", "## Rows 81 to 100"]
+    assert text.count("| year | count |\n| --- | --- |") == 3
+    assert "| 1941 | 41 |" in text.split("## Rows 41 to 80")[1].split("## Rows 81")[0]
+
+
+def test_short_table_has_no_sections():
+    data = ("n\n" + "".join(f"{i}\n" for i in range(1, 41))).encode()
+    text = convert_document(data, "csv").text
+    assert "## " not in text and text.count("| n |") == 1
+
+
+def test_sections_keep_one_width_and_the_cap_note():
+    rows = [["a", "b", "c"]] + [[str(i), "x", ""] for i in range(1, 9)] + [["9", "x", "late"]]
+    data = "".join(",".join(r) + "\n" for r in rows).encode()
+    text = convert_document(data, "csv", Limits(section_rows=4, max_rows=8)).text
+    tables = [l for l in text.splitlines() if l.startswith("| a |")]
+    assert tables == ["| a | b | c |"] * 2
+    assert text.endswith("_Rows after the first 8 are not shown._")
+
+
+def test_xlsx_sections_are_named_after_the_sheet():
+    rows = [["n", "square"]] + [[i, i * i] for i in range(1, 51)]
+    text = convert_document(make_xlsx({"Squares": rows}), "xlsx").text
+    assert [l for l in text.splitlines() if l.startswith("#")] == [
+        "## Squares", "### Squares: rows 1 to 40", "### Squares: rows 41 to 50"]
+
+
+def test_rows_count_includes_rows_past_the_display_cap():
+    rows = [["n"]] + [[i] for i in range(1, 11)] + [[None], [None]]
+    result = convert_document(make_xlsx({"S": rows, "T": [["h"], ["v"]]}), "xlsx", Limits(max_rows=4))
+    assert (result.rows, result.sheets, result.pages) == (11, 2, None)
+    assert convert_document(b"h\n1\n2\n\n3\n", "csv").rows == 3
+
+
+def test_xlsx_date_prefers_the_last_save():
+    assert convert_document(make_xlsx({"S": [["a"], ["1"]]}), "xlsx").date == "2025-11-03T09:00:00+00:00"
+    no_modified = make_xlsx({"S": [["a"], ["1"]]}, modified=None)
+    assert convert_document(no_modified, "xlsx").date == "2025-06-02T12:00:00+00:00"
+
+
+def test_layout_budget_hands_later_pages_to_pypdf(monkeypatch):
+    from scrapepy.convert import documents as conv
+    calls = []
+    real = conv._layout_page
+    monkeypatch.setattr(conv, "_layout_page", lambda page: calls.append(1) or real(page))
+    data = make_pdf([["Page one text"], ["Page two text that"], ["Page three"]])
+    result = convert_document(data, "pdf", Limits(layout_seconds=0))
+    assert len(calls) == 1
+    assert "## Page 2\n\nPage two text that" in result.text and "## Page 3\n\nPage three" in result.text
+
+
+def test_pdf_without_pdfminer_still_converts_with_joined_lines(monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "pdfminer", None)
+    monkeypatch.setitem(sys.modules, "pdfminer.high_level", None)
+    from .document_samples import layout_sample_pdf
+    result = convert_document(layout_sample_pdf(), "pdf")
+    assert result.status == "converted"
+    assert "Do not leave tools in the hall." in result.text

@@ -45,8 +45,10 @@ class Limits:
     max_pages: int = 2000              # PDF pages read
     max_chars: int = 2_000_000         # characters of Markdown body kept
     max_rows: int = 2000               # data rows per table (XLSX sheet, CSV, DOCX table)
-    max_columns: int = 50              # columns per table
+    max_columns: int = 100             # columns per table
     max_scan_rows: int = 100_000       # rows read per table, empty ones included
+    section_rows: int = 40             # a long table is cut into sections of this many rows
+    layout_seconds: float = 30.0       # PDF pages laid out with pdfminer.six for this long, then pypdf
     max_unzipped_bytes: int = 128 * MB  # DOCX and XLSX: total unpacked size
     max_xml_part_bytes: int = 16 * MB   # one XML part parsed whole (all of DOCX; XLSX except sheets)
     max_zip_entries: int = 10000       # DOCX and XLSX: parts in the archive
@@ -67,7 +69,9 @@ class Converted:
     reason: str | None = None
     title: str | None = None
     date: str | None = None
-    pages: int | None = None
+    pages: int | None = None           # PDF pages
+    sheets: int | None = None          # XLSX sheets
+    rows: int | None = None            # XLSX and CSV: data rows read (headers not counted)
     text: str = ""
     notes: list[str] = field(default_factory=list)
 
@@ -119,8 +123,6 @@ _LIGATURES = str.maketrans({
     "ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi",
     "ﬄ": "ffl", "ﬅ": "st", "ﬆ": "st", "­": None,
 })
-_RE_HYPHEN_BREAK = re.compile(r"([a-z])-\n([a-z])")   # the hyphen is kept: "well-known"
-_RE_BLANK_RUNS = re.compile(r"\n{3,}")
 _RE_MD_LINE_START = re.compile(r"^(\s*)([#>])", re.MULTILINE)
 
 
@@ -209,13 +211,21 @@ def _cell_text(value) -> str:
     return " ".join(clean(str(value)).split())
 
 
-def markdown_table(rows: list[list[str]]) -> str:
-    """A GitHub-style table: the first row is the header. Columns empty in
-    every row at the right are dropped; | in a cell is escaped."""
-    rows = [[" ".join(clean(c).split()).replace("|", "\\|") for c in r] for r in rows]
+def table_width(rows: list[list[str]]) -> int:
+    """The number of columns once columns empty in every row at the right are dropped."""
     width = max((len(r) for r in rows), default=0)
-    while width and all(len(r) < width or not r[width - 1] for r in rows):
+    while width and all(len(r) < width or not str(r[width - 1]).strip() for r in rows):
         width -= 1
+    return width
+
+
+def markdown_table(rows: list[list[str]], width: int | None = None) -> str:
+    """A GitHub-style table: the first row is the header. Columns empty in
+    every row at the right are dropped (or the table is cut or padded to
+    width); | in a cell is escaped."""
+    rows = [[" ".join(clean(c).split()).replace("|", "\\|") for c in r] for r in rows]
+    if width is None:
+        width = table_width(rows)
     if not width:
         return ""
     rows = [(r + [""] * width)[:width] for r in rows]
@@ -235,44 +245,57 @@ def _quiet(*names: str) -> None:
 # ---------------------------------------------------------------------------
 
 def _convert_pdf(data: bytes, limits: Limits) -> Converted:
+    """Pages are laid out with pdfminer.six (paragraphs rebuilt from its
+    text lines, in its reading order) until Limits.layout_seconds is spent,
+    and read with pypdf after that, so a long PDF keeps a bounded time.
+    pypdf opens the file first (encryption, metadata, page count) and every
+    page's content stream is unpacked through its limits before pdfminer,
+    which has none, sees the file."""
     if b"%PDF-" not in data[:1024]:
         raise DocumentError("not a PDF file")
     _quiet("pypdf", "pdfminer")
-    title = created = None
+    reader = title = created = None
     count = None
     try:
-        title, created, count, texts = _pdf_pypdf(data, limits)
+        reader, title, created, count = _pdf_open(data)
     except DocumentError:
         raise
     except Exception as e:
         if _is_limit_error(e):
-            # pypdf stopped a stream that unpacks too far: pdfminer.six has
-            # no such limit, so it is never tried on this file
             raise DocumentError(_PDF_BOMB) from None
-        texts = _pdf_pdfminer(data, limits)
-        if texts is None:
+        reader = None          # pypdf cannot read it: pdfminer alone
+    wanted = min(count, limits.max_pages) if reader is not None else limits.max_pages
+    if reader is not None:
+        _check_pdf_streams(reader, wanted)
+    try:
+        layout = _pdf_layout(data, limits, wanted)
+    except Exception:
+        if reader is None:
             raise
-        count = len(texts)
-    if not any(t.strip() for t in texts):
-        # pypdf found nothing: pdfminer reads some files pypdf cannot, but
-        # it has no decompression limit, so the page contents are first
-        # unpacked through pypdf's (extract_text can skip a page unread)
-        _check_pdf_streams(data, limits)
-        try:
-            fallback = _pdf_pdfminer(data, limits)
-        except Exception:
-            fallback = None
-        if fallback and any(t.strip() for t in fallback):
-            texts = fallback
+        layout = None
+    layout = layout or []
+    if reader is None:
+        if not layout:
+            raise DocumentError("corrupt or unreadable PDF file")
+        count = wanted = len(layout)
+    texts = [text for text, _ in layout]
+    for index in range(wanted):
+        if index < len(texts) and texts[index].strip():
+            continue
+        raw = (reader.pages[index].extract_text() or "") if reader is not None else ""
+        text = _clean_pdf_text(raw)
+        if index < len(texts):
+            texts[index] = text
+        else:
+            texts.append(text)
+    if _junk_title(title):
+        heading = layout[0][1] if layout else None
+        title = heading if not _junk_title(heading) else None
     out = Converted("converted", title=title, date=created, pages=count)
     if not any(t.strip() for t in texts):
         out.status, out.reason = "no_text", "no text layer"
         return out
-    parts = []
-    for number, text in enumerate(texts, start=1):
-        text = _clean_pdf_text(text)
-        if text:
-            parts.append(f"## Page {number}\n\n{text}")
+    parts = [f"## Page {number}\n\n{text}" for number, text in enumerate(texts, start=1) if text]
     if count is not None and count > len(texts):
         out.notes.append(f"Pages after the first {len(texts):,} are not converted.")
     out.text = "\n\n".join(parts)
@@ -290,25 +313,22 @@ def _is_limit_error(error: Exception) -> bool:
 _PDF_BOMB = "a compressed stream unpacks past the safety limit (possible PDF bomb)"
 
 
-def _check_pdf_streams(data: bytes, limits: Limits) -> None:
+def _check_pdf_streams(reader, pages: int) -> None:
     """Unpack each page's content stream through pypdf's limits; a stream
-    over them fails the document."""
-    from pypdf import PdfReader
-
-    try:
-        reader = PdfReader(io.BytesIO(data), strict=False)
-        if reader.is_encrypted:
-            reader.decrypt("")
-        for index in range(min(len(reader.pages), limits.max_pages)):
+    over them fails the document. extract_text can skip a page unread, so
+    this is what stands between pdfminer.six and a bomb."""
+    for index in range(pages):
+        try:
             contents = reader.pages[index].get_contents()
             if contents is not None:
                 contents.get_data()
-    except Exception as e:
-        if _is_limit_error(e):
-            raise DocumentError(_PDF_BOMB) from None
+        except Exception as e:
+            if _is_limit_error(e):
+                raise DocumentError(_PDF_BOMB) from None
 
 
-def _pdf_pypdf(data: bytes, limits: Limits):
+def _pdf_open(data: bytes):
+    """(reader, metadata title, date, page count) from pypdf."""
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(data), strict=False)
@@ -322,36 +342,140 @@ def _pdf_pypdf(data: bytes, limits: Limits):
     meta = reader.metadata or {}
     title = meta.get("/Title")
     created = parse_pdf_date(meta.get("/CreationDate")) or parse_pdf_date(meta.get("/ModDate"))
-    count = len(reader.pages)
-    texts = []
-    for index in range(min(count, limits.max_pages)):
-        texts.append(reader.pages[index].extract_text() or "")
-    return (str(title) if title else None), created, count, texts
+    return reader, (str(title) if title else None), created, len(reader.pages)
+
+
+# A line that starts a list item: a bullet, "1." or "1)", or "(a)"
+_RE_LIST_START = re.compile(r"^(?:[\u2022\u25cf\u25aa\u25e6\u2023\u2043\u2013*-]\s|\d{1,3}[.)]\s|\([a-z0-9]{1,4}\)\s)")
+_RE_BULLET = re.compile(r"^[\u2022\u25cf\u25aa\u25e6\u2023\u2043]\s*")
+_RE_TERMINAL = re.compile(r"[.!?:;]['\")\u2019\u201d]?$")
+
+
+def _join_lines(left: str, right: str) -> str:
+    """Two lines of one paragraph: a word broken by a hyphen at the line
+    end keeps its hyphen and loses the space (no dictionary can tell
+    "main-tenance" from "well-known", so nothing is lost)."""
+    if len(left) > 1 and left.endswith("-") and left[-2].isalpha() and right[:1].islower():
+        return left + right
+    return left + " " + right
+
+
+def _paragraph_start(text: str) -> str:
+    """A paragraph's first line, with a bullet sign made a Markdown "- "."""
+    return _RE_BULLET.sub("- ", text, count=1)
+
+
+def _pdf_layout(data: bytes, limits: Limits, pages: int):
+    """[(page text, heading or None)] from pdfminer.six for the first pages,
+    stopping once Limits.layout_seconds is spent; None when pdfminer is not
+    installed."""
+    try:
+        from pdfminer.high_level import extract_pages
+        from pdfminer.layout import LAParams
+    except ImportError:
+        return None
+    import time
+
+    out = []
+    started = time.monotonic()
+    for layout in extract_pages(io.BytesIO(data), laparams=LAParams(), maxpages=pages):
+        out.append(_layout_page(layout))
+        if time.monotonic() - started > limits.layout_seconds:
+            break
+    return out
 
 
 def _pdf_pdfminer(data: bytes, limits: Limits) -> list[str] | None:
     """Per-page text from pdfminer.six, or None when it is not installed."""
-    try:
-        from pdfminer.high_level import extract_pages
-        from pdfminer.layout import LTTextContainer
-    except ImportError:
-        return None
-    texts = []
-    for layout in extract_pages(io.BytesIO(data), maxpages=limits.max_pages):
-        texts.append("".join(el.get_text() for el in layout if isinstance(el, LTTextContainer)))
-    return texts
+    layout = _pdf_layout(data, limits, limits.max_pages)
+    return None if layout is None else [text for text, _ in layout]
+
+
+def _layout_page(layout) -> tuple[str, str | None]:
+    """A page's paragraphs and its heading (the first paragraph set clearly
+    larger than the page's usual text), from pdfminer's text lines. A line
+    joins the paragraph above it when it sits just below, at about the same
+    size, in the same column, and does not start a list item."""
+    from pdfminer.layout import LTTextBox, LTTextLine
+
+    lines = []
+    for box in layout:
+        if not isinstance(box, LTTextBox):
+            continue
+        for line in box:
+            if not isinstance(line, LTTextLine):
+                continue
+            text = " ".join(clean(line.get_text().translate(_LIGATURES)).split())
+            if text:
+                lines.append((text, line.x0, line.x1, line.y0, line.y1))
+    paragraphs: list[list] = []     # [text, x0, x1, y0, y1, first line height]
+    for text, x0, x1, y0, y1 in lines:
+        height = y1 - y0
+        if paragraphs and not _RE_LIST_START.match(text):
+            para = paragraphs[-1]
+            p_height = para[4] - para[3]
+            tall = max(height, p_height) or 1.0
+            if (abs(height - p_height) <= 0.25 * tall
+                    and -0.5 * tall <= para[3] - y1 <= 0.9 * tall
+                    and x0 < para[2] and x1 > para[1]):
+                para[0] = _join_lines(para[0], text)
+                para[1:5] = [min(para[1], x0), max(para[2], x1), y0, y1]
+                continue
+        paragraphs.append([_paragraph_start(text), x0, x1, y0, y1, height])
+    heading = None
+    heights = sorted(p[5] for p in paragraphs)
+    if heights:
+        usual = heights[len(heights) // 2]
+        for para in paragraphs:
+            if para[5] >= 1.25 * usual and re.search(r"[^\W\d_]{2}", para[0]):
+                heading = para[0][:300]
+                break
+    text = "\n\n".join(_escape_line_starts(p[0]) for p in paragraphs)
+    return text, heading
 
 
 def _clean_pdf_text(text: str) -> str:
-    """Page text with ligatures spelled out, a word broken by a hyphen at a
-    line end joined with its hyphen kept (no dictionary can tell
-    "main-tenance" from "well-known", so nothing is lost), trailing spaces and runs of blank lines removed, and
-    line starts escaped."""
+    """pypdf page text (pages past the layout budget) as paragraphs: lines
+    joined unless the next starts a list item or the line ends a sentence
+    well short of the page's longest line, which is how a paragraph ends;
+    ligatures spelled out, hyphens at line ends kept, line starts escaped."""
     text = clean(text.translate(_LIGATURES))
-    text = _RE_HYPHEN_BREAK.sub(r"\1-\2", text)
-    text = "\n".join(line.rstrip() for line in text.split("\n"))
-    text = _RE_BLANK_RUNS.sub("\n\n", text).strip()
-    return _escape_line_starts(text)
+    lines = [" ".join(line.split()) for line in text.split("\n")]
+    width = max((len(line) for line in lines), default=0)
+    paragraphs: list[str] = []
+    last = ""
+    for line in lines:
+        if not line:
+            last = ""
+            continue
+        if paragraphs and last and not _RE_LIST_START.match(line) and not (
+                _RE_TERMINAL.search(last) and len(last) < 0.75 * width):
+            paragraphs[-1] = _join_lines(paragraphs[-1], line)
+        else:
+            paragraphs.append(_paragraph_start(line))
+        last = line
+    return "\n\n".join(_escape_line_starts(p) for p in paragraphs)
+
+
+_RE_FILE_LIKE = re.compile(r"\.(?:docx?|pdf|indd|qxd|qxp|rtf|odt|xlsx?|pptx?|tmp|tex|dvi|ps)$", re.IGNORECASE)
+_PLACEHOLDER_TITLES = {"untitled", "document", "title", "presentation", "unknown", "none", "null"}
+
+
+def _junk_title(title: str | None) -> bool:
+    """Whether a metadata title is not a title: empty, no word of three
+    letters, a single token with digits, underscores, dots or slashes (a
+    code or a file name, such as "ch3199paga"), a file name, or a
+    placeholder such as "Untitled"."""
+    if not title:
+        return True
+    text = " ".join(str(title).split())
+    if not re.search(r"[^\W\d_]{3}", text):
+        return True
+    if " " not in text and re.search(r"[\d_./\\]", text):
+        return True
+    if _RE_FILE_LIKE.search(text):
+        return True
+    return text.lower() in _PLACEHOLDER_TITLES
 
 
 # ---------------------------------------------------------------------------
@@ -455,6 +579,8 @@ def _convert_docx(data: bytes, limits: Limits) -> Converted:
     document = docx.Document(io.BytesIO(data))
     core = document.core_properties
     meta_title = _clean_title(core.title)
+    if _junk_title(meta_title):
+        meta_title = None
     created = _iso(core.created) or _iso(core.modified)
 
     style_names, default_style = _docx_style_names(document)
@@ -539,14 +665,45 @@ def _convert_docx(data: bytes, limits: Limits) -> Converted:
 # XLSX
 # ---------------------------------------------------------------------------
 
-def _table_rows(rows_iter, limits: Limits, notes: list[str], label: str = "") -> tuple[list[list[str]], bool]:
-    """Non-empty rows, at most a header and limits.max_rows data rows, and
-    whether rows were left out. Columns beyond limits.max_columns are cut,
-    and reading stops after limits.max_scan_rows rows (a sheet with a far
-    away cell yields a million empty rows), each with a note."""
+def table_sections(rows: list[list[str]], truncated: bool, limits: Limits, level: int,
+                   label: str = "") -> str:
+    """A table as Markdown. One with more than limits.section_rows data rows
+    is cut into sections of that many, each under its own heading ("Rows 41
+    to 80", after label when given) and with the header row repeated, so a
+    chunk taken from anywhere in it still says what its columns are."""
+    width = table_width(rows)
+    if not width:
+        return ""
+    header, data = rows[0], rows[1:]
+    size = max(limits.section_rows, 1)
+    if len(data) <= size:
+        text = markdown_table(rows, width)
+    else:
+        parts = []
+        for start in range(0, len(data), size):
+            chunk = data[start:start + size]
+            name = f"Rows {start + 1:,} to {start + len(chunk):,}"
+            heading = f"{label}: {name.lower()}" if label else name
+            parts.append(f"{'#' * level} {_escape_line_starts(heading)}\n\n"
+                         + markdown_table([header] + chunk, width))
+        text = "\n\n".join(parts)
+    if truncated:
+        text += f"\n\n_Rows after the first {limits.max_rows:,} are not shown._"
+    return text
+
+
+def _table_rows(rows_iter, limits: Limits, notes: list[str],
+                label: str = "") -> tuple[list[list[str]], bool, int]:
+    """Non-empty rows, at most a header and limits.max_rows data rows,
+    whether rows were left out, and how many data rows were read in all
+    (rows past the display cap are counted, not kept). Columns beyond
+    limits.max_columns are cut, and reading stops after
+    limits.max_scan_rows rows (a sheet with a far away cell yields a
+    million empty rows), each with a note."""
     rows: list[list[str]] = []
     truncated = False
     wide = False
+    counted = 0
     for scanned, raw in enumerate(rows_iter):
         if scanned >= limits.max_scan_rows:
             where = f" of {label}" if label else ""
@@ -556,17 +713,43 @@ def _table_rows(rows_iter, limits: Limits, notes: list[str], label: str = "") ->
         if len(raw) > limits.max_columns:
             wide = wide or any(v not in (None, "") for v in raw[limits.max_columns:])
             raw = raw[:limits.max_columns]
+        if len(rows) > limits.max_rows:
+            # Past the display cap: only count the rows that hold something
+            if any(v not in (None, "") for v in raw):
+                truncated = True
+                counted += 1
+            continue
         cells = [_cell_text(v) for v in raw]
         if not any(cells):
             continue
-        if len(rows) > limits.max_rows:
-            truncated = True
-            break
         rows.append(cells)
+        counted += 1
     if wide:
         where = f" in {label}" if label else ""
         notes.append(f"Columns after the first {limits.max_columns}{where} are not shown.")
-    return rows, truncated
+    return rows, truncated, max(counted - 1, 0)
+
+
+def _core_dates(data: bytes) -> tuple[str | None, str | None]:
+    """(modified, created) as ISO 8601 from an OOXML file's docProps/core.xml,
+    each None when the file does not state it (openpyxl would put the
+    current time in a missing one)."""
+    import xml.etree.ElementTree as ET
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            root = ET.fromstring(archive.read("docProps/core.xml"))
+    except (KeyError, zipfile.BadZipFile, ET.ParseError, ValueError, OSError):
+        return None, None
+    found = {}
+    for name in ("modified", "created"):
+        node = root.find(f"{{http://purl.org/dc/terms/}}{name}")
+        text = (node.text or "").strip() if node is not None else ""
+        try:
+            found[name] = _iso(datetime.fromisoformat(text.replace("Z", "+00:00"))) if text else None
+        except ValueError:
+            found[name] = None
+    return found["modified"], found["created"]
 
 
 def _convert_xlsx(data: bytes, limits: Limits) -> Converted:
@@ -580,10 +763,14 @@ def _convert_xlsx(data: bytes, limits: Limits) -> Converted:
     try:
         props = workbook.properties
         title = props.title if props is not None else None
-        created = (_iso(props.created) or _iso(props.modified)) if props is not None else None
+        # A workbook is updated in place, so its last save says more than
+        # when it was first made; both come from the file itself
+        modified, first_made = _core_dates(data)
+        created = modified or first_made
         sheets = list(workbook.worksheets)
         parts: list[str] = []
         notes: list[str] = []
+        total_rows = 0
         for sheet in sheets:
             if not hasattr(sheet, "iter_rows"):
                 continue
@@ -591,18 +778,17 @@ def _convert_xlsx(data: bytes, limits: Limits) -> Converted:
                 # A sheet's stated size is not trusted: read the cells it has
                 sheet.reset_dimensions()
             name = " ".join(clean(str(sheet.title)).split())
-            rows, truncated = _table_rows(sheet.iter_rows(values_only=True), limits, notes,
-                                          f"sheet {name}")
-            table = markdown_table(rows)
+            rows, truncated, counted = _table_rows(sheet.iter_rows(values_only=True), limits, notes,
+                                                   f"sheet {name}")
+            table = table_sections(rows, truncated, limits, 3, name or "Sheet")
             if not table:
                 continue
-            section = f"## {_escape_line_starts(name) or 'Sheet'}\n\n{table}"
-            if truncated:
-                section += f"\n\n_Rows after the first {limits.max_rows:,} are not shown._"
-            parts.append(section)
+            total_rows += counted
+            parts.append(f"## {_escape_line_starts(name) or 'Sheet'}\n\n{table}")
     finally:
         workbook.close()
-    out = Converted("converted", title=title, date=created, pages=len(sheets))
+    out = Converted("converted", title=None if _junk_title(title) else title, date=created,
+                    sheets=len(sheets), rows=total_rows)
     if not parts:
         out.status, out.reason = "no_text", "no data"
         return out
@@ -636,16 +822,14 @@ def _convert_csv(data: bytes, limits: Limits) -> Converted:
         dialect = csv.excel
     notes: list[str] = []
     try:
-        rows, truncated = _table_rows(csv.reader(io.StringIO(text), dialect), limits, notes)
+        rows, truncated, counted = _table_rows(csv.reader(io.StringIO(text), dialect), limits, notes)
     except csv.Error as e:
         raise DocumentError(f"corrupt CSV file ({e})") from None
-    table = markdown_table(rows)
-    out = Converted("converted")
+    table = table_sections(rows, truncated, limits, 2)
+    out = Converted("converted", rows=counted)
     if not table:
-        out.status, out.reason = "no_text", "no data"
+        out.status, out.reason, out.rows = "no_text", "no data", None
         return out
-    if truncated:
-        table += f"\n\n_Rows after the first {limits.max_rows:,} are not shown._"
     out.text = table
     out.notes.extend(notes)
     return out
