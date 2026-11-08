@@ -318,3 +318,16 @@ def child_spin() -> None:
 def child_environ() -> list:
     import os
     return sorted(os.environ)
+
+
+def child_flood(mb: int, then_exit: bool = False) -> int:
+    """Write mb MB to stdout and to stderr, then return (or exit with no result)."""
+    import os
+    block = b"x" * (1024 * 1024)
+    for _ in range(mb):
+        os.write(1, block)
+        os.write(2, block)
+    os.write(2, b"\nlast line of stderr\n")
+    if then_exit:
+        os._exit(5)
+    return mb
